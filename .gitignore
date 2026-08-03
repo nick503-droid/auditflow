@@ -1,0 +1,8 @@
+# Node / NestJS
+backend/node_modules/
+backend/dist/
+backend/.env
+
+# General
+*.log
+.DS_Store
