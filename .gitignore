@@ -6,3 +6,5 @@ backend/.env
 # General
 *.log
 .DS_Store
+
+backend/.env
