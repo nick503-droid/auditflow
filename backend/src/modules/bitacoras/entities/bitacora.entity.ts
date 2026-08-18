@@ -43,16 +43,16 @@ export class Bitacora {
   @Column({ type: 'tinyint', default: 0 })
   con_audio: boolean;
 
-  @Column({ type: 'date' })
+  @Column({ type: 'date', default: () => 'CURRENT_DATE' })
   fecha: Date;
 
-  @Column({ type: 'varchar', length: 20 })
+  @Column({ type: 'varchar', length: 20, default: '00:00' })
   hora: string;
 
   @Column({ type: 'enum', enum: NivelUrgencia, default: NivelUrgencia.LOW })
   urgencia: NivelUrgencia;
 
-  @Column({ type: 'varchar', length: 6 })
+  @Column({ type: 'varchar', length: 6, default: 'MIGRAC' })
   codigo: string;
 
   @DeleteDateColumn()

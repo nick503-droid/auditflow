@@ -14,11 +14,12 @@ import os
 
 
 class ReportesFrame(ctk.CTkFrame):
-    def __init__(self, master, controlador, usuario, restaurante, **kwargs):
+    def __init__(self, master, controlador, usuario, restaurante=None, **kwargs):
         super().__init__(master)
         self.controlador = controlador
         self.usuario = usuario
-        self.restaurante = restaurante
+        # Creamos un restaurante "falso" por si el código más abajo intenta leer su nombre
+        self.restaurante = restaurante or {"id": "0", "nombre": "Restaurante (Pendiente)"}
 
         # Carga (o crea) el borrador de HOY para este usuario+restaurante.
         # Esto es lo que hace posible continuar un reporte a medias.

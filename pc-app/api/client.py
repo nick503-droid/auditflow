@@ -54,6 +54,51 @@ def crear_bitacora(dto):
         return None
 
 
+def obtener_bitacoras_por_fecha(fecha: str):
+    """
+    Trae todas las bitácoras de una fecha específica (formato YYYY-MM-DD).
+    Utilizado para actualizar la cuadrícula general.
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/bitacoras/fecha/{fecha}",
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error al obtener bitácoras para la fecha {fecha}: {e}")
+        return []
+
+
+def adjuntar_evidencia_por_codigo(codigo: str, evidencia_url: str, con_audio: bool):
+    """
+    Vincula una evidencia a una bitácora existente usando el código corto.
+    Retorna (data, error) para facilitar el manejo en la UI.
+    """
+    try:
+        payload = {
+            "evidencia_url": evidencia_url,
+            "con_audio": con_audio
+        }
+        response = requests.patch(
+            f"{API_BASE_URL}/bitacoras/codigo/{codigo}/evidencia",
+            json=payload,
+            timeout=10
+        )
+        
+        # Si el código no existe, capturar el 404 explícitamente para la UI
+        if response.status_code == 404:
+            return None, f"El código '{codigo}' no existe o ya expiró."
+            
+        response.raise_for_status()
+        return response.json(), None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error de red al adjuntar evidencia al código {codigo}: {e}")
+        return None, f"Error de comunicación con el servidor."
+
+
 def subir_archivo(ruta_local: str):
     """
     Sube un archivo al endpoint /uploads. Regresa una tupla:
@@ -75,6 +120,7 @@ def subir_archivo(ruta_local: str):
         mensaje_error = f"{type(e).__name__}: {e}"
         print(f"Error al subir '{ruta_local}': {mensaje_error}", flush=True)
         return None, mensaje_error
+
 
 def crear_reporte(dto: dict):
     try:
