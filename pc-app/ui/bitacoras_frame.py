@@ -11,6 +11,7 @@ from api.client import (
     adjuntar_evidencia_por_codigo, 
     subir_archivo, 
     crear_bitacora,
+    actualizar_bitacora,
     obtener_restaurantes,
     obtener_usuarios
 )
@@ -208,50 +209,52 @@ class BitacorasFrame(ctk.CTkFrame):
             # Reaplicar dropdowns de forma segura
             filas_idx = tuple(range(total_filas))
             if self.mapa_restaurantes:
-                self.sheet.create_dropdown(r=filas_idx, c=3, values=list(self.mapa_restaurantes.keys()), set_value="", redraw=False)
-            self.sheet.create_dropdown(r=filas_idx, c=6, values=["low", "medium", "critical"], set_value="low", redraw=True)
+                self.sheet.create_dropdown(r=filas_idx, c=3, values=list(self.mapa_restaurantes.keys()), redraw=False)
+            self.sheet.create_dropdown(r=filas_idx, c=6, values=["low", "medium", "critical"], redraw=True)
             
         self.sheet.see(total_filas - 1, 2)
 
     def _procesar_modificacion(self, row):
-        """Intenta guardar el borrador en el backend si los campos mínimos están llenos."""
+        """Intenta guardar el borrador o actualizar en el backend si los campos mínimos están llenos."""
         row_data = self.sheet.get_row_data(row)
         if not row_data:
             return
             
         b_id = row_data[0]
         
-        # Si no tiene ID, es un borrador nuevo
-        if not b_id:
-            hora = row_data[2].strip() if isinstance(row_data[2], str) else str(row_data[2])
-            rest_nombre = row_data[3].strip() if isinstance(row_data[3], str) else str(row_data[3])
-            vig_nombre = row_data[4].strip() if isinstance(row_data[4], str) else str(row_data[4])
-            desc = row_data[5].strip() if isinstance(row_data[5], str) else str(row_data[5])
-            urg = row_data[6].strip() if isinstance(row_data[6], str) else "low"
+        hora = row_data[2].strip() if isinstance(row_data[2], str) else str(row_data[2])
+        rest_nombre = row_data[3].strip() if isinstance(row_data[3], str) else str(row_data[3])
+        vig_nombre = row_data[4].strip() if isinstance(row_data[4], str) else str(row_data[4])
+        desc = row_data[5].strip() if isinstance(row_data[5], str) else str(row_data[5])
+        urg = row_data[6].strip() if isinstance(row_data[6], str) else "low"
+        
+        if hora and rest_nombre and desc:
+            # Traducción a UUID para la base de datos
+            rest_id = self.mapa_restaurantes.get(rest_nombre)
+            usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
             
-            if hora and rest_nombre and desc:
-                # Traducción a UUID para la base de datos
-                rest_id = self.mapa_restaurantes.get(rest_nombre)
-                usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
-                
-                if not rest_id:
-                    return 
-                
-                dto = {
-                    "usuario_id": usr_id,
-                    "restaurante_id": rest_id,
-                    "descripcion": desc,
-                    "fecha": self.fecha_actual,
-                    "hora": hora,
-                    "urgencia": urg
-                }
-                
+            if not rest_id:
+                return 
+            
+            dto = {
+                "usuario_id": usr_id,
+                "restaurante_id": rest_id,
+                "descripcion": desc,
+                "fecha": self.fecha_actual,
+                "hora": hora,
+                "urgencia": urg
+            }
+            
+            if not b_id:
                 resultado = crear_bitacora(dto)
                 if resultado:
                     self.sheet.set_cell_data(row, 0, resultado.get('id', ''))
                     self.sheet.set_cell_data(row, 1, resultado.get('codigo', ''))
-                    # Al resetear la variable local, obligamos al polling a refrescar en el próximo ciclo
                     self.ultimo_hash_bd = None 
+            else:
+                resultado = actualizar_bitacora(b_id, dto)
+                if resultado:
+                    self.ultimo_hash_bd = None
 
     def _iniciar_polling(self):
         self.hilo_polling_activo = True
@@ -305,8 +308,8 @@ class BitacorasFrame(ctk.CTkFrame):
             if total_filas > 0:
                 filas_idx = tuple(range(total_filas))
                 if self.mapa_restaurantes:
-                    self.sheet.create_dropdown(r=filas_idx, c=3, values=list(self.mapa_restaurantes.keys()), set_value="", redraw=False)
-                self.sheet.create_dropdown(r=filas_idx, c=6, values=["low", "medium", "critical"], set_value="low", redraw=True)
+                    self.sheet.create_dropdown(r=filas_idx, c=3, values=list(self.mapa_restaurantes.keys()), redraw=False)
+                self.sheet.create_dropdown(r=filas_idx, c=6, values=["low", "medium", "critical"], redraw=True)
 
     def _registrar_hotkeys(self):
         keyboard.add_hotkey("ctrl+k+l", self._toggle_grabacion)

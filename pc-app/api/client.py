@@ -53,6 +53,25 @@ def crear_bitacora(dto):
 
         return None
 
+def actualizar_bitacora(id: str, dto: dict):
+    """Actualiza una bitácora en el backend."""
+    try:
+        response = requests.patch(
+            f"{API_BASE_URL}/bitacoras/{id}",
+            json=dto,
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error al actualizar bitácora: {e}")
+
+        if getattr(e, "response", None) is not None:
+            print(f"Respuesta del servidor: {e.response.text}")
+
+        return None
+
 
 def obtener_bitacoras_por_fecha(fecha: str):
     """
