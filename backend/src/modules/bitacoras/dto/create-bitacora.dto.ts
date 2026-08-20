@@ -1,4 +1,4 @@
-import { IsUUID, IsString, IsNotEmpty, IsOptional, IsBoolean, IsDateString, IsEnum } from 'class-validator';
+import { IsUUID, IsString, IsOptional, IsBoolean, IsDateString, IsEnum } from 'class-validator';
 import { NivelUrgencia } from '../entities/bitacora.entity';
 
 export class CreateBitacoraDto {
@@ -8,9 +8,14 @@ export class CreateBitacoraDto {
   @IsUUID()
   usuario_id: string;
 
+  /**
+   * Descripción de la bitácora. Opcional al crear para permitir que el
+   * vigilante genere el código de evidencia de inmediato (solo con
+   * restaurante seleccionado) y complete la descripción después.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  descripcion: string;
+  descripcion?: string;
 
   @IsOptional()
   @IsString()
@@ -20,12 +25,21 @@ export class CreateBitacoraDto {
   @IsBoolean()
   con_audio?: boolean;
 
+  /**
+   * Fecha de la bitácora (YYYY-MM-DD). Si no se envía, el servicio
+   * usa la fecha actual del servidor.
+   */
+  @IsOptional()
   @IsDateString()
-  fecha: string;
+  fecha?: string;
 
+  /**
+   * Hora ingresada manualmente por el vigilante (texto libre).
+   * Opcional al crear para el flujo de evidencia anticipada.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  hora: string;
+  hora?: string;
 
   @IsOptional()
   @IsEnum(NivelUrgencia)

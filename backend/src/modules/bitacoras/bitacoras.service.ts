@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThanOrEqual, Repository } from 'typeorm';
 import { Bitacora } from './entities/bitacora.entity';
+import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
 import { UpdateBitacoraDto } from './dto/update-bitacora.dto';
 
@@ -13,11 +14,13 @@ export class BitacorasService {
   constructor(
     @InjectRepository(Bitacora)
     private bitacorasRepo: Repository<Bitacora>,
+    @InjectRepository(EvidenciaBitacora)
+    private evidenciasRepo: Repository<EvidenciaBitacora>,
   ) {}
 
   findAll() {
     return this.bitacorasRepo.find({
-      relations: { usuario: true, restaurante: true },
+      relations: { usuario: true, restaurante: true, evidencias: true },
       order: { fecha: 'DESC', hora: 'DESC' },
     });
   }
@@ -30,7 +33,7 @@ export class BitacorasService {
   findPorFecha(fecha: string) {
     return this.bitacorasRepo.find({
       where: { fecha: new Date(fecha) },
-      relations: { usuario: true, restaurante: true },
+      relations: { usuario: true, restaurante: true, evidencias: true },
       order: { hora: 'ASC' },
     });
   }
@@ -38,7 +41,7 @@ export class BitacorasService {
   findOne(id: string) {
     return this.bitacorasRepo.findOne({
       where: { id },
-      relations: { usuario: true, restaurante: true },
+      relations: { usuario: true, restaurante: true, evidencias: true },
     });
   }
 
@@ -52,8 +55,14 @@ export class BitacorasService {
   async create(dto: CreateBitacoraDto) {
     const codigo = await this.generarCodigoUnico();
 
+    // Normalizar campos opcionales: si no vienen, usar valores neutros
+    // para que el registro sea válido y el código quede generado de inmediato.
     const nueva = this.bitacorasRepo.create({
+      descripcion: '',
+      hora: '',
       ...dto,
+      // Si no viene fecha, usar la fecha actual del servidor
+      fecha: dto.fecha ? new Date(dto.fecha) : new Date(),
       codigo,
     });
     return this.bitacorasRepo.save(nueva);
@@ -64,12 +73,29 @@ export class BitacorasService {
     return this.findOne(id);
   }
 
-  async adjuntarEvidenciaPorCodigo(codigo: string, evidencia_url: string, con_audio: boolean) {
+  /**
+   * Agrega una nueva evidencia a la bitácora identificada por `codigo`.
+   * El código NO se invalida — se puede reutilizar cuantas veces sea necesario
+   * dentro de la ventana de retención de DIAS_VIGENCIA_CODIGO días.
+   */
+  async adjuntarEvidenciaPorCodigo(
+    codigo: string,
+    evidencia_url: string,
+    con_audio: boolean,
+  ) {
     const bitacora = await this.findPorCodigo(codigo);
     if (!bitacora) {
       return null;
     }
-    await this.bitacorasRepo.update(bitacora.id, { evidencia_url, con_audio });
+
+    // Insertar en la tabla hija — no sobreescribe, agrega una nueva fila
+    const nueva = this.evidenciasRepo.create({
+      bitacora_id: bitacora.id,
+      evidencia_url,
+      con_audio,
+    });
+    await this.evidenciasRepo.save(nueva);
+
     return this.findOne(bitacora.id);
   }
 

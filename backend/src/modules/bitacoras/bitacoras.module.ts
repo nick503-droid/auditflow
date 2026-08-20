@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Bitacora } from './entities/bitacora.entity';
+import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { BitacorasService } from './bitacoras.service';
 import { BitacorasController } from './bitacoras.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Bitacora])],
+  imports: [TypeOrmModule.forFeature([Bitacora, EvidenciaBitacora])],
   controllers: [BitacorasController],
   providers: [BitacorasService],
 })

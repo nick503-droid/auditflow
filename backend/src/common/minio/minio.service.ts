@@ -20,12 +20,29 @@ export class MinioService implements OnModuleInit {
   }
 
   // Se ejecuta una vez al arrancar el backend: crea el bucket si no existe
+  // y asegura que la política sea de lectura pública para que las URLs
+  // directas funcionen en la red local sin presigned URLs.
   async onModuleInit() {
     const existe = await this.client.bucketExists(this.bucket).catch(() => false);
     if (!existe) {
       await this.client.makeBucket(this.bucket);
       console.log(`Bucket "${this.bucket}" creado en MinIO`);
     }
+
+    // Política de lectura pública — permite GET anónimo a cualquier objeto
+    // del bucket. Solo aplica en la red local, no se expone a internet.
+    const politica = JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Principal: { AWS: ['*'] },
+          Action: ['s3:GetObject'],
+          Resource: [`arn:aws:s3:::${this.bucket}/*`],
+        },
+      ],
+    });
+    await this.client.setBucketPolicy(this.bucket, politica);
   }
 
   // Sube el buffer del archivo y regresa la URL para guardar en evidencia_url

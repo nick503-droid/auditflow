@@ -3,11 +3,13 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   DeleteDateColumn,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
 import { Restaurante } from '../../restaurantes/entities/restaurante.entity';
+import { EvidenciaBitacora } from './evidencia-bitacora.entity';
 
 export enum NivelUrgencia {
   LOW = 'low',
@@ -37,6 +39,11 @@ export class Bitacora {
   @Column({ type: 'text' })
   descripcion: string;
 
+  /**
+   * Mantenido como nullable para compatibilidad con registros anteriores.
+   * Las nuevas evidencias se guardan en la tabla evidencias_bitacora.
+   * @deprecated Usa la relación `evidencias` para evidencias nuevas.
+   */
   @Column({ type: 'varchar', nullable: true })
   evidencia_url: string;
 
@@ -54,6 +61,10 @@ export class Bitacora {
 
   @Column({ type: 'varchar', length: 6, default: 'MIGRAC' })
   codigo: string;
+
+  /** Lista de evidencias vinculadas a esta bitácora (puede ser vacía). */
+  @OneToMany(() => EvidenciaBitacora, (e) => e.bitacora, { eager: false })
+  evidencias: EvidenciaBitacora[];
 
   @DeleteDateColumn()
   deleted_at: Date;

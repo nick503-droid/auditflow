@@ -73,6 +73,26 @@ def actualizar_bitacora(id: str, dto: dict):
         return None
 
 
+def obtener_evidencias_bitacora(b_id: str) -> list:
+    """
+    Devuelve la lista de evidencias vinculadas a una bitácora.
+    Regresa [] si hay error de red o el ID no existe.
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/bitacoras/{b_id}",
+            timeout=5
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("evidencias", [])
+    except requests.exceptions.RequestException as e:
+        print(f"Error al obtener evidencias de bitácora {b_id}: {e}")
+        return []
+
+
+
+
 def obtener_bitacoras_por_fecha(fecha: str):
     """
     Trae todas las bitácoras de una fecha específica (formato YYYY-MM-DD).
