@@ -73,24 +73,41 @@ def actualizar_bitacora(id: str, dto: dict):
         return None
 
 
-def obtener_evidencias_bitacora(b_id: str) -> list:
+def obtener_evidencias_bitacora(codigo: str) -> list:
     """
-    Devuelve la lista de evidencias vinculadas a una bitácora.
-    Regresa [] si hay error de red o el ID no existe.
+    Devuelve la lista fresca de evidencias de una bitácora usando su
+    código corto (6 chars). Llama directamente al backend — no usa caché.
+    Regresa [] si hay error de red o el código no existe.
     """
     try:
         response = requests.get(
-            f"{API_BASE_URL}/bitacoras/{b_id}",
+            f"{API_BASE_URL}/bitacoras/codigo/{codigo}/evidencias",
             timeout=5
         )
         response.raise_for_status()
-        data = response.json()
-        return data.get("evidencias", [])
+        return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error al obtener evidencias de bitácora {b_id}: {e}")
+        print(f"[evidencias] Error al obtener evidencias del código {codigo}: {e}")
         return []
 
 
+def cerrar_bitacora_dia(fecha: str) -> dict | None:
+    """
+    Cierra todas las bitácoras abiertas de una fecha (formato YYYY-MM-DD).
+    Retorna { 'cerradas': <int> } si tuvo éxito, o None si hubo error.
+    """
+    try:
+        response = requests.patch(
+            f"{API_BASE_URL}/bitacoras/fecha/{fecha}/cerrar",
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"[cerrar_dia] Error al cerrar bitácoras de {fecha}: {e}")
+        if getattr(e, "response", None) is not None:
+            print(f"Respuesta del servidor: {e.response.text}")
+        return None
 
 
 def obtener_bitacoras_por_fecha(fecha: str):

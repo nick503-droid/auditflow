@@ -9,6 +9,11 @@ Refinamientos implementados:
   5. Múltiples evidencias por bitácora (backend ahora admite N).
   6. Debounce de 1.5 s en el autoguardado.
   7. Persistencia offline en SQLite — escribe local primero, sube después.
+  8. Vigilante tomado del selector global superior (no por fila individual).
+  9. Urgencia como OptionMenu con 4 niveles; tarjeta cambia de color.
+ 10. Descripción responsiva con CTkTextbox que crece verticalmente.
+ 11. Botón "Cerrar bitácora del día" con validación de filas completas.
+ 12. Fetch fresco de evidencias al abrir el panel lateral.
 """
 
 import customtkinter as ctk
@@ -31,6 +36,7 @@ from api.client import (
     actualizar_bitacora,
     obtener_restaurantes,
     obtener_usuarios,
+    cerrar_bitacora_dia,
 )
 from core.recorder import GrabadorPantalla, es_archivo_grabado
 from db.local_db import (
@@ -41,16 +47,33 @@ from db.local_db import (
 )
 
 # ─── Paleta de colores ────────────────────────────────────────────────────────
+# 4 niveles de urgencia: comentar (azul) < leve (verde) < medio (ámbar) < grave (rojo)
 URGENCIA_COLORES = {
-    "low":      {"bg": "#1e3a2e", "fg": "#4ade80", "icono": "🟢"},
-    "medium":   {"bg": "#3a2e10", "fg": "#facc15", "icono": "🟡"},
-    "critical": {"bg": "#3a1010", "fg": "#f87171", "icono": "🔴"},
+    "comentar": {"bg": "#1a2a3e", "fg": "#93c5fd", "tarjeta_par": "#141e2e", "tarjeta_impar": "#111827"},
+    "leve":     {"bg": "#1e3a2e", "fg": "#4ade80", "tarjeta_par": "#152d22", "tarjeta_impar": "#12261d"},
+    "medio":    {"bg": "#3a2e10", "fg": "#facc15", "tarjeta_par": "#2e2408", "tarjeta_impar": "#261e06"},
+    "grave":    {"bg": "#3a1010", "fg": "#f87171", "tarjeta_par": "#2a0c0c", "tarjeta_impar": "#220808"},
 }
-URGENCIA_CICLO = ["low", "medium", "critical"]
+URGENCIA_OPCIONES = ["Comentar", "Leve", "Medio", "Grave"]
+
+# Mapeo nombre display → valor backend (y viceversa)
+URGENCIA_DISPLAY_A_VALOR = {
+    "Comentar": "comentar",
+    "Leve":     "leve",
+    "Medio":    "medio",
+    "Grave":    "grave",
+}
+URGENCIA_VALOR_A_DISPLAY = {v: k for k, v in URGENCIA_DISPLAY_A_VALOR.items()}
+
+# Mapeo de valores legacy del backend (antes del remapeo SQL)
+URGENCIA_LEGACY = {
+    "low":      "leve",
+    "medium":   "medio",
+    "critical": "grave",
+}
 
 COLOR_FILA_PAR         = "#1a1a2e"
 COLOR_FILA_IMPAR       = "#16213e"
-COLOR_FILA_CRITICA     = "#2a1010"
 COLOR_CODIGO_BG        = "#1e3a5e"
 COLOR_CODIGO_FG        = "#93c5fd"
 COLOR_BOTON_EV_OK      = "#166534"
@@ -59,15 +82,14 @@ COLOR_SYNC_OK          = "#4ade80"
 COLOR_SYNC_OFFLINE     = "#facc15"
 COLOR_SYNC_WORKING     = "#60a5fa"
 
-ANCHO_REST   = 160
-ANCHO_VIG    = 130
-ANCHO_HORA   = 70
-ANCHO_URG    = 30   # solo el ícono
-ANCHO_COD    = 80
-ANCHO_EV_BTN = 110
+ANCHO_REST     = 160
+ANCHO_HORA     = 70
+ANCHO_COD      = 80
+ANCHO_EV_BTN   = 110
+ANCHO_URG_MENU = 110   # OptionMenu de urgencia
 
-DESC_MAXLEN  = 45   # caracteres antes de truncar con "…"
-DEBOUNCE_MS  = 1500
+DEBOUNCE_MS    = 1500
+ALTURA_DESC    = 28    # altura mínima del CTkTextbox de descripción
 
 
 class BitacorasFrame(ctk.CTkFrame):
@@ -180,6 +202,12 @@ class BitacorasFrame(ctk.CTkFrame):
             command=self._agregar_fila_vacia,
         ).pack(side="right", padx=5)
 
+        ctk.CTkButton(
+            self.top_bar, text="🔒 Cerrar día", width=110,
+            fg_color="#7c3aed", hover_color="#6d28d9",
+            command=self._on_cerrar_bitacora_dia,
+        ).pack(side="right", padx=5)
+
     def _actualizar_indicador_sync(self, estado: str, pendientes: int = 0):
         """estado: 'ok' | 'offline' | 'syncing'"""
         if estado == "ok":
@@ -192,25 +220,33 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Encabezado de columnas ───────────────────────────────────────────────
 
     def _construir_encabezado_columnas(self):
-        """Fila fija de etiquetas que sirve de cabecera visual."""
+        """Fila fija de etiquetas que sirve de cabecera visual.
+        Orden: Restaurante | Hora | Descripción | Código | Evidencia | Urgencia
+        """
         hdr = ctk.CTkFrame(self, fg_color="#0f172a", corner_radius=0)
         hdr.grid(row=1, column=0, sticky="ew", padx=12, pady=0)
 
+        # La columna de descripción es expansible → se llena con grid para
+        # mantener alineación exacta con las tarjetas.
+        hdr.grid_columnconfigure(2, weight=1)
+
         headers = [
-            ("Urg", ANCHO_URG + 4),
-            ("Restaurante", ANCHO_REST),
-            ("Vigilante", ANCHO_VIG),
-            ("Hora", ANCHO_HORA),
-            ("Descripción", 0),        # expansible
-            ("Código", ANCHO_COD),
-            ("Evidencia", ANCHO_EV_BTN),
+            ("Restaurante", ANCHO_REST,     False),
+            ("Hora",        ANCHO_HORA,     False),
+            ("Descripción", 0,              True),   # expansible
+            ("Código",      ANCHO_COD,      False),
+            ("Evidencia",   ANCHO_EV_BTN,   False),
+            ("Urgencia",    ANCHO_URG_MENU, False),
         ]
-        for texto, ancho in headers:
-            kw = {"width": ancho} if ancho else {}
-            ctk.CTkLabel(
-                hdr, text=texto, font=ctk.CTkFont(size=10, weight="bold"),
+        for col_idx, (texto, ancho, expandir) in enumerate(headers):
+            kw = {} if expandir else {"width": ancho}
+            lbl = ctk.CTkLabel(
+                hdr, text=texto,
+                font=ctk.CTkFont(size=10, weight="bold"),
                 text_color="gray60", **kw,
-            ).pack(side="left", padx=4, pady=4)
+            )
+            sticky = "ew" if expandir else "w"
+            lbl.grid(row=0, column=col_idx, padx=4, pady=4, sticky=sticky)
 
     # ─── Área de filas (scroll) ───────────────────────────────────────────────
 
@@ -223,8 +259,15 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _construir_tarjeta(self, idx: int):
         """
-        Construye (o reconstruye) la tarjeta de una sola línea horizontal
-        para la fila `idx`.
+        Construye (o reconstruye) la tarjeta horizontal para la fila `idx`.
+
+        Columnas (sin Vigilante por fila):
+          col 0 — Restaurante (OptionMenu, ANCHO_REST)
+          col 1 — Hora        (Entry, ANCHO_HORA)
+          col 2 — Descripción (CTkTextbox, weight=1, expansible)
+          col 3 — Código      (badge solo-lectura, ANCHO_COD)
+          col 4 — Evidencia   (botón, ANCHO_EV_BTN)
+          col 5 — Urgencia    (OptionMenu, ANCHO_URG_MENU)
         """
         fila = self.filas[idx]
 
@@ -232,11 +275,11 @@ class BitacorasFrame(ctk.CTkFrame):
         if old_card and old_card.winfo_exists():
             old_card.destroy()
 
-        urgencia = fila.get("urgencia", "low")
-        if urgencia == "critical":
-            bg_color = COLOR_FILA_CRITICA
-        else:
-            bg_color = COLOR_FILA_PAR if idx % 2 == 0 else COLOR_FILA_IMPAR
+        # Color de fondo según urgencia
+        urgencia = fila.get("urgencia", "leve")
+        urgencia = URGENCIA_LEGACY.get(urgencia, urgencia)   # normalizar legacy
+        urg_info = URGENCIA_COLORES.get(urgencia, URGENCIA_COLORES["leve"])
+        bg_color = urg_info["tarjeta_par"] if idx % 2 == 0 else urg_info["tarjeta_impar"]
 
         card = ctk.CTkFrame(
             self.scroll_frame,
@@ -244,23 +287,10 @@ class BitacorasFrame(ctk.CTkFrame):
             corner_radius=6,
         )
         card.grid(row=idx, column=0, sticky="ew", pady=1, padx=0)
-        card.grid_columnconfigure(4, weight=1)   # col 4 = descripción, se expande
+        card.grid_columnconfigure(2, weight=1)   # col 2 = descripción, se expande
         fila["_card_frame"] = card
 
-        # Col 0 — Badge de urgencia (solo ícono, click para ciclar)
-        urg_data = URGENCIA_COLORES.get(urgencia, URGENCIA_COLORES["low"])
-        urg_btn = ctk.CTkButton(
-            card,
-            text=urg_data["icono"],
-            width=ANCHO_URG, height=30,
-            fg_color="transparent",
-            hover_color=urg_data["bg"],
-            font=ctk.CTkFont(size=14),
-            command=lambda i=idx: self._ciclar_urgencia(i),
-        )
-        urg_btn.grid(row=0, column=0, padx=(4, 2), pady=3)
-
-        # Col 1 — Restaurante
+        # ── Col 0 — Restaurante ───────────────────────────────────────────────
         nombres_rests = list(self.mapa_restaurantes.keys()) if self.mapa_restaurantes else ["—"]
         rest_val = fila.get("restaurante", "")
         if rest_val not in nombres_rests:
@@ -275,55 +305,39 @@ class BitacorasFrame(ctk.CTkFrame):
             dynamic_resizing=False,
         )
         om_rest.set(rest_val if rest_val else "— Restaurante —")
-        om_rest.grid(row=0, column=1, padx=2, pady=3)
+        om_rest.grid(row=0, column=0, padx=(4, 2), pady=3)
 
-        # Col 2 — Vigilante
-        nombres_usrs = list(self.mapa_usuarios.keys()) if self.mapa_usuarios else [self.usuario_activo["nombre"]]
-        vig_val = fila.get("vigilante", self.combo_vigilante.get())
-        if vig_val not in nombres_usrs:
-            vig_val = nombres_usrs[0]
-
-        om_vig = ctk.CTkOptionMenu(
-            card,
-            values=nombres_usrs,
-            width=ANCHO_VIG, height=28,
-            command=lambda v, i=idx: self._on_campo_inmediato(i, "vigilante", v),
-            font=ctk.CTkFont(size=11),
-            dynamic_resizing=False,
-        )
-        om_vig.set(vig_val)
-        om_vig.grid(row=0, column=2, padx=2, pady=3)
-
-        # Col 3 — Hora (texto libre, NO autogenerada)
+        # ── Col 1 — Hora (texto libre) ────────────────────────────────────────
         hora_entry = ctk.CTkEntry(card, placeholder_text="HH:MM", width=ANCHO_HORA, height=28,
                                   font=ctk.CTkFont(size=11))
         hora_val = fila.get("hora", "")
         if hora_val:
             hora_entry.insert(0, hora_val)
-        hora_entry.grid(row=0, column=3, padx=2, pady=3)
+        hora_entry.grid(row=0, column=1, padx=2, pady=3)
         hora_entry.bind("<KeyRelease>", lambda e, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
         hora_entry.bind("<FocusIn>",  lambda e: self._marcar_editando(True))
         hora_entry.bind("<FocusOut>", lambda e: self._marcar_editando(False))
 
-        # Col 4 — Descripción truncada (expansible)
+        # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
-        desc_truncada = (desc_val[:DESC_MAXLEN] + "…") if len(desc_val) > DESC_MAXLEN else desc_val
 
-        desc_entry = ctk.CTkEntry(
+        desc_box = ctk.CTkTextbox(
             card,
-            placeholder_text="Descripción…",
-            height=28,
+            height=ALTURA_DESC,
             font=ctk.CTkFont(size=11),
+            wrap="word",
+            activate_scrollbars=False,
         )
         if desc_val:
-            desc_entry.insert(0, desc_truncada)
-        desc_entry.grid(row=0, column=4, padx=2, pady=3, sticky="ew")
-        desc_entry.bind("<KeyRelease>", lambda e, i=idx, w=desc_entry: self._on_keyrelease(i, "descripcion", w))
-        desc_entry.bind("<Double-Button-1>", lambda e, i=idx: self._expandir_descripcion(i))
-        desc_entry.bind("<FocusIn>",  lambda e: self._marcar_editando(True))
-        desc_entry.bind("<FocusOut>", lambda e: self._marcar_editando(False))
+            desc_box.insert("1.0", desc_val)
+        desc_box.grid(row=0, column=2, padx=2, pady=3, sticky="ew")
+        desc_box.bind("<KeyRelease>", lambda e, i=idx, w=desc_box: self._on_keyrelease_textbox(i, w))
+        desc_box.bind("<FocusIn>",   lambda e: self._marcar_editando(True))
+        desc_box.bind("<FocusOut>",  lambda e: self._marcar_editando(False))
+        # Ajustar altura inicial al contenido ya cargado
+        self.after(50, lambda w=desc_box: self._ajustar_altura_textbox(w))
 
-        # Col 5 — Badge de código (solo lectura)
+        # ── Col 3 — Badge de código (solo lectura) ────────────────────────────
         codigo = fila.get("codigo", "")
         if codigo:
             cod_btn = ctk.CTkButton(
@@ -342,9 +356,9 @@ class BitacorasFrame(ctk.CTkFrame):
                 card, text="—", width=ANCHO_COD, height=28,
                 text_color="gray40", font=ctk.CTkFont(size=11),
             )
-        cod_btn.grid(row=0, column=5, padx=2, pady=3)
+        cod_btn.grid(row=0, column=3, padx=2, pady=3)
 
-        # Col 6 — Botón de evidencia
+        # ── Col 4 — Botón de evidencia ────────────────────────────────────────
         evidencias = fila.get("evidencias", [])
         tiene_ev = len(evidencias) > 0 or fila.get("evidencia") == "Sí"
         if tiene_ev:
@@ -365,14 +379,31 @@ class BitacorasFrame(ctk.CTkFrame):
             font=ctk.CTkFont(size=11),
             command=lambda i=idx: self._on_boton_evidencia(i),
         )
-        ev_btn.grid(row=0, column=6, padx=(2, 6), pady=3)
+        ev_btn.grid(row=0, column=4, padx=2, pady=3)
+
+        # ── Col 5 — Urgencia (OptionMenu, al final) ───────────────────────────
+        urg_display = URGENCIA_VALOR_A_DISPLAY.get(urgencia, "Leve")
+
+        urg_menu = ctk.CTkOptionMenu(
+            card,
+            values=URGENCIA_OPCIONES,
+            width=ANCHO_URG_MENU, height=28,
+            font=ctk.CTkFont(size=11),
+            dynamic_resizing=False,
+            fg_color=urg_info["bg"],
+            text_color=urg_info["fg"],
+            button_color=urg_info["bg"],
+            button_hover_color=urg_info["bg"],
+            command=lambda v, i=idx: self._on_cambiar_urgencia(i, v),
+        )
+        urg_menu.set(urg_display)
+        urg_menu.grid(row=0, column=5, padx=(2, 6), pady=3)
 
         fila["_widgets"] = {
             "restaurante": om_rest,
-            "vigilante":   om_vig,
             "hora":        hora_entry,
-            "descripcion": desc_entry,
-            "urgencia":    urg_btn,
+            "descripcion": desc_box,
+            "urgencia":    urg_menu,
             "codigo":      cod_btn,
             "evidencia":   ev_btn,
         }
@@ -380,50 +411,31 @@ class BitacorasFrame(ctk.CTkFrame):
     def _reconstruir_tarjeta(self, idx: int):
         self._construir_tarjeta(idx)
 
-    # ─── Expandir descripción en popup ────────────────────────────────────────
+    # ─── Helpers de descripción responsiva ───────────────────────────────────
 
-    def _expandir_descripcion(self, idx: int):
-        """Abre un popup con un TextBox editable para la descripción completa."""
-        fila = self.filas[idx]
-        desc_actual = fila.get("descripcion", "")
+    def _ajustar_altura_textbox(self, widget: ctk.CTkTextbox):
+        """Ajusta la altura del CTkTextbox al número de líneas de su contenido."""
+        try:
+            if not widget.winfo_exists():
+                return
+            # Contar líneas de texto (mínimo 1)
+            contenido = widget.get("1.0", "end-1c")
+            n_lineas = max(1, contenido.count("\n") + 1)
+            # Cada línea ~18px, más padding interno
+            nueva_altura = max(ALTURA_DESC, n_lineas * 18 + 8)
+            widget.configure(height=nueva_altura)
+        except Exception:
+            pass
 
-        popup = ctk.CTkToplevel(self)
-        popup.title("Editar descripción")
-        popup.geometry("480x200")
-        popup.grab_set()
-        popup.resizable(False, False)
-
-        ctk.CTkLabel(
-            popup, text="Descripción completa:",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(padx=16, pady=(14, 4), anchor="w")
-
-        txt = ctk.CTkTextbox(popup, height=90, font=ctk.CTkFont(size=12), wrap="word")
-        txt.pack(padx=16, pady=0, fill="x")
-        txt.insert("1.0", desc_actual)
-        txt.focus()
-
-        def _confirmar():
-            nuevo = txt.get("1.0", "end").strip()
-            fila["descripcion"] = nuevo
-            popup.destroy()
-            # Actualizar widget inline con texto truncado
-            w = fila.get("_widgets", {}).get("descripcion")
-            if w and w.winfo_exists():
-                w.delete(0, "end")
-                truncada = (nuevo[:DESC_MAXLEN] + "…") if len(nuevo) > DESC_MAXLEN else nuevo
-                w.insert(0, truncada)
+    def _on_keyrelease_textbox(self, idx: int, widget: ctk.CTkTextbox):
+        """Callback de tecla para CTkTextbox: guarda texto y ajusta altura."""
+        try:
+            texto = widget.get("1.0", "end-1c").strip()
+            self.filas[idx]["descripcion"] = texto
+            self._ajustar_altura_textbox(widget)
             self._programar_guardado(idx)
-
-        ctk.CTkButton(
-            popup, text="✔ Confirmar", fg_color="#166534", hover_color="#14532d",
-            command=_confirmar,
-        ).pack(padx=16, pady=12, side="right")
-
-        ctk.CTkButton(
-            popup, text="Cancelar", fg_color="gray40", hover_color="gray30",
-            command=popup.destroy,
-        ).pack(padx=4, pady=12, side="right")
+        except Exception:
+            pass
 
     # ─── Agregar fila vacía ───────────────────────────────────────────────────
 
@@ -437,7 +449,7 @@ class BitacorasFrame(ctk.CTkFrame):
             "restaurante": "",
             "vigilante": vigilante_actual,
             "descripcion": "",
-            "urgencia": "low",
+            "urgencia": "leve",
             "evidencias": [],
             "evidencia": "",   # campo legacy para compatibilidad con el reconciliador
             "_debounce_id": None,
@@ -463,12 +475,12 @@ class BitacorasFrame(ctk.CTkFrame):
         self.filas[idx][campo] = widget.get()
         self._programar_guardado(idx)
 
-    def _ciclar_urgencia(self, idx: int):
-        urg_actual = self.filas[idx].get("urgencia", "low")
-        pos_actual = URGENCIA_CICLO.index(urg_actual) if urg_actual in URGENCIA_CICLO else 0
-        self.filas[idx]["urgencia"] = URGENCIA_CICLO[(pos_actual + 1) % 3]
+    def _on_cambiar_urgencia(self, idx: int, display_value: str):
+        """Convierte el nombre display a valor backend y reconstruye la tarjeta."""
+        valor = URGENCIA_DISPLAY_A_VALOR.get(display_value, "leve")
+        self.filas[idx]["urgencia"] = valor
         self._programar_guardado(idx)
-        self._reconstruir_tarjeta(idx)
+        self._reconstruir_tarjeta(idx)   # reconstruir para cambiar bg_color
 
     def _copiar_codigo(self, codigo: str):
         try:
@@ -488,6 +500,62 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         toast.pack(side="left", padx=10)
         self.after(2500, toast.destroy)
+
+    # ─── Cerrar bitácora del día ──────────────────────────────────────────────
+
+    def _on_cerrar_bitacora_dia(self):
+        """
+        Valida que todas las filas con b_id tengan restaurante, hora y descripción.
+        Si pasan la validación, llama al backend para marcar la bitácora como cerrada.
+        """
+        incompletas = []
+        for i, fila in enumerate(self.filas):
+            # Solo validar filas que ya tienen ID en el backend
+            if not fila.get("b_id"):
+                continue
+            faltantes = []
+            if not fila.get("restaurante", "").strip():
+                faltantes.append("restaurante")
+            if not fila.get("hora", "").strip():
+                faltantes.append("hora")
+            if not fila.get("descripcion", "").strip():
+                faltantes.append("descripción")
+            if faltantes:
+                codigo = fila.get("codigo", f"fila #{i+1}")
+                incompletas.append(f"  • {codigo}: falta {', '.join(faltantes)}")
+
+        if incompletas:
+            messagebox.showwarning(
+                "Filas incompletas",
+                "No se puede cerrar la bitácora del día.\n"
+                "Las siguientes filas están incompletas:\n\n"
+                + "\n".join(incompletas)
+                + "\n\nCompleta o elimina esas filas antes de cerrar.",
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Confirmar cierre",
+            f"¿Cerrar la bitácora del día {self.fecha_actual}?\n\n"
+            "Esta acción marcará todas las filas como cerradas en el servidor.",
+        ):
+            return
+
+        def _worker():
+            resultado = cerrar_bitacora_dia(self.fecha_actual)
+            if resultado is not None:
+                cerradas = resultado.get("cerradas", 0)
+                self.after(0, self._mostrar_toast, f"✅  Bitácora cerrada ({cerradas} filas)")
+                self.after(0, self._actualizar_indicador_sync, "ok")
+            else:
+                self.after(
+                    0,
+                    messagebox.showerror,
+                    "Error",
+                    "No se pudo cerrar la bitácora en el servidor.\nRevisa la conexión.",
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ─── Debounce + guardado ──────────────────────────────────────────────────
 
@@ -513,19 +581,20 @@ class BitacorasFrame(ctk.CTkFrame):
         if not rest_id:
             return   # sin restaurante, ni siquiera guardamos local
 
-        vig_nombre = fila.get("vigilante", "").strip()
+        # Vigilante siempre del selector global — no del campo por fila
+        vig_nombre = self.combo_vigilante.get().strip()
         usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
 
         datos_locales = {
-            "local_id":      fila.get("local_id"),
-            "b_id":          fila.get("b_id", ""),
-            "codigo":        fila.get("codigo", ""),
+            "local_id":       fila.get("local_id"),
+            "b_id":           fila.get("b_id", ""),
+            "codigo":         fila.get("codigo", ""),
             "restaurante_id": rest_id,
-            "usuario_id":    usr_id,
-            "descripcion":   fila.get("descripcion", ""),
-            "fecha":         self.fecha_actual,
-            "hora":          fila.get("hora", ""),
-            "urgencia":      fila.get("urgencia", "low"),
+            "usuario_id":     usr_id,
+            "descripcion":    fila.get("descripcion", ""),
+            "fecha":          self.fecha_actual,
+            "hora":           fila.get("hora", ""),
+            "urgencia":       fila.get("urgencia", "leve"),
         }
 
         # Paso 1: SQLite local (rápido, en hilo principal)
@@ -604,7 +673,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # Si la fila no tiene ID → crear en backend ahora mismo
         if not fila.get("b_id"):
-            vig_nombre = fila.get("vigilante", self.usuario_activo["nombre"])
+            vig_nombre = self.combo_vigilante.get().strip()
             rest_id = self.mapa_restaurantes[rest_nombre]
             usr_id  = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
 
@@ -614,7 +683,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "fecha":          self.fecha_actual,
                 "descripcion":    fila.get("descripcion", ""),
                 "hora":           fila.get("hora", ""),
-                "urgencia":       fila.get("urgencia", "low"),
+                "urgencia":       fila.get("urgencia", "leve"),
             }
             resultado = crear_bitacora(dto)
             if not resultado:
@@ -626,9 +695,20 @@ class BitacorasFrame(ctk.CTkFrame):
             self.ultimo_hash_bd = None
             self._reconstruir_tarjeta(idx)
 
-        # Mostrar panel de evidencia
-        evidencias = fila.get("evidencias", [])
-        self._mostrar_panel_evidencia(fila["codigo"], evidencias)
+        # Mostrar panel con indicador de carga, luego fetch fresco de evidencias
+        codigo = fila["codigo"]
+        self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []))  # muestra estado cacheado mientras carga
+
+        def _fetch_evidencias():
+            evidencias_frescas = obtener_evidencias_bitacora(codigo)
+            def _actualizar():
+                fila["evidencias"] = evidencias_frescas   # mantiene caché local consistente
+                self._mostrar_panel_evidencia(codigo, evidencias_frescas)
+                # Reconstruir botón de evidencia para reflejar conteo actualizado
+                self._reconstruir_tarjeta(idx)
+            self.after(0, _actualizar)
+
+        threading.Thread(target=_fetch_evidencias, daemon=True).start()
 
     # ─── Carga inicial ────────────────────────────────────────────────────────
 
@@ -723,6 +803,7 @@ class BitacorasFrame(ctk.CTkFrame):
     def _reconciliar_con_datos(self, bitacoras: list):
         """
         Sincroniza datos del backend con `self.filas` sin pisar borradores locales.
+        Normaliza también valores legacy de urgencia (low/medium/critical).
         """
         with self.lock:
             if self.editando:
@@ -742,6 +823,11 @@ class BitacorasFrame(ctk.CTkFrame):
             rest  = b.get("restaurante", {}).get("nombre", "") if isinstance(b.get("restaurante"), dict) else ""
             vig   = b.get("usuario", {}).get("nombre", "") if isinstance(b.get("usuario"), dict) else ""
             evids = b.get("evidencias", [])
+
+            # Normalizar urgencia legacy (valores viejos antes del remapeo SQL)
+            urgencia_raw = b.get("urgencia", "leve")
+            urgencia = URGENCIA_LEGACY.get(urgencia_raw, urgencia_raw)
+
             datos_nuevos = {
                 "b_id":        b_id,
                 "codigo":      b.get("codigo", ""),
@@ -749,7 +835,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "restaurante": rest,
                 "vigilante":   vig,
                 "descripcion": b.get("descripcion", ""),
-                "urgencia":    b.get("urgencia", "low"),
+                "urgencia":    urgencia,
                 "evidencias":  evids,
                 "evidencia":   "Sí" if (evids or b.get("evidencia_url")) else "",
             }
@@ -899,7 +985,10 @@ class BitacorasFrame(ctk.CTkFrame):
             ).pack(pady=10)
 
     def _agregar_chip_evidencia(self, ev: dict):
-        """Agrega un chip de miniatura o ícono de video para una evidencia."""
+        """Agrega un chip de miniatura o ícono de video para una evidencia.
+        - Imágenes: muestra miniatura clickeable; logguea error si falla la carga.
+        - Videos: ícono 🎬 clickeable + nombre clickeable que abre en navegador/reproductor.
+        """
         url = ev.get("evidencia_url", "")
         ext = url.rsplit(".", 1)[-1].lower() if "." in url else ""
 
@@ -909,7 +998,7 @@ class BitacorasFrame(ctk.CTkFrame):
         es_imagen = ext in ("jpg", "jpeg", "png", "webp")
 
         if es_imagen:
-            # Intentar cargar miniatura desde URL
+            # Intentar cargar miniatura desde URL (bucket MinIO de lectura pública)
             try:
                 import urllib.request
                 with urllib.request.urlopen(url, timeout=3) as resp:
@@ -917,18 +1006,25 @@ class BitacorasFrame(ctk.CTkFrame):
                 img_pil = Image.open(io.BytesIO(datos)).convert("RGB")
                 img_pil.thumbnail((60, 40))
                 img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-                lbl = ctk.CTkLabel(chip, image=img_ctk, text="")
+                lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
                 lbl.pack(side="left", padx=6, pady=4)
                 lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
-            except Exception:
-                ctk.CTkLabel(chip, text="🖼", font=ctk.CTkFont(size=18)).pack(side="left", padx=8)
+            except Exception as exc:
+                print(f"[evidencia] Error cargando miniatura '{url}': {exc}")
+                ico = ctk.CTkLabel(chip, text="🖼", font=ctk.CTkFont(size=18), cursor="hand2")
+                ico.pack(side="left", padx=8)
+                ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
         else:
-            ctk.CTkLabel(chip, text="🎬", font=ctk.CTkFont(size=18)).pack(side="left", padx=8)
+            # Video u otro tipo: ícono clickeable
+            ico = ctk.CTkLabel(chip, text="🎬", font=ctk.CTkFont(size=18), cursor="hand2")
+            ico.pack(side="left", padx=8)
+            ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
 
         nombre = url.rsplit("/", 1)[-1] if "/" in url else url
+        nombre_corto = (nombre[:24] + "…") if len(nombre) > 24 else nombre
         lbl_nombre = ctk.CTkLabel(
-            chip, text=nombre[:24] + "…" if len(nombre) > 24 else nombre,
-            text_color="gray80", font=ctk.CTkFont(size=10),
+            chip, text=nombre_corto,
+            text_color="gray80", font=ctk.CTkFont(size=10), cursor="hand2",
         )
         lbl_nombre.pack(side="left", padx=4)
         lbl_nombre.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))

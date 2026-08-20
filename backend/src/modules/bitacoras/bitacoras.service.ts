@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { Bitacora } from './entities/bitacora.entity';
 import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
@@ -52,6 +52,19 @@ export class BitacorasService {
     });
   }
 
+  /**
+   * Devuelve las evidencias de la bitácora identificada por código corto.
+   * Retorna [] si no existe o hay error.
+   */
+  async findEvidenciasPorCodigo(codigo: string): Promise<EvidenciaBitacora[]> {
+    const bitacora = await this.findPorCodigo(codigo);
+    if (!bitacora) return [];
+    return this.evidenciasRepo.find({
+      where: { bitacora_id: bitacora.id },
+      order: { creado_en: 'ASC' },
+    });
+  }
+
   async create(dto: CreateBitacoraDto) {
     const codigo = await this.generarCodigoUnico();
 
@@ -71,6 +84,22 @@ export class BitacorasService {
   async update(id: string, dto: UpdateBitacoraDto) {
     await this.bitacorasRepo.update(id, dto);
     return this.findOne(id);
+  }
+
+  /**
+   * Cierra todas las bitácoras abiertas de una fecha dada:
+   * establece `cerrada_en = NOW()` en las que tienen `cerrada_en IS NULL`.
+   * Retorna cuántas filas se marcaron como cerradas.
+   */
+  async cerrarBitacoraDia(fecha: string): Promise<{ cerradas: number }> {
+    const result = await this.bitacorasRepo.update(
+      {
+        fecha: new Date(fecha),
+        cerrada_en: IsNull(),
+      },
+      { cerrada_en: new Date() },
+    );
+    return { cerradas: result.affected ?? 0 };
   }
 
   /**
