@@ -414,18 +414,64 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Helpers de descripción responsiva ───────────────────────────────────
 
     def _ajustar_altura_textbox(self, widget: ctk.CTkTextbox):
-        """Ajusta la altura del CTkTextbox al número de líneas de su contenido."""
+        """Ajusta la altura del CTkTextbox al número de líneas VISUALES.
+
+        Estrategia principal: dlineinfo("end-1c") — lee la posición Y del
+        último carácter ya renderizado (post word-wrap) y divide entre la
+        altura de una línea para obtener el conteo visual real.
+        Esto funciona con wrap="word" y activate_scrollbars=False.
+
+        Requiere update_idletasks() para que tkinter calcule el layout y
+        el word-wrap antes de consultar dlineinfo.
+        """
         try:
             if not widget.winfo_exists():
                 return
-            # Contar líneas de texto (mínimo 1)
-            contenido = widget.get("1.0", "end-1c")
-            n_lineas = max(1, contenido.count("\n") + 1)
-            # Cada línea ~18px, más padding interno
-            nueva_altura = max(ALTURA_DESC, n_lineas * 18 + 8)
-            widget.configure(height=nueva_altura)
-        except Exception:
-            pass
+
+            # Forzar que tkinter calcule el layout y el word-wrap
+            widget.update_idletasks()
+
+            # Acceder al tk.Text interno de CTkTextbox
+            tk_text = widget._textbox
+
+            # --- Método 1: dlineinfo (más portable y preciso con word-wrap) ---
+            # dlineinfo devuelve (x, y, width, height, baseline) de la
+            # display-line que contiene el índice, o None si no está calculada.
+            # Comparar Y de la última línea con Y de la primera da la altura
+            # real del contenido ya envuelto por word-wrap.
+            info_last  = tk_text.dlineinfo("end-1c")
+            info_first = tk_text.dlineinfo("1.0")
+
+            if info_last is not None and info_first is not None:
+                line_height = info_last[3]          # altura px de esa línea
+                y_last      = info_last[1]          # posición Y de la última línea
+                y_first     = info_first[1]         # posición Y de la primera
+                if line_height and line_height > 0:
+                    n_display = max(1, round((y_last - y_first) / line_height) + 1)
+                    nueva_altura = max(ALTURA_DESC, n_display * line_height + 10)
+                    widget.configure(height=nueva_altura)
+                    return
+
+            # --- Método 2: count("displaylines") — tkinter >= 8.6 ---
+            result = tk_text.count("1.0", "end", "displaylines")
+            if isinstance(result, (list, tuple)):
+                n_display = result[0] if result else 1
+            else:
+                n_display = result if result else 1
+            n_display = max(1, n_display)
+            widget.configure(height=max(ALTURA_DESC, n_display * 18 + 10))
+
+        except Exception as exc:
+            # --- Método 3 (fallback): contar \n literales ---
+            # Menos preciso con wrap="word", pero nunca lanza excepción.
+            print(f"[desc_resize] Fallback a conteo de \\n: {exc}")
+            try:
+                contenido = widget.get("1.0", "end-1c")
+                n_lineas = max(1, contenido.count("\n") + 1)
+                widget.configure(height=max(ALTURA_DESC, n_lineas * 18 + 10))
+            except Exception:
+                pass
+
 
     def _on_keyrelease_textbox(self, idx: int, widget: ctk.CTkTextbox):
         """Callback de tecla para CTkTextbox: guarda texto y ajusta altura."""
