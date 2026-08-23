@@ -1,5 +1,6 @@
 import requests
 import os
+import mimetypes
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:3000")
 
@@ -161,10 +162,23 @@ def subir_archivo(ruta_local: str):
     (url, error) — si tuvo éxito, error es None; si falló, url es None
     y error trae el mensaje real, para poder mostrarlo en la UI sin
     depender de revisar la consola.
+
+    Se incluye el MIME type explícito en la tupla multipart para que
+    el navegador reproduzca correctamente videos e imágenes (sin él,
+    el servidor recibe 'application/octet-stream' y MinIO lo guarda
+    sin Content-Type, haciendo que el browser muestre el binario crudo).
     """
     try:
-        with open(ruta_local, "rb") as archivo:
-            files = {"file": archivo}
+        nombre_archivo = os.path.basename(ruta_local)
+        # mimetypes.guess_type devuelve (type, encoding); nos interesa el type.
+        # Fallback a 'application/octet-stream' si no reconoce la extensión.
+        tipo_mime, _ = mimetypes.guess_type(ruta_local)
+        tipo_mime = tipo_mime or "application/octet-stream"
+
+        with open(ruta_local, "rb") as f:
+            # La tupla (nombre, file_object, mimetype) hace que requests
+            # adjunte el Content-Type correcto en la parte multipart/form-data.
+            files = {"file": (nombre_archivo, f, tipo_mime)}
             response = requests.post(f"{API_BASE_URL}/uploads", files=files, timeout=60)
             response.raise_for_status()
             return response.json().get("evidencia_url"), None

@@ -1,12 +1,20 @@
 import customtkinter as ctk
 
-
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("AuditFlow - Control de Auditoría")
-        self.geometry("500x450")
+        
+        # 1. Definir un tamaño inicial agradable y un tamaño mínimo para que no se rompa la UI
+        self.geometry("1024x768")
+        self.minsize(800, 600)
+
+        # 2. Arrancar la aplicación maximizada (pantalla completa)
+        try:
+            self.state('zoomed') # Comando nativo en Windows para maximizar
+        except Exception:
+            pass # En Linux/Mac a veces 'zoomed' no es compatible, lo ignoramos de forma segura
 
         # El frame actualmente visible. Empieza en None porque
         # todavía no hemos montado ninguno.

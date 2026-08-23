@@ -624,8 +624,8 @@ class BitacorasFrame(ctk.CTkFrame):
 
         rest_nombre = fila.get("restaurante", "").strip()
         rest_id = self.mapa_restaurantes.get(rest_nombre)
-        if not rest_id:
-            return   # sin restaurante, ni siquiera guardamos local
+        # ELIMINADO: if not rest_id: return
+        # Ahora permitimos guardar borradores sin restaurante en SQLite local.
 
         # Vigilante siempre del selector global — no del campo por fila
         vig_nombre = self.combo_vigilante.get().strip()
@@ -635,7 +635,7 @@ class BitacorasFrame(ctk.CTkFrame):
             "local_id":       fila.get("local_id"),
             "b_id":           fila.get("b_id", ""),
             "codigo":         fila.get("codigo", ""),
-            "restaurante_id": rest_id,
+            "restaurante_id": rest_id,  # Puede ser None si aún no se seleccionó restaurante
             "usuario_id":     usr_id,
             "descripcion":    fila.get("descripcion", ""),
             "fecha":          self.fecha_actual,
@@ -644,15 +644,18 @@ class BitacorasFrame(ctk.CTkFrame):
         }
 
         # Paso 1: SQLite local (rápido, en hilo principal)
+        # SIEMPRE guarda para no perder el borrador de la descripción
         local_id = guardar_bitacora_local(datos_locales)
         fila["local_id"] = local_id
 
         # Paso 2: intentar backend en hilo daemon (no bloquea UI)
-        threading.Thread(
-            target=self._subir_al_servidor,
-            args=(idx, local_id, datos_locales),
-            daemon=True,
-        ).start()
+        # Al backend SÍ le exigimos restaurante_id
+        if rest_id:
+            threading.Thread(
+                target=self._subir_al_servidor,
+                args=(idx, local_id, datos_locales),
+                daemon=True,
+            ).start()
 
     def _subir_al_servidor(self, idx: int, local_id: int, datos: dict):
         """Hilo daemon: crea o actualiza en backend y actualiza el SQLite."""
@@ -1033,7 +1036,7 @@ class BitacorasFrame(ctk.CTkFrame):
     def _agregar_chip_evidencia(self, ev: dict):
         """Agrega un chip de miniatura o ícono de video para una evidencia.
         - Imágenes: muestra miniatura clickeable; logguea error si falla la carga.
-        - Videos: ícono 🎬 clickeable + nombre clickeable que abre en navegador/reproductor.
+        - Videos: Extrae frame con OpenCV (si está instalado) o muestra ícono 🎬.
         """
         url = ev.get("evidencia_url", "")
         ext = url.rsplit(".", 1)[-1].lower() if "." in url else ""
@@ -1042,6 +1045,9 @@ class BitacorasFrame(ctk.CTkFrame):
         chip.pack(fill="x", pady=2, padx=2)
 
         es_imagen = ext in ("jpg", "jpeg", "png", "webp")
+        es_video  = ext in ("mp4", "avi", "mov", "mkv", "webm")
+
+        img_ctk = None
 
         if es_imagen:
             # Intentar cargar miniatura desde URL (bucket MinIO de lectura pública)
@@ -1052,17 +1058,37 @@ class BitacorasFrame(ctk.CTkFrame):
                 img_pil = Image.open(io.BytesIO(datos)).convert("RGB")
                 img_pil.thumbnail((60, 40))
                 img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-                lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
-                lbl.pack(side="left", padx=6, pady=4)
-                lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
             except Exception as exc:
                 print(f"[evidencia] Error cargando miniatura '{url}': {exc}")
-                ico = ctk.CTkLabel(chip, text="🖼", font=ctk.CTkFont(size=18), cursor="hand2")
-                ico.pack(side="left", padx=8)
-                ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+
+        elif es_video:
+            # Intentar capturar el primer frame del video usando OpenCV
+            try:
+                import cv2
+                # cv2.VideoCapture puede transmitir directamente desde HTTP/HTTPS
+                cap = cv2.VideoCapture(url)
+                ret, frame = cap.read()
+                if ret:
+                    # Convertir de formato BGR (OpenCV) a RGB (Pillow)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img_pil = Image.fromarray(frame_rgb)
+                    img_pil.thumbnail((60, 40))
+                    img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
+                cap.release()
+            except ImportError:
+                print("[evidencia] opencv-python no instalado. Mostrando ícono por defecto.")
+            except Exception as exc:
+                print(f"[evidencia] Error capturando miniatura de video '{url}': {exc}")
+
+        # Renderizar la miniatura (si se logró obtener) o el ícono fallback
+        if img_ctk:
+            lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
+            lbl.pack(side="left", padx=6, pady=4)
+            lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
         else:
-            # Video u otro tipo: ícono clickeable
-            ico = ctk.CTkLabel(chip, text="🎬", font=ctk.CTkFont(size=18), cursor="hand2")
+            # Fallback a ícono según el tipo si la extracción falló
+            icono_txt = "🖼" if es_imagen else "🎬"
+            ico = ctk.CTkLabel(chip, text=icono_txt, font=ctk.CTkFont(size=18), cursor="hand2")
             ico.pack(side="left", padx=8)
             ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
 

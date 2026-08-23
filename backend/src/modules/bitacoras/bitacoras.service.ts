@@ -31,8 +31,11 @@ export class BitacorasService {
    * compartida entre todos los videovigilantes.
    */
   findPorFecha(fecha: string) {
+    // Usamos string crudo en lugar de new Date(fecha) para evitar 
+    // que la zona horaria atrase el día por accidente.
     return this.bitacorasRepo.find({
-      where: { fecha: new Date(fecha) },
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      where: { fecha: fecha as any },
       relations: { usuario: true, restaurante: true, evidencias: true },
       order: { hora: 'ASC' },
     });
@@ -74,8 +77,8 @@ export class BitacorasService {
       descripcion: '',
       hora: '',
       ...dto,
-      // Si no viene fecha, usar la fecha actual del servidor
-      fecha: dto.fecha ? new Date(dto.fecha) : new Date(),
+      // Pasamos el string de la fecha directamente si existe para evitar desfases de zona horaria
+      fecha: dto.fecha ? (dto.fecha) : new Date(),
       codigo,
     });
     return this.bitacorasRepo.save(nueva);
@@ -92,13 +95,16 @@ export class BitacorasService {
    * Retorna cuántas filas se marcaron como cerradas.
    */
   async cerrarBitacoraDia(fecha: string): Promise<{ cerradas: number }> {
-    const result = await this.bitacorasRepo.update(
-      {
-        fecha: new Date(fecha),
-        cerrada_en: IsNull(),
-      },
-      { cerrada_en: new Date() },
-    );
+    // Usamos QueryBuilder. Pasamos el string de la fecha directamente ('YYYY-MM-DD')
+    // Esto es 100% inmune a problemas de zonas horarias de JavaScript.
+    const result = await this.bitacorasRepo
+      .createQueryBuilder()
+      .update(Bitacora)
+      .set({ cerrada_en: new Date() })
+      .where('fecha = :fecha', { fecha })
+      .andWhere('cerrada_en IS NULL')
+      .execute();
+
     return { cerradas: result.affected ?? 0 };
   }
 
@@ -159,7 +165,9 @@ export class BitacorasService {
     // Si después de 10 intentos sigue chocando (extremadamente improbable),
     // algo raro está pasando — mejor fallar ruidosamente que devolver un
     // código duplicado
-    throw new Error('No se pudo generar un código único después de 10 intentos');
+    throw new Error(
+      'No se pudo generar un código único después de 10 intentos',
+    );
   }
 
   private generarCodigoAleatorio(): string {

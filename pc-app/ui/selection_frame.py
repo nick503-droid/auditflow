@@ -38,10 +38,34 @@ class SelectionFrame(ctk.CTkFrame):
             self.frame_bitacoras, text="2. Módulo de Bitácoras colaborativas:"
         ).pack(anchor="w", pady=(0, 5))
         
-        # Campo de fecha pre-llenado con la fecha de hoy
-        self.entry_fecha = ctk.CTkEntry(self.frame_bitacoras, justify="center")
-        self.entry_fecha.insert(0, datetime.now().strftime("%Y-%m-%d"))
-        self.entry_fecha.pack(fill="x", pady=(0, 10))
+        # ELIMINADO: Campo de texto manual para la fecha
+        # AÑADIDO: Menú desplegable dinámico con los últimos 15 días
+        from datetime import timedelta
+        hoy = datetime.now()
+        
+        self.fechas_disponibles = []
+        opciones_mostrar = []
+        
+        for i in range(15):  # Mostrar historial de los últimos 15 días
+            dia = hoy - timedelta(days=i)
+            fecha_str = dia.strftime("%Y-%m-%d")
+            self.fechas_disponibles.append(fecha_str)
+            
+            # Formatear bonito para el usuario
+            if i == 0:
+                opciones_mostrar.append(f"Hoy ({fecha_str})")
+            elif i == 1:
+                opciones_mostrar.append(f"Ayer ({fecha_str})")
+            else:
+                opciones_mostrar.append(fecha_str)
+
+        self.combo_fecha = ctk.CTkOptionMenu(
+            self.frame_bitacoras, 
+            values=opciones_mostrar,
+            dropdown_font=ctk.CTkFont(size=12)
+        )
+        self.combo_fecha.set(opciones_mostrar[0]) # Por defecto "Hoy"
+        self.combo_fecha.pack(fill="x", pady=(0, 10))
 
         self.boton_bitacoras = ctk.CTkButton(
             self.frame_bitacoras, 
@@ -91,22 +115,25 @@ class SelectionFrame(ctk.CTkFrame):
             self.boton_reportes.configure(state="normal")
 
     def _on_bitacoras(self):
-        fecha = self.entry_fecha.get().strip()
+        # Obtener el texto que seleccionó el usuario ("Hoy...", "Ayer...", etc)
+        seleccion = self.combo_fecha.get()
         
-        # Validar que la fecha tenga el formato correcto para no romper el backend
-        try:
-            datetime.strptime(fecha, "%Y-%m-%d")
-        except ValueError:
-            messagebox.showwarning("Fecha inválida", "Por favor usa el formato exacto: YYYY-MM-DD")
-            return
+        # Extraer la fecha real "YYYY-MM-DD" del texto seleccionado usando expresiones regulares
+        import re
+        match = re.search(r'\d{4}-\d{2}-\d{2}', seleccion)
+        
+        if match:
+            fecha_exacta = match.group()
+        else:
+            fecha_exacta = datetime.now().strftime("%Y-%m-%d")
 
         from ui.bitacoras_frame import BitacorasFrame
 
-        # Navegar a la pantalla de Bitácoras pasándole el usuario y la fecha validada
+        # Navegar a la pantalla de Bitácoras pasándole el usuario y la fecha exacta seleccionada
         self.controlador.mostrar_frame(
             BitacorasFrame,
             usuario=self.usuario_seleccionado,
-            fecha=fecha
+            fecha=fecha_exacta
         )
 
     def _on_reportes(self):
