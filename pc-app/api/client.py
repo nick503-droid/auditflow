@@ -14,7 +14,6 @@ def obtener_usuarios():
         )
         response.raise_for_status()
         return response.json()
-
     except requests.exceptions.RequestException as e:
         print(f"Error al obtener usuarios: {e}")
         return []
@@ -29,7 +28,6 @@ def obtener_restaurantes():
         )
         response.raise_for_status()
         return response.json()
-
     except requests.exceptions.RequestException as e:
         print(f"Error al obtener restaurantes: {e}")
         return []
@@ -45,14 +43,12 @@ def crear_bitacora(dto):
         )
         response.raise_for_status()
         return response.json()
-
     except requests.exceptions.RequestException as e:
         print(f"Error al crear bitácora: {e}")
-
         if getattr(e, "response", None) is not None:
             print(f"Respuesta del servidor: {e.response.text}")
-
         return None
+
 
 def actualizar_bitacora(id: str, dto: dict):
     """Actualiza una bitácora en el backend."""
@@ -64,13 +60,10 @@ def actualizar_bitacora(id: str, dto: dict):
         )
         response.raise_for_status()
         return response.json()
-
     except requests.exceptions.RequestException as e:
         print(f"Error al actualizar bitácora: {e}")
-
         if getattr(e, "response", None) is not None:
             print(f"Respuesta del servidor: {e.response.text}")
-
         return None
 
 
@@ -162,34 +155,35 @@ def subir_archivo(ruta_local: str):
     (url, error) — si tuvo éxito, error es None; si falló, url es None
     y error trae el mensaje real, para poder mostrarlo en la UI sin
     depender de revisar la consola.
-
-    Se incluye el MIME type explícito en la tupla multipart para que
-    el navegador reproduzca correctamente videos e imágenes (sin él,
-    el servidor recibe 'application/octet-stream' y MinIO lo guarda
-    sin Content-Type, haciendo que el browser muestre el binario crudo).
     """
     try:
         nombre_archivo = os.path.basename(ruta_local)
-        # mimetypes.guess_type devuelve (type, encoding); nos interesa el type.
-        # Fallback a 'application/octet-stream' si no reconoce la extensión.
         tipo_mime, _ = mimetypes.guess_type(ruta_local)
         tipo_mime = tipo_mime or "application/octet-stream"
 
         with open(ruta_local, "rb") as f:
-            # La tupla (nombre, file_object, mimetype) hace que requests
-            # adjunte el Content-Type correcto en la parte multipart/form-data.
             files = {"file": (nombre_archivo, f, tipo_mime)}
             response = requests.post(f"{API_BASE_URL}/uploads", files=files, timeout=60)
             response.raise_for_status()
             return response.json().get("evidencia_url"), None
     except Exception as e:
-        # Exception genérico a propósito: captura también errores que
-        # NO son de red, como el archivo no existir, permisos, etc.
-        # (antes solo capturábamos requests.exceptions.RequestException,
-        # que se queda callado ante estos otros casos)
         mensaje_error = f"{type(e).__name__}: {e}"
         print(f"Error al subir '{ruta_local}': {mensaje_error}", flush=True)
         return None, mensaje_error
+
+
+def obtener_reportes():
+    """Trae la lista de todos los reportes desde el backend."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/reportes",
+            timeout=5
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error al obtener reportes: {e}")
+        return []
 
 
 def crear_reporte(dto: dict):
@@ -199,6 +193,23 @@ def crear_reporte(dto: dict):
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al crear reporte: {e}")
+        return None
+
+
+def actualizar_reporte(reporte_id: str, notas_finales: str):
+    """
+    Actualiza las notas finales de un reporte existente.
+    """
+    try:
+        response = requests.patch(
+            f"{API_BASE_URL}/reportes/{reporte_id}",
+            json={"notas_finales": notas_finales},
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error al actualizar reporte: {e}")
         return None
 
 

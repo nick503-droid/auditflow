@@ -16,6 +16,18 @@ export class Reporte {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  // ----------------------------------------------------
+  // ¡NUEVAS COLUMNAS! (Añadidas para el nuevo flujo)
+  // ----------------------------------------------------
+  
+  @Column({ type: 'varchar', length: 255, default: 'Reporte de Auditoría' })
+  titulo: string;
+
+  @Column({ type: 'varchar', length: 6, default: 'SINCOD' })
+  codigo: string;
+
+  // ----------------------------------------------------
+
   @ManyToOne(() => Restaurante)
   @JoinColumn({ name: 'restaurante_id' })
   restaurante: Restaurante;

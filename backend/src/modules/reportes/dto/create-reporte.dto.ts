@@ -1,16 +1,22 @@
-import { IsUUID, IsString, IsNotEmpty, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty } from 'class-validator';
 
 export class CreateReporteDto {
-  @IsUUID()
-  restaurante_id: string;
-
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   usuario_id: string;
 
   @IsString()
   @IsNotEmpty()
-  notas_finales: string;
+  restaurante_id: string;
 
-  @IsDateString()
-  fecha_jornada: string;
+  @IsString()
+  @IsOptional()
+  titulo?: string;
+
+  @IsString()
+  @IsOptional()
+  notas_finales?: string;
+  
+  @IsOptional()
+  fecha_jornada?: any;
 }
