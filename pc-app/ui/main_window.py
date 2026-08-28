@@ -5,16 +5,24 @@ class MainWindow(ctk.CTk):
         super().__init__()
 
         self.title("AuditFlow - Control de Auditoría")
-        
-        # 1. Definir un tamaño inicial agradable y un tamaño mínimo para que no se rompa la UI
-        self.geometry("1024x768")
-        self.minsize(800, 600)
 
-        # 2. Arrancar la aplicación maximizada (pantalla completa)
-        try:
-            self.state('zoomed') # Comando nativo en Windows para maximizar
-        except Exception:
-            pass # En Linux/Mac a veces 'zoomed' no es compatible, lo ignoramos de forma segura
+        # Calcular posición y tamaño DESPUÉS de que tkinter tenga pantalla disponible
+        self.update_idletasks()
+
+        pantalla_w = self.winfo_screenwidth()
+        pantalla_h = self.winfo_screenheight()
+
+        # Tamaño de la ventana: ancho fijo tipo "panel lateral derecho", alto casi completo
+        win_w = 480
+        win_h = pantalla_h - 80          # deja margen para la barra de tareas
+
+        # Posición: pegada al borde derecho con 16 px de margen
+        pos_x = pantalla_w - win_w - 16
+        pos_y = 40
+
+        self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
+        self.minsize(360, 380)
+        # (sin state('zoomed') — el usuario puede moverla/redimensionarla libremente)
 
         # El frame actualmente visible. Empieza en None porque
         # todavía no hemos montado ninguno.

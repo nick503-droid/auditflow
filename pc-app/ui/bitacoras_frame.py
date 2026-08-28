@@ -39,6 +39,7 @@ from api.client import (
     cerrar_bitacora_dia,
 )
 from core.recorder import GrabadorPantalla, es_archivo_grabado
+from core.sync_helper import actualizar_indicador_sync
 from db.local_db import (
     inicializar_db,
     guardar_bitacora_local,
@@ -105,7 +106,8 @@ class BitacorasFrame(ctk.CTkFrame):
         self.ultimo_hash_bd = None
 
         # Evidencia
-        self.ruta_evidencia = None
+        self.rutas_evidencia = []
+        self.ruta_evidencia_actual = None
         self.grabador = GrabadorPantalla()
         self.grabando = False
         self.indicador = None
@@ -209,13 +211,8 @@ class BitacorasFrame(ctk.CTkFrame):
         ).pack(side="right", padx=5)
 
     def _actualizar_indicador_sync(self, estado: str, pendientes: int = 0):
-        """estado: 'ok' | 'offline' | 'syncing'"""
-        if estado == "ok":
-            self.label_sync.configure(text="⬤ Sincronizado", text_color=COLOR_SYNC_OK)
-        elif estado == "offline":
-            self.label_sync.configure(text="⬤ Sin conexión — guardando local", text_color=COLOR_SYNC_OFFLINE)
-        elif estado == "syncing":
-            self.label_sync.configure(text=f"↻ Sincronizando {pendientes}…", text_color=COLOR_SYNC_WORKING)
+        """Delega a sync_helper para mantener la paleta centralizada."""
+        actualizar_indicador_sync(self.label_sync, estado, pendientes)
 
     # ─── Encabezado de columnas ───────────────────────────────────────────────
 
@@ -624,18 +621,19 @@ class BitacorasFrame(ctk.CTkFrame):
 
         rest_nombre = fila.get("restaurante", "").strip()
         rest_id = self.mapa_restaurantes.get(rest_nombre)
-        # ELIMINADO: if not rest_id: return
-        # Ahora permitimos guardar borradores sin restaurante en SQLite local.
 
         # Vigilante siempre del selector global — no del campo por fila
         vig_nombre = self.combo_vigilante.get().strip()
         usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
 
+        if not rest_id or not usr_id:
+            return
+
         datos_locales = {
             "local_id":       fila.get("local_id"),
             "b_id":           fila.get("b_id", ""),
             "codigo":         fila.get("codigo", ""),
-            "restaurante_id": rest_id,  # Puede ser None si aún no se seleccionó restaurante
+            "restaurante_id": rest_id,
             "usuario_id":     usr_id,
             "descripcion":    fila.get("descripcion", ""),
             "fecha":          self.fecha_actual,
@@ -1135,7 +1133,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
-        self.ruta_evidencia = self.grabador.iniciar(con_audio=con_audio)
+        self.ruta_evidencia_actual = self.grabador.iniciar(con_audio=con_audio)
         self.grabando = True
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
@@ -1146,8 +1144,10 @@ class BitacorasFrame(ctk.CTkFrame):
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
-        nombre_archivo = self.ruta_evidencia.replace("\\", "/").split("/")[-1]
-        self.label_archivo.configure(text=f"✅ Grabado:\n{nombre_archivo}")
+        if self.ruta_evidencia_actual:
+            self.rutas_evidencia.append(self.ruta_evidencia_actual)
+            self.ruta_evidencia_actual = None
+        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
 
     def _mostrar_indicador_rec(self):
         self.indicador = ctk.CTkToplevel(self.controlador)
@@ -1170,14 +1170,15 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Adjuntar / Subir evidencia ───────────────────────────────────────────
 
     def _on_adjuntar(self):
-        ruta = filedialog.askopenfilename(
-            title="Selecciona la evidencia",
+        rutas = filedialog.askopenfilenames(
+            title="Selecciona las evidencias",
             filetypes=[("Videos e imágenes", "*.mp4 *.jpg *.jpeg *.png")],
         )
-        if ruta:
-            self.ruta_evidencia = ruta
-            nombre_archivo = ruta.replace("\\", "/").split("/")[-1]
-            self.label_archivo.configure(text=f"✅ Archivo:\n{nombre_archivo}")
+        if rutas:
+            for r in rutas:
+                if r not in self.rutas_evidencia:
+                    self.rutas_evidencia.append(r)
+            self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
 
     def _on_subir_evidencia(self):
         codigo = self._codigo_panel_activo.strip().upper()
@@ -1186,44 +1187,47 @@ class BitacorasFrame(ctk.CTkFrame):
             messagebox.showwarning("Atención", "No hay un código de bitácora activo.")
             return
 
-        if not self.ruta_evidencia:
+        if not self.rutas_evidencia:
             messagebox.showwarning("Atención", "No has grabado ni adjuntado ninguna evidencia.")
             return
 
         self.boton_subir.configure(state="disabled", text="Subiendo…")
         self.update()
 
-        evidencia_url, error_upload = subir_archivo(self.ruta_evidencia)
-
-        if evidencia_url is None:
-            messagebox.showerror("Error", f"No se pudo subir el archivo.\n\nMotivo: {error_upload}")
-            self.boton_subir.configure(state="normal", text="⬆️  Subir y Vincular")
-            return
-
+        exitos = 0
         con_audio = bool(self.switch_audio.get())
-        data, error_link = adjuntar_evidencia_por_codigo(codigo, evidencia_url, con_audio)
-
-        if error_link:
-            messagebox.showerror("Error", error_link)
-        else:
-            if es_archivo_grabado(self.ruta_evidencia):
-                try:
-                    os.remove(self.ruta_evidencia)
-                except OSError:
-                    pass
-
-            self.label_archivo.configure(text="Sin evidencia adjunta")
+        
+        for ruta in list(self.rutas_evidencia):
+            evidencia_url, error_upload = subir_archivo(ruta)
+            if evidencia_url is None:
+                messagebox.showerror("Error", f"No se pudo subir {ruta}.\n\nMotivo: {error_upload}")
+                continue
+                
+            data, error_link = adjuntar_evidencia_por_codigo(codigo, evidencia_url, con_audio)
+            
+            if error_link:
+                messagebox.showerror("Error", f"No se pudo vincular {ruta}: {error_link}")
+            else:
+                exitos += 1
+                self.rutas_evidencia.remove(ruta)
+                if es_archivo_grabado(ruta):
+                    try:
+                        os.remove(ruta)
+                    except OSError:
+                        pass
+        
+        if exitos > 0:
             self.switch_audio.deselect()
-            self.ruta_evidencia = None
-
-            # Recargar lista de evidencias en el panel (el código sigue activo)
-            if data:
-                evidencias = data.get("evidencias", [])
-                self._mostrar_panel_evidencia(codigo, evidencias)
-                self._mostrar_toast(f"✅ Evidencia #{len(evidencias)} vinculada a {codigo}")
-            # Forzar recarga en el siguiente polling
+            evidencias_frescas = obtener_evidencias_bitacora(codigo)
+            self._mostrar_panel_evidencia(codigo, evidencias_frescas)
+            self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
             self.ultimo_hash_bd = None
-
+            
+        if self.rutas_evidencia:
+            self.label_archivo.configure(text=f"Quedan {len(self.rutas_evidencia)} archivos por subir")
+        else:
+            self.label_archivo.configure(text="Sin evidencia adjunta")
+            
         self.boton_subir.configure(state="normal", text="⬆️  Subir y Vincular")
 
     # ─── Navegación ───────────────────────────────────────────────────────────

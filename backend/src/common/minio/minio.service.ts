@@ -45,10 +45,32 @@ export class MinioService implements OnModuleInit {
     await this.client.setBucketPolicy(this.bucket, politica);
   }
 
-  // Sube el buffer del archivo y regresa la URL para guardar en evidencia_url
-  async subirArchivo(buffer: Buffer, nombreOriginal: string, mimetype: string): Promise<string> {
+  /**
+   * Sube el buffer del archivo y regresa la URL pública para guardar en evidencia_url.
+   *
+   * @param buffer         - Contenido binario del archivo.
+   * @param nombreOriginal - Nombre original del archivo (para extraer extensión).
+   * @param mimetype       - MIME type del archivo.
+   * @param prefijo        - Subcarpeta opcional dentro del bucket, sin slash al final.
+   *                         Ej: "bitacoras/08-25-2026" o "reportes/Riverside caso..."
+   *                         Si se omite, el archivo va a la raíz del bucket (comportamiento
+   *                         legado, compatible con versiones anteriores).
+   */
+  async subirArchivo(
+    buffer: Buffer,
+    nombreOriginal: string,
+    mimetype: string,
+    prefijo?: string,
+  ): Promise<string> {
     const extension = nombreOriginal.split('.').pop();
-    const nombreArchivo = `${randomUUID()}.${extension}`;
+    const uuid = randomUUID();
+
+    // Construir la clave (key) del objeto en MinIO:
+    //   sin prefijo → "uuid.ext"
+    //   con prefijo  → "bitacoras/08-25-2026/uuid.ext"
+    const nombreArchivo = prefijo
+      ? `${prefijo}/${uuid}.${extension}`
+      : `${uuid}.${extension}`;
 
     await this.client.putObject(this.bucket, nombreArchivo, buffer, buffer.length, {
       'Content-Type': mimetype,
@@ -56,5 +78,23 @@ export class MinioService implements OnModuleInit {
 
     // URL local que el dashboard usará para reproducir el video/foto
     return `http://${this.config.get('MINIO_ENDPOINT')}:${this.config.get('MINIO_PORT')}/${this.bucket}/${nombreArchivo}`;
+  }
+
+  /**
+   * Elimina un objeto de MinIO dado su nombre de clave (key).
+   * El key puede ser plano ("uuid.mp4") o con prefijo de carpeta
+   * ("reportes/Riverside.../uuid.mp4").
+   *
+   * Retorna true si la operación tuvo éxito, false si el objeto
+   * no existía o si ocurrió un error.
+   */
+  async eliminarArchivo(key: string): Promise<boolean> {
+    try {
+      await this.client.removeObject(this.bucket, key);
+      return true;
+    } catch (err) {
+      console.error(`[MinIO] Error al eliminar objeto "${key}":`, err);
+      return false;
+    }
   }
 }
