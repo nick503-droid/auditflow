@@ -2,6 +2,8 @@ import customtkinter as ctk
 from tkinter import messagebox, simpledialog
 from datetime import datetime
 import os
+import threading
+import webbrowser
 
 from api.client import (
     obtener_reportes,
@@ -17,11 +19,41 @@ from db.local_db import (
     eliminar_borrador_y_archivos,
     obtener_reportes_pendientes
 )
-from ui.bitacoras_frame import URGENCIA_COLORES, URGENCIA_VALOR_A_DISPLAY
+from core.thumbnailer import generar_miniatura
+
+# ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
+BG_COLOR = "#0f172a"
+CARD_COLOR = "#1e293b"
+CARD_HOVER = "#334155"
+TEXT_MAIN = "#f8fafc"
+TEXT_SEC = "#94a3b8"
+ACCENT_COLOR = "#4f46e5"
+ACCENT_HOVER = "#4338ca"
+SUCCESS_COLOR = "#10b981"
+SUCCESS_HOVER = "#059669"
+WARN_COLOR = "#f59e0b"
+DANGER_COLOR = "#ef4444"
+DANGER_HOVER = "#dc2626"
+CORNER_RADIUS = 15
+
+# Paleta específica para urgencias en admin
+URGENCIA_COLORS_ADMIN = {
+    "comentar": {"bg": "#1e293b", "border": "#3b82f6"}, # Slate 800, borde azul
+    "leve":     {"bg": "#1e293b", "border": "#10b981"}, # Borde verde
+    "medio":    {"bg": "#1e293b", "border": "#f59e0b"}, # Borde ámbar
+    "grave":    {"bg": "#1e293b", "border": "#ef4444"}, # Borde rojo
+}
+URGENCIA_VALOR_A_DISPLAY = {
+    "comentar": "Comentar",
+    "leve": "Leve",
+    "medio": "Medio",
+    "grave": "Grave"
+}
+
 
 class AdminFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, usuario, **kwargs):
-        super().__init__(master, **kwargs)
+        super().__init__(master, fg_color=BG_COLOR, **kwargs)
         self.controlador = controlador
         self.usuario_activo = usuario
         
@@ -48,20 +80,32 @@ class AdminFrame(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         
         self.top_bar = ctk.CTkFrame(self, fg_color="transparent")
-        self.top_bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        self.top_bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 10))
         
-        self.lbl_titulo = ctk.CTkLabel(self.top_bar, text="", font=ctk.CTkFont(size=18, weight="bold"))
-        self.lbl_titulo.pack(side="left", padx=10)
+        self.lbl_titulo = ctk.CTkLabel(
+            self.top_bar, 
+            text="", 
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=TEXT_MAIN
+        )
+        self.lbl_titulo.pack(side="left")
         
         self.btn_back = ctk.CTkButton(
-            self.top_bar, text="← Volver", width=80, 
-            fg_color="gray40", hover_color="gray30",
+            self.top_bar, 
+            text="← Volver", 
+            width=100, height=36,
+            fg_color="transparent", 
+            hover_color=CARD_HOVER,
+            border_width=1,
+            border_color=CARD_COLOR,
+            text_color=TEXT_SEC,
+            font=ctk.CTkFont(size=13),
             command=self._on_back
         )
-        self.btn_back.pack(side="right", padx=10)
+        self.btn_back.pack(side="right")
         
         self.container = ctk.CTkFrame(self, fg_color="transparent")
-        self.container.grid(row=1, column=0, sticky="nsew")
+        self.container.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 24))
         
         self._render_root()
 
@@ -100,54 +144,81 @@ class AdminFrame(ctk.CTkFrame):
 
     def _render_root(self):
         self.vista_actual = "ROOT"
-        self._actualizar_top_bar("🗂️ Administrador")
+        self._actualizar_top_bar("🗂️ Explorador de Archivos")
         self._limpiar_container()
         
         frame_opciones = ctk.CTkFrame(self.container, fg_color="transparent")
-        frame_opciones.pack(expand=True, fill="x", padx=40)
+        frame_opciones.pack(expand=True, fill="both")
+        frame_opciones.grid_columnconfigure((0, 1), weight=1, uniform="col")
+        frame_opciones.grid_rowconfigure(0, weight=1)
         
+        # Función auxiliar para tarjetas de módulo
+        def crear_tarjeta_admin(parent, col, icono, titulo, desc, comando):
+            card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS, cursor="hand2")
+            card.grid(row=0, column=col, sticky="nsew", padx=12, pady=12)
+            
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(expand=True)
+            
+            lbl_icon = ctk.CTkLabel(inner, text=icono, font=ctk.CTkFont(size=48))
+            lbl_icon.pack(pady=(0, 12))
+            
+            lbl_tit = ctk.CTkLabel(inner, text=titulo, font=ctk.CTkFont(size=18, weight="bold"), text_color=TEXT_MAIN)
+            lbl_tit.pack(pady=(0, 6))
+            
+            lbl_desc = ctk.CTkLabel(inner, text=desc, font=ctk.CTkFont(size=13), text_color=TEXT_SEC)
+            lbl_desc.pack()
+            
+            def hover_in(e): card.configure(fg_color=CARD_HOVER)
+            def hover_out(e): card.configure(fg_color=CARD_COLOR)
+            def on_click(e): comando()
+            
+            for w in (card, inner, lbl_icon, lbl_tit, lbl_desc):
+                w.bind("<Enter>", hover_in)
+                w.bind("<Leave>", hover_out)
+                w.bind("<Button-1>", on_click)
+                
+            return card
+
         # Tarjeta Bitácoras
-        card_b = ctk.CTkFrame(frame_opciones, fg_color="#0284c7", corner_radius=12, cursor="hand2")
-        card_b.pack(fill="x", pady=10)
-        lbl_b = ctk.CTkLabel(card_b, text="📅 Explorar Bitácoras", font=ctk.CTkFont(size=18, weight="bold"), text_color="white")
-        lbl_b.pack(pady=20)
-        card_b.bind("<Button-1>", lambda e: self._abrir_vista_bitacoras())
-        lbl_b.bind("<Button-1>", lambda e: self._abrir_vista_bitacoras())
+        crear_tarjeta_admin(
+            frame_opciones, 0, "📅", "Explorar Bitácoras", 
+            "Busca anotaciones diarias por fecha y aplica filtros.", 
+            self._abrir_vista_bitacoras
+        )
         
         # Tarjeta Reportes
-        card_r = ctk.CTkFrame(frame_opciones, fg_color="#7c3aed", corner_radius=12, cursor="hand2")
-        card_r.pack(fill="x", pady=10)
-        lbl_r = ctk.CTkLabel(card_r, text="📊 Explorar Reportes", font=ctk.CTkFont(size=18, weight="bold"), text_color="white")
-        lbl_r.pack(pady=20)
-        card_r.bind("<Button-1>", lambda e: self._abrir_vista_reportes())
-        lbl_r.bind("<Button-1>", lambda e: self._abrir_vista_reportes())
+        crear_tarjeta_admin(
+            frame_opciones, 1, "📊", "Explorar Reportes", 
+            "Edita o elimina reportes completos (nube y borradores).", 
+            self._abrir_vista_reportes
+        )
 
     # ─── VISTA REPORTES ───────────────────────────────────────────────────────
 
     def _abrir_vista_reportes(self):
         self.vista_actual = "REPORTES"
-        self._actualizar_top_bar("📁 Reportes")
+        self._actualizar_top_bar("📁 Directorio de Reportes")
         self._limpiar_container()
         
         scroll = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll.pack(fill="both", expand=True)
         
-        lbl_cargando = ctk.CTkLabel(scroll, text="Cargando reportes...")
-        lbl_cargando.pack(pady=20)
+        lbl_cargando = ctk.CTkLabel(scroll, text="Cargando reportes...", text_color=TEXT_SEC)
+        lbl_cargando.pack(pady=40)
         
         def _fetch():
             nube = obtener_reportes()
             locales = obtener_reportes_pendientes()
             self.after(0, lambda: self._mostrar_lista_reportes(scroll, nube, locales, lbl_cargando))
             
-        import threading
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _mostrar_lista_reportes(self, parent, reportes_nube, reportes_locales, lbl_cargando):
         lbl_cargando.destroy()
         
         if not reportes_nube and not reportes_locales:
-            ctk.CTkLabel(parent, text="No hay reportes disponibles.").pack(pady=20)
+            ctk.CTkLabel(parent, text="No hay reportes disponibles.", text_color=TEXT_SEC).pack(pady=40)
             return
             
         # Mostrar locales primero
@@ -159,43 +230,61 @@ class AdminFrame(ctk.CTkFrame):
             self._crear_item_reporte(parent, r, es_local=False)
 
     def _crear_item_reporte(self, parent, reporte: dict, es_local: bool):
-        card = ctk.CTkFrame(parent, fg_color="#1e293b", corner_radius=8)
-        card.pack(fill="x", pady=4, padx=5)
+        card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, corner_radius=10)
+        card.pack(fill="x", pady=6)
         
-        icono = "💾" if es_local else "☁️"
+        icono = "💾 [Borrador]" if es_local else "☁️ [Nube]"
         titulo = reporte.get("titulo") or "Sin título"
         fecha = reporte.get("fecha_jornada") or ""
         if isinstance(fecha, str):
             fecha = fecha[:10]
             
         info_frame = ctk.CTkFrame(card, fg_color="transparent")
-        info_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        info_frame.pack(side="left", fill="both", expand=True, padx=20, pady=16)
         
-        ctk.CTkLabel(info_frame, text=f"{icono} {titulo}", font=ctk.CTkFont(weight="bold"), anchor="w").pack(fill="x")
-        ctk.CTkLabel(info_frame, text=f"Fecha: {fecha}", font=ctk.CTkFont(size=10), text_color="gray", anchor="w").pack(fill="x")
+        ctk.CTkLabel(
+            info_frame, 
+            text=titulo, 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            text_color=TEXT_MAIN,
+            anchor="w"
+        ).pack(fill="x")
+        
+        ctk.CTkLabel(
+            info_frame, 
+            text=f"{icono}   ·   Fecha: {fecha}", 
+            font=ctk.CTkFont(size=12), 
+            text_color=TEXT_SEC, 
+            anchor="w"
+        ).pack(fill="x", pady=(2, 0))
         
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(side="right", padx=10, pady=10)
+        btn_frame.pack(side="right", padx=20, pady=16)
         
         # Botón Ver
         ctk.CTkButton(
-            btn_frame, text="👁️ Ver", width=60, height=24,
-            fg_color="#166534", hover_color="#14532d",
+            btn_frame, text="👁️ Ver", width=70, height=32,
+            fg_color=SUCCESS_COLOR, hover_color=SUCCESS_HOVER,
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=lambda r=reporte, l=es_local: self._abrir_reporte_detalle(r, l)
         ).pack(side="left", padx=4)
         
         # Botón Renombrar (Solo nube por ahora)
         if not es_local:
             ctk.CTkButton(
-                btn_frame, text="✏️ Editar", width=60, height=24,
-                fg_color="#0284c7", hover_color="#0369a1",
+                btn_frame, text="✏️ Editar", width=80, height=32,
+                fg_color="transparent", hover_color=CARD_HOVER,
+                border_width=1, border_color=TEXT_SEC, text_color=TEXT_MAIN,
+                font=ctk.CTkFont(size=12),
                 command=lambda r=reporte: self._renombrar_reporte(r)
             ).pack(side="left", padx=4)
             
         # Botón Eliminar
         ctk.CTkButton(
-            btn_frame, text="🗑️", width=30, height=24,
-            fg_color="#dc2626", hover_color="#991b1b",
+            btn_frame, text="🗑️ Eliminar", width=80, height=32,
+            fg_color="transparent", hover_color=DANGER_HOVER,
+            border_width=1, border_color=DANGER_COLOR, text_color=DANGER_COLOR,
+            font=ctk.CTkFont(size=12),
             command=lambda r=reporte, l=es_local: self._eliminar_reporte(r, l)
         ).pack(side="left", padx=4)
 
@@ -212,7 +301,7 @@ class AdminFrame(ctk.CTkFrame):
             messagebox.showerror("Error", "No se pudo renombrar el reporte.")
 
     def _eliminar_reporte(self, reporte, es_local):
-        if not messagebox.askyesno("Confirmar", "¿Eliminar este reporte permanentemente?"):
+        if not messagebox.askyesno("Confirmar Peligro", "¿Eliminar este reporte permanentemente?\nEsta acción no se puede deshacer."):
             return
             
         if es_local:
@@ -230,80 +319,108 @@ class AdminFrame(ctk.CTkFrame):
 
     def _abrir_vista_bitacoras(self):
         self.vista_actual = "BITACORAS"
-        self._actualizar_top_bar("📁 Bitácoras")
+        self._actualizar_top_bar("📁 Directorio de Bitácoras")
         self._limpiar_container()
         
         scroll = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll.pack(fill="both", expand=True)
         
-        lbl_cargando = ctk.CTkLabel(scroll, text="Cargando fechas de bitácoras...")
-        lbl_cargando.pack(pady=20)
+        lbl_cargando = ctk.CTkLabel(scroll, text="Cargando fechas de bitácoras...", text_color=TEXT_SEC)
+        lbl_cargando.pack(pady=40)
         
         def _fetch():
             bitacoras = obtener_bitacoras_todas()
             fechas = sorted(list(set(b["fecha"] for b in bitacoras if b.get("fecha"))), reverse=True)
             self.after(0, lambda: self._mostrar_lista_fechas(scroll, fechas, lbl_cargando))
             
-        import threading
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _mostrar_lista_fechas(self, parent, fechas, lbl_cargando):
         lbl_cargando.destroy()
         
         if not fechas:
-            ctk.CTkLabel(parent, text="No hay bitácoras disponibles.").pack(pady=20)
+            ctk.CTkLabel(parent, text="No hay bitácoras disponibles.", text_color=TEXT_SEC).pack(pady=40)
             return
             
+        # Grid layout for dates
+        row, col = 0, 0
         for f in fechas:
-            card = ctk.CTkFrame(parent, fg_color="#1e293b", corner_radius=8, cursor="hand2")
-            card.pack(fill="x", pady=4, padx=5)
+            card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, corner_radius=10, cursor="hand2")
+            card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
             
-            lbl = ctk.CTkLabel(card, text=f"📅 {f}", font=ctk.CTkFont(weight="bold"))
-            lbl.pack(padx=15, pady=12, anchor="w")
+            lbl_icon = ctk.CTkLabel(card, text="📁", font=ctk.CTkFont(size=32))
+            lbl_icon.pack(pady=(16, 4))
             
-            card.bind("<Button-1>", lambda e, d=f: self._abrir_bitacora_dia(d))
-            lbl.bind("<Button-1>", lambda e, d=f: self._abrir_bitacora_dia(d))
+            lbl_tit = ctk.CTkLabel(card, text=f, font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_MAIN)
+            lbl_tit.pack(padx=24, pady=(0, 16))
+            
+            def hover_in(e, c=card): c.configure(fg_color=CARD_HOVER)
+            def hover_out(e, c=card): c.configure(fg_color=CARD_COLOR)
+            def on_click(e, d=f): self._abrir_bitacora_dia(d)
+            
+            for w in (card, lbl_icon, lbl_tit):
+                w.bind("<Enter>", hover_in)
+                w.bind("<Leave>", hover_out)
+                w.bind("<Button-1>", on_click)
+                
+            col += 1
+            if col > 3:
+                col = 0
+                row += 1
 
     # ─── VISTA BITÁCORA DETALLE (DIA) ────────────────────────────────────────
 
     def _abrir_bitacora_dia(self, fecha: str):
         self.vista_actual = "BITACORA_DIA"
         self.fecha_seleccionada = fecha
-        self._actualizar_top_bar(f"📅 Bitácora {fecha}")
+        self._actualizar_top_bar(f"📅 Detalles de Bitácora ({fecha})")
         self._limpiar_container()
         
         # Filtros
-        filtro_frame = ctk.CTkFrame(self.container, fg_color="#0f172a", corner_radius=0)
-        filtro_frame.pack(fill="x", padx=10, pady=(10, 0))
+        filtro_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        filtro_frame.pack(fill="x", pady=(0, 10))
         
         usuarios_vals = ["Todos"] + list(self.usuarios_dict.values())
         rest_vals = ["Todos"] + list(self.restaurantes_dict.values())
         
-        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_usuario, values=usuarios_vals, command=self._aplicar_filtros, width=120).pack(side="left", padx=5, pady=5)
-        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_restaurante, values=rest_vals, command=self._aplicar_filtros, width=120).pack(side="left", padx=5, pady=5)
-        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_urgencia, values=["Todas", "Comentar", "Leve", "Medio", "Grave"], command=self._aplicar_filtros, width=100).pack(side="left", padx=5, pady=5)
-        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_evidencia, values=["Evidencias", "Sí", "No"], command=self._aplicar_filtros, width=80).pack(side="left", padx=5, pady=5)
+        # Configuración visual de OptionMenus
+        om_kwargs = dict(
+            fg_color=CARD_COLOR,
+            button_color=CARD_COLOR,
+            button_hover_color=CARD_HOVER,
+            text_color=TEXT_MAIN,
+            font=ctk.CTkFont(size=12)
+        )
+        
+        ctk.CTkLabel(filtro_frame, text="Usuario:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_usuario, values=usuarios_vals, command=self._aplicar_filtros, width=130, **om_kwargs).pack(side="left", padx=(0, 15))
+        
+        ctk.CTkLabel(filtro_frame, text="Restaurante:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_restaurante, values=rest_vals, command=self._aplicar_filtros, width=130, **om_kwargs).pack(side="left", padx=(0, 15))
+        
+        ctk.CTkLabel(filtro_frame, text="Urgencia:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_urgencia, values=["Todas", "Comentar", "Leve", "Medio", "Grave"], command=self._aplicar_filtros, width=100, **om_kwargs).pack(side="left", padx=(0, 15))
+        
+        ctk.CTkLabel(filtro_frame, text="Evidencias:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_evidencia, values=["Evidencias", "Sí", "No"], command=self._aplicar_filtros, width=90, **om_kwargs).pack(side="left")
         
         # Área de filas
         self.scroll_filas = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
-        self.scroll_filas.pack(fill="both", expand=True, padx=10, pady=10)
+        self.scroll_filas.pack(fill="both", expand=True)
         
-        lbl_cargando = ctk.CTkLabel(self.scroll_filas, text="Cargando filas...")
-        lbl_cargando.pack(pady=20)
+        lbl_cargando = ctk.CTkLabel(self.scroll_filas, text="Cargando anotaciones...", text_color=TEXT_SEC)
+        lbl_cargando.pack(pady=40)
         
         def _fetch():
             self.filas_bitacora = obtener_bitacoras_por_fecha(fecha)
             self.after(0, lambda: self._aplicar_filtros(None))
             
-        import threading
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _aplicar_filtros(self, _=None):
         for w in self.scroll_filas.winfo_children():
-            if isinstance(w, ctk.CTkFrame): # Solo borrar frames, no labels si se desea
+            if isinstance(w, ctk.CTkFrame):
                 w.destroy()
-        
-        # Ocultar label de cargando si existe
         for w in self.scroll_filas.winfo_children():
             if isinstance(w, ctk.CTkLabel):
                 w.destroy()
@@ -317,43 +434,43 @@ class AdminFrame(ctk.CTkFrame):
         for fila in self.filas_bitacora:
             # Match Usuario
             usr_nombre = fila.get("usuario", {}).get("nombre", "")
-            if f_usr != "Todos" and f_usr != usr_nombre:
-                continue
+            if f_usr != "Todos" and f_usr != usr_nombre: continue
                 
             # Match Restaurante
             rst_nombre = fila.get("restaurante", {}).get("nombre", "")
-            if f_rst != "Todos" and f_rst != rst_nombre:
-                continue
+            if f_rst != "Todos" and f_rst != rst_nombre: continue
                 
             # Match Urgencia
             urg_backend = fila.get("urgencia", "leve")
             urg_display = URGENCIA_VALOR_A_DISPLAY.get(urg_backend, "Leve")
-            if f_urg != "Todas" and f_urg != urg_display:
-                continue
+            if f_urg != "Todas" and f_urg != urg_display: continue
                 
             # Match Evidencia
             tiene_ev = len(fila.get("evidencias", [])) > 0 or bool(fila.get("evidencia_url"))
-            if f_evi == "Sí" and not tiene_ev:
-                continue
-            if f_evi == "No" and tiene_ev:
-                continue
+            if f_evi == "Sí" and not tiene_ev: continue
+            if f_evi == "No" and tiene_ev: continue
                 
             filas_filtradas.append(fila)
             
         if not filas_filtradas:
-            ctk.CTkLabel(self.scroll_filas, text="No hay filas que coincidan con los filtros.").pack(pady=20)
+            ctk.CTkLabel(self.scroll_filas, text="No hay anotaciones que coincidan con los filtros.", text_color=TEXT_SEC).pack(pady=40)
             return
             
-        for idx, fila in enumerate(filas_filtradas):
-            self._crear_item_bitacora(self.scroll_filas, fila, idx)
+        for fila in filas_filtradas:
+            self._crear_item_bitacora(self.scroll_filas, fila)
             
-    def _crear_item_bitacora(self, parent, fila, idx):
+    def _crear_item_bitacora(self, parent, fila):
         urg = fila.get("urgencia", "leve")
-        colores = URGENCIA_COLORES.get(urg, URGENCIA_COLORES["leve"])
-        bg_color = colores["tarjeta_par"] if idx % 2 == 0 else colores["tarjeta_impar"]
+        estilo = URGENCIA_COLORS_ADMIN.get(urg, URGENCIA_COLORS_ADMIN["leve"])
         
-        card = ctk.CTkFrame(parent, fg_color=bg_color, corner_radius=5)
-        card.pack(fill="x", pady=2, padx=2)
+        card = ctk.CTkFrame(
+            parent, 
+            fg_color=estilo["bg"], 
+            border_width=2, 
+            border_color=estilo["border"],
+            corner_radius=10
+        )
+        card.pack(fill="x", pady=6)
         
         # Info básica
         hora = fila.get("hora", "--:--")
@@ -361,31 +478,54 @@ class AdminFrame(ctk.CTkFrame):
         rst = fila.get("restaurante", {}).get("nombre", "Restaurante")
         desc = fila.get("descripcion", "")
         
-        info = f"{hora} | {rst} | {usr}\n{desc}"
+        info_frame = ctk.CTkFrame(card, fg_color="transparent")
+        info_frame.pack(side="left", fill="both", expand=True, padx=20, pady=16)
         
-        ctk.CTkLabel(card, text=info, justify="left", anchor="w", wraplength=400).pack(side="left", padx=10, pady=10, fill="both", expand=True)
+        header = ctk.CTkLabel(
+            info_frame, 
+            text=f"🕒 {hora}   ·   🏪 {rst}   ·   👤 {usr}", 
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=TEXT_SEC,
+            anchor="w"
+        )
+        header.pack(fill="x", pady=(0, 8))
         
-        # Botón eliminar
-        ctk.CTkButton(
-            card, text="🗑️", width=30, height=24,
-            fg_color="#dc2626", hover_color="#991b1b",
-            command=lambda b=fila: self._eliminar_bitacora_fila(b)
-        ).pack(side="right", padx=10, pady=10)
+        ctk.CTkLabel(
+            info_frame, 
+            text=desc, 
+            justify="left", 
+            anchor="w", 
+            wraplength=600,
+            font=ctk.CTkFont(size=14),
+            text_color=TEXT_MAIN
+        ).pack(fill="x")
+        
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(side="right", padx=20, pady=16)
         
         tiene_ev = len(fila.get("evidencias", [])) > 0 or bool(fila.get("evidencia_url"))
         if tiene_ev:
             ctk.CTkButton(
-                card, text="👁️", width=30, height=24,
-                fg_color="#166534", hover_color="#14532d",
+                btn_frame, text="👁️ Evidencias", width=100, height=32,
+                fg_color="transparent", hover_color=CARD_HOVER,
+                border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
+                font=ctk.CTkFont(size=12, weight="bold"),
                 command=lambda b=fila: self._abrir_evidencias_bitacora(b)
-            ).pack(side="right", padx=5, pady=10)
+            ).pack(side="left", padx=8)
+            
+        # Botón eliminar
+        ctk.CTkButton(
+            btn_frame, text="🗑️", width=40, height=32,
+            fg_color="transparent", hover_color=DANGER_HOVER,
+            border_width=1, border_color=DANGER_COLOR, text_color=DANGER_COLOR,
+            command=lambda b=fila: self._eliminar_bitacora_fila(b)
+        ).pack(side="left")
         
     def _eliminar_bitacora_fila(self, fila):
-        if not messagebox.askyesno("Confirmar", "¿Eliminar esta fila de la bitácora permanentemente?"):
+        if not messagebox.askyesno("Confirmar Peligro", "¿Eliminar esta fila de la bitácora permanentemente?"):
             return
             
         if eliminar_bitacora_remota(fila["id"]):
-            # Eliminar localmente de la lista cacheada
             self.filas_bitacora = [f for f in self.filas_bitacora if f["id"] != fila["id"]]
             self._aplicar_filtros()
         else:
@@ -400,50 +540,59 @@ class AdminFrame(ctk.CTkFrame):
                 urls.append(ev["evidencia_url"])
                 
         if not urls:
-            messagebox.showinfo("Info", "No se encontraron URLs de evidencia.")
+            messagebox.showinfo("Info", "No se encontraron URLs de evidencia validas.")
             return
             
         self._mostrar_popup_evidencias(urls)
 
     def _mostrar_popup_evidencias(self, urls):
-        import webbrowser
-        from core.thumbnailer import generar_miniatura
-        
         popup = ctk.CTkToplevel(self.controlador)
-        popup.title("Evidencias")
-        popup.geometry("600x400")
+        popup.title("Visor de Evidencias")
+        popup.geometry("700x500")
+        popup.configure(fg_color=BG_COLOR)
         popup.attributes("-topmost", True)
         
         scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll.pack(fill="both", expand=True, padx=20, pady=20)
         
         for url in urls:
-            f_ev = ctk.CTkFrame(scroll, fg_color="#1e293b", corner_radius=8)
-            f_ev.pack(fill="x", pady=5, padx=5)
+            f_ev = ctk.CTkFrame(scroll, fg_color=CARD_COLOR, corner_radius=10)
+            f_ev.pack(fill="x", pady=8)
             
-            # Placeholder label while loading
-            lbl_img = ctk.CTkLabel(f_ev, text="Cargando miniatura...", width=120, height=120)
-            lbl_img.pack(side="left", padx=10, pady=10)
+            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=140, height=140, fg_color=BG_COLOR, corner_radius=8)
+            lbl_img.pack(side="left", padx=16, pady=16)
             
-            ctk.CTkLabel(f_ev, text=url.split("/")[-1][:30], anchor="w").pack(side="left", padx=10, expand=True, fill="x")
+            ctk.CTkLabel(
+                f_ev, 
+                text=url.split("/")[-1][:40] + "...", 
+                font=ctk.CTkFont(size=13),
+                text_color=TEXT_MAIN,
+                anchor="w"
+            ).pack(side="left", padx=16, expand=True, fill="x")
             
             ctk.CTkButton(
-                f_ev, text="Abrir Original", width=100,
+                f_ev, text="Abrir Original", width=120, height=36,
+                fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
+                font=ctk.CTkFont(size=12, weight="bold"),
                 command=lambda u=url: webbrowser.open(u)
-            ).pack(side="right", padx=10)
+            ).pack(side="right", padx=16)
             
             # Load thumbnail in background
             def _cargar_thumb(u=url, lbl=lbl_img):
-                img = generar_miniatura(u, size=(120, 120))
-                if img:
-                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                    lbl.configure(text="", image=ctk_img)
-                    lbl.image = ctk_img # keep ref
-                else:
-                    lbl.configure(text="Sin vista previa")
+                try:
+                    img = generar_miniatura(u, size=(140, 140))
+                    if img:
+                        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+                        lbl.configure(text="", image=ctk_img)
+                        lbl.image = ctk_img # keep ref
+                    else:
+                        lbl.configure(text="Sin vista previa", text_color=TEXT_SEC)
+                except Exception:
+                    lbl.configure(text="Sin vista previa", text_color=TEXT_SEC)
             
-            import threading
             threading.Thread(target=_cargar_thumb, daemon=True).start()
+
+    # ─── VISTA REPORTE DETALLE ───────────────────────────────────────────────
 
     def _abrir_reporte_detalle(self, reporte, es_local):
         self.vista_actual = "REPORTE_DETALLE"
@@ -452,10 +601,10 @@ class AdminFrame(ctk.CTkFrame):
         self._limpiar_container()
         
         main_scroll = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
-        main_scroll.pack(fill="both", expand=True, padx=20, pady=20)
+        main_scroll.pack(fill="both", expand=True)
         
         # Metadata
-        meta_frame = ctk.CTkFrame(main_scroll, fg_color="#1e293b", corner_radius=8)
+        meta_frame = ctk.CTkFrame(main_scroll, fg_color=CARD_COLOR, corner_radius=10)
         meta_frame.pack(fill="x", pady=(0, 20))
         
         fecha = reporte.get("fecha_jornada") or ""
@@ -463,51 +612,78 @@ class AdminFrame(ctk.CTkFrame):
         usr = reporte.get("usuario", {}).get("nombre", "Usuario") if not es_local else "Local"
         rst = reporte.get("restaurante", {}).get("nombre", "Restaurante") if not es_local else "Local"
         
-        ctk.CTkLabel(meta_frame, text=f"Fecha: {fecha} | Restaurante: {rst} | Usuario: {usr}", font=ctk.CTkFont(weight="bold")).pack(pady=10, padx=10, anchor="w")
+        ctk.CTkLabel(
+            meta_frame, 
+            text=f"🕒 Fecha: {fecha}   ·   🏪 Restaurante: {rst}   ·   👤 Autor: {usr}", 
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=TEXT_SEC,
+            anchor="w"
+        ).pack(pady=16, padx=20, fill="x")
         
         # Texto
         notas = reporte.get("notas_finales", "")
-        txt = ctk.CTkTextbox(main_scroll, height=400, fg_color="#0f172a")
-        txt.pack(fill="x", pady=(0, 20))
+        txt = ctk.CTkTextbox(
+            main_scroll, 
+            height=300, 
+            fg_color=BG_COLOR, 
+            text_color=TEXT_MAIN,
+            border_width=1,
+            border_color=CARD_COLOR,
+            corner_radius=10,
+            font=("Consolas", 14)
+        )
+        txt.pack(fill="x", pady=(0, 24))
         txt.configure(state="normal")
         txt.insert("1.0", notas)
         txt.configure(state="disabled")
         
         # Evidencias
-        lbl_ev = ctk.CTkLabel(main_scroll, text="Evidencias Adjuntas:", font=ctk.CTkFont(weight="bold"))
-        lbl_ev.pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(
+            main_scroll, 
+            text="Evidencias Adjuntas", 
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=TEXT_MAIN
+        ).pack(anchor="w", pady=(0, 12))
         
         evidencias = reporte.get("evidencias", [])
         if not evidencias:
-            ctk.CTkLabel(main_scroll, text="No hay evidencias adjuntas.", text_color="gray").pack(anchor="w")
+            ctk.CTkLabel(main_scroll, text="No hay evidencias adjuntas a este reporte.", text_color=TEXT_SEC).pack(anchor="w")
         else:
             for ev in evidencias:
                 url = ev.get("evidencia_url") or ev.get("ruta_local")
                 if not url: continue
                 
-                f_ev = ctk.CTkFrame(main_scroll, fg_color="#1e293b")
-                f_ev.pack(fill="x", pady=2)
+                f_ev = ctk.CTkFrame(main_scroll, fg_color=CARD_COLOR, corner_radius=10)
+                f_ev.pack(fill="x", pady=6)
                 
-                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=80, height=80)
-                lbl_img.pack(side="left", padx=10, pady=5)
+                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=100, height=100, fg_color=BG_COLOR, corner_radius=8)
+                lbl_img.pack(side="left", padx=16, pady=12)
                 
-                ctk.CTkLabel(f_ev, text=url.split("/")[-1][:30], anchor="w").pack(side="left", padx=10, expand=True, fill="x")
+                ctk.CTkLabel(
+                    f_ev, 
+                    text=url.split("/")[-1][:40] + "...", 
+                    font=ctk.CTkFont(size=13),
+                    text_color=TEXT_MAIN,
+                    anchor="w"
+                ).pack(side="left", padx=16, expand=True, fill="x")
                 
-                import webbrowser
                 ctk.CTkButton(
-                    f_ev, text="Abrir", width=60,
+                    f_ev, text="Abrir Original", width=120, height=36,
+                    fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
+                    font=ctk.CTkFont(size=12, weight="bold"),
                     command=lambda u=url: webbrowser.open(u)
-                ).pack(side="right", padx=10, pady=5)
+                ).pack(side="right", padx=16)
                 
                 def _cargar_thumb_rep(u=url, lbl=lbl_img):
-                    from core.thumbnailer import generar_miniatura
-                    img = generar_miniatura(u, size=(80, 80))
-                    if img:
-                        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                        lbl.configure(text="", image=ctk_img)
-                        lbl.image = ctk_img
-                    else:
-                        lbl.configure(text="Sin vista previa")
+                    try:
+                        img = generar_miniatura(u, size=(100, 100))
+                        if img:
+                            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+                            lbl.configure(text="", image=ctk_img)
+                            lbl.image = ctk_img
+                        else:
+                            lbl.configure(text="Sin previa", text_color=TEXT_SEC)
+                    except Exception:
+                        lbl.configure(text="Sin previa", text_color=TEXT_SEC)
                 
-                import threading
                 threading.Thread(target=_cargar_thumb_rep, daemon=True).start()

@@ -216,8 +216,8 @@ class ReportesFrame(ctk.CTkFrame):
             font=ctk.CTkFont(size=13, weight="bold"),
             height=40,
             state="disabled",
-            fg_color="#7c3aed",
-            hover_color="#6d28d9",
+            fg_color="#4f46e5",
+            hover_color="#4338ca",
             command=self._on_crear_reporte_inicial,
         )
         self.boton_crear_nube.grid(row=row, column=0, sticky="ew", pady=(0, 24))
@@ -701,8 +701,8 @@ class ReportesFrame(ctk.CTkFrame):
             self.frame_side,
             text="✅  Enviar y Cerrar Reporte",
             command=self._on_finalizar,
-            fg_color="#27ae60",
-            hover_color="#1e8449",
+            fg_color="#4f46e5",
+            hover_color="#4338ca",
             height=44,
             font=ctk.CTkFont(size=13, weight="bold"),
         )

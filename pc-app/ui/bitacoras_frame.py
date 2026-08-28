@@ -47,13 +47,24 @@ from db.local_db import (
     obtener_bitacoras_pendientes,
 )
 
-# ─── Paleta de colores ────────────────────────────────────────────────────────
-# 4 niveles de urgencia: comentar (azul) < leve (verde) < medio (ámbar) < grave (rojo)
+# ─── SISTEMA DE DISEÑO (Fase 5) ───────────────────────────────────────────────
+BG_COLOR = "#0f172a"
+CARD_COLOR = "#1e293b"
+CARD_HOVER = "#334155"
+TEXT_MAIN = "#f8fafc"
+TEXT_SEC = "#94a3b8"
+ACCENT_COLOR = "#4f46e5"
+ACCENT_HOVER = "#4338ca"
+SUCCESS_COLOR = "#10b981"
+WARN_COLOR = "#f59e0b"
+DANGER_COLOR = "#ef4444"
+DANGER_HOVER = "#dc2626"
+
 URGENCIA_COLORES = {
-    "comentar": {"bg": "#1a2a3e", "fg": "#93c5fd", "tarjeta_par": "#141e2e", "tarjeta_impar": "#111827"},
-    "leve":     {"bg": "#1e3a2e", "fg": "#4ade80", "tarjeta_par": "#152d22", "tarjeta_impar": "#12261d"},
-    "medio":    {"bg": "#3a2e10", "fg": "#facc15", "tarjeta_par": "#2e2408", "tarjeta_impar": "#261e06"},
-    "grave":    {"bg": "#3a1010", "fg": "#f87171", "tarjeta_par": "#2a0c0c", "tarjeta_impar": "#220808"},
+    "comentar": {"bg": CARD_COLOR, "fg": "#3b82f6", "tarjeta_par": CARD_COLOR, "tarjeta_impar": BG_COLOR},
+    "leve":     {"bg": CARD_COLOR, "fg": SUCCESS_COLOR, "tarjeta_par": CARD_COLOR, "tarjeta_impar": BG_COLOR},
+    "medio":    {"bg": CARD_COLOR, "fg": WARN_COLOR, "tarjeta_par": CARD_COLOR, "tarjeta_impar": BG_COLOR},
+    "grave":    {"bg": CARD_COLOR, "fg": DANGER_COLOR, "tarjeta_par": CARD_COLOR, "tarjeta_impar": BG_COLOR},
 }
 URGENCIA_OPCIONES = ["Comentar", "Leve", "Medio", "Grave"]
 
@@ -73,15 +84,13 @@ URGENCIA_LEGACY = {
     "critical": "grave",
 }
 
-COLOR_FILA_PAR         = "#1a1a2e"
-COLOR_FILA_IMPAR       = "#16213e"
-COLOR_CODIGO_BG        = "#1e3a5e"
-COLOR_CODIGO_FG        = "#93c5fd"
-COLOR_BOTON_EV_OK      = "#166534"
-COLOR_BOTON_EV_ADD     = "#1d4ed8"
-COLOR_SYNC_OK          = "#4ade80"
-COLOR_SYNC_OFFLINE     = "#facc15"
-COLOR_SYNC_WORKING     = "#60a5fa"
+COLOR_CODIGO_BG        = BG_COLOR
+COLOR_CODIGO_FG        = TEXT_SEC
+COLOR_BOTON_EV_OK      = SUCCESS_COLOR
+COLOR_BOTON_EV_ADD     = ACCENT_COLOR
+COLOR_SYNC_OK          = SUCCESS_COLOR
+COLOR_SYNC_OFFLINE     = WARN_COLOR
+COLOR_SYNC_WORKING     = "#3b82f6"
 
 ANCHO_REST     = 160
 ANCHO_HORA     = 70
@@ -95,7 +104,7 @@ ALTURA_DESC    = 28    # altura mínima del CTkTextbox de descripción
 
 class BitacorasFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, usuario, fecha=None, **kwargs):
-        super().__init__(master, **kwargs)
+        super().__init__(master, fg_color=BG_COLOR, **kwargs)
         self.controlador = controlador
         self.usuario_activo = usuario
         self.fecha_actual = fecha if fecha else datetime.now().strftime("%Y-%m-%d")
@@ -200,13 +209,13 @@ class BitacorasFrame(ctk.CTkFrame):
 
         ctk.CTkButton(
             self.top_bar, text="➕ Nueva fila", width=110,
-            fg_color="#2563eb", hover_color="#1d4ed8",
+            fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
             command=self._agregar_fila_vacia,
         ).pack(side="right", padx=5)
 
         ctk.CTkButton(
             self.top_bar, text="🔒 Cerrar día", width=110,
-            fg_color="#7c3aed", hover_color="#6d28d9",
+            fg_color=DANGER_COLOR, hover_color=DANGER_HOVER,
             command=self._on_cerrar_bitacora_dia,
         ).pack(side="right", padx=5)
 
@@ -220,7 +229,7 @@ class BitacorasFrame(ctk.CTkFrame):
         """Fila fija de etiquetas que sirve de cabecera visual.
         Orden: Restaurante | Hora | Descripción | Código | Evidencia | Urgencia
         """
-        hdr = ctk.CTkFrame(self, fg_color="#0f172a", corner_radius=0)
+        hdr = ctk.CTkFrame(self, fg_color=BG_COLOR, corner_radius=0)
         hdr.grid(row=1, column=0, sticky="ew", padx=12, pady=0)
 
         # La columna de descripción es expansible → se llena con grid para

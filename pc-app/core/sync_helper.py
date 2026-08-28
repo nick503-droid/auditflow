@@ -29,15 +29,18 @@ def actualizar_indicador_sync(label: ctk.CTkLabel, estado: str, pendientes: int 
     estado     : 'ok' | 'offline' | 'syncing'
     pendientes : número de ítems pendientes (solo relevante para 'syncing').
     """
-    if not label.winfo_exists():
-        return
+    try:
+        if not label.winfo_exists():
+            return
 
-    if estado == "ok":
-        label.configure(text="⬤ Sincronizado", text_color=COLOR_SYNC_OK)
-    elif estado == "offline":
-        label.configure(text="⬤ Sin conexión — guardando local", text_color=COLOR_SYNC_OFFLINE)
-    elif estado == "syncing":
-        label.configure(text=f"↻ Sincronizando {pendientes}…", text_color=COLOR_SYNC_WORKING)
+        if estado == "ok":
+            label.configure(text="⬤ Sincronizado", text_color=COLOR_SYNC_OK)
+        elif estado == "offline":
+            label.configure(text="⬤ Sin conexión — guardando local", text_color=COLOR_SYNC_OFFLINE)
+        elif estado == "syncing":
+            label.configure(text=f"↻ Sincronizando {pendientes}…", text_color=COLOR_SYNC_WORKING)
+    except Exception:
+        pass
 
 
 def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
@@ -50,14 +53,17 @@ def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
       'syncing' → ↻ Sincronizando…
       'writing' → Escribiendo…
     """
-    if not label.winfo_exists():
-        return
+    try:
+        if not label.winfo_exists():
+            return
 
-    if estado == "ok":
-        label.configure(text="☁️ En la nube", text_color=COLOR_SYNC_OK)
-    elif estado == "offline":
-        label.configure(text="💾 Guardando local", text_color=COLOR_SYNC_OFFLINE)
-    elif estado == "syncing":
-        label.configure(text="↻ Sincronizando…", text_color=COLOR_SYNC_WORKING)
-    elif estado == "writing":
-        label.configure(text="Escribiendo…", text_color="gray50")
+        if estado == "ok":
+            label.configure(text="☁️ En la nube", text_color=COLOR_SYNC_OK)
+        elif estado == "offline":
+            label.configure(text="💾 Guardando local", text_color=COLOR_SYNC_OFFLINE)
+        elif estado == "syncing":
+            label.configure(text="↻ Sincronizando…", text_color=COLOR_SYNC_WORKING)
+        elif estado == "writing":
+            label.configure(text="Escribiendo…", text_color="gray50")
+    except Exception:
+        pass

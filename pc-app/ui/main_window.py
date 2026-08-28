@@ -12,17 +12,17 @@ class MainWindow(ctk.CTk):
         pantalla_w = self.winfo_screenwidth()
         pantalla_h = self.winfo_screenheight()
 
-        # Tamaño de la ventana: ancho fijo tipo "panel lateral derecho", alto casi completo
-        win_w = 480
-        win_h = pantalla_h - 80          # deja margen para la barra de tareas
+        # Tamaño de la ventana: Dashboard amplio para ver todas las tarjetas y paneles
+        win_w = min(1280, pantalla_w - 100)
+        win_h = min(800, pantalla_h - 100)
 
-        # Posición: pegada al borde derecho con 16 px de margen
-        pos_x = pantalla_w - win_w - 16
-        pos_y = 40
+        # Posición: centrada
+        pos_x = (pantalla_w - win_w) // 2
+        pos_y = (pantalla_h - win_h) // 2
 
         self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
-        self.minsize(360, 380)
-        # (sin state('zoomed') — el usuario puede moverla/redimensionarla libremente)
+        self.minsize(800, 600)
+        self.configure(fg_color="#0f172a") # Prevenir parpadeo entre vistas
 
         # El frame actualmente visible. Empieza en None porque
         # todavía no hemos montado ninguno.
