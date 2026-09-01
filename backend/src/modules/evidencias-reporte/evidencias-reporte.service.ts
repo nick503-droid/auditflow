@@ -5,12 +5,16 @@ import { Repository } from 'typeorm';
 import { EvidenciaReporte } from './entities/evidencia-reporte.entity';
 import { CreateEvidenciaReporteDto } from './dto/create-evidencias-reporte.dto';
 import { UpdateEvidenciasReporteDto } from './dto/update-evidencias-reporte.dto';
+import { StorageService } from '../../common/storage/storage.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class EvidenciasReporteService {
   constructor(
     @InjectRepository(EvidenciaReporte)
     private evidenciasRepo: Repository<EvidenciaReporte>,
+    private storageService: StorageService,
+    private configService: ConfigService,
   ) {}
 
   findOne(id: string) {
@@ -34,7 +38,18 @@ export class EvidenciasReporteService {
     return this.findOne(id);
   }
 
-  remove(id: string) {
-    return this.evidenciasRepo.softDelete(id);
+  async remove(id: string) {
+    const evidencia = await this.findOne(id);
+    if (!evidencia) {
+      return null;
+    }
+
+    if (evidencia.evidencia_url) {
+      // 1. Eliminar físicamente del almacenamiento local (Hard Delete)
+      await this.storageService.eliminarArchivo(evidencia.evidencia_url);
+    }
+
+    // 2. Eliminar registro de la DB (Hard Delete)
+    return this.evidenciasRepo.delete(id);
   }
 }

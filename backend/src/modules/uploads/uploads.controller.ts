@@ -6,11 +6,11 @@ import {
   Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { MinioService } from '../../common/minio/minio.service';
+import { StorageService } from '../../common/storage/storage.service';
 
 @Controller('uploads')
 export class UploadsController {
-  constructor(private readonly minioService: MinioService) {}
+  constructor(private readonly storageService: StorageService) {}
 
   /**
    * POST /uploads
@@ -32,10 +32,9 @@ export class UploadsController {
     @UploadedFile() file: Express.Multer.File,
     @Body('prefijo_nube') prefijo_nube?: string,
   ) {
-    const url = await this.minioService.subirArchivo(
+    const url = await this.storageService.subirArchivo(
       file.buffer,
       file.originalname,
-      file.mimetype,
       prefijo_nube || undefined, // pasar undefined en lugar de string vacío
     );
     return { evidencia_url: url };

@@ -9,6 +9,7 @@ class GrabadorAudio:
     Captura el audio que suena en el sistema (no el micrófono) usando
     WASAPI Loopback nativo de Windows, corriendo en un hilo aparte
     para no bloquear la grabación de video que ocurre al mismo tiempo.
+    Soporta pausa y reanudación omitiendo bloques de audio.
     """
 
     def __init__(self):
@@ -16,6 +17,7 @@ class GrabadorAudio:
         self.stream = None
         self.frames = []
         self.grabando = False
+        self.pausado = False
         self.hilo = None
         self.ruta_salida = None
         self.dispositivo = None
@@ -27,10 +29,17 @@ class GrabadorAudio:
         self.ruta_salida = ruta_salida
         self.frames = []
         self.grabando = True
+        self.pausado = False
         # daemon=True: si la app principal se cierra de golpe, este hilo
         # no la deja "colgada" esperando a que termine
         self.hilo = threading.Thread(target=self._grabar, daemon=True)
         self.hilo.start()
+
+    def pausar(self):
+        self.pausado = True
+
+    def reanudar(self):
+        self.pausado = False
 
     def _grabar(self):
         self.pyaudio_instance = pyaudio.PyAudio()
@@ -71,7 +80,10 @@ class GrabadorAudio:
                 # Se usa en el muxing para calcular el desfase con el video.
                 self.timestamp_inicio_real = time.time()
                 primer_frame = False
-            self.frames.append(datos)
+                
+            # Si no está pausado, guardamos los frames
+            if not self.pausado:
+                self.frames.append(datos)
 
         self._guardar_wav()
 

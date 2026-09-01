@@ -6,7 +6,7 @@ import { RestaurantesModule } from './modules/restaurantes/restaurantes.module';
 import { BitacorasModule } from './modules/bitacoras/bitacoras.module';
 import { ReportesModule } from './modules/reportes/reportes.module';
 import { EvidenciasReporteModule } from './modules/evidencias-reporte/evidencias-reporte.module';
-import { MinioModule } from './common/minio/minio.module';
+import { StorageModule } from './common/storage/storage.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 
 @Module({
@@ -41,7 +41,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 
     EvidenciasReporteModule,
 
-    MinioModule,
+    StorageModule,
 
     UploadsModule,
   ],

@@ -70,22 +70,22 @@ def ruta_evidencia_bitacora(fecha_iso: str, nombre_archivo: str) -> str:
     return os.path.join(carpeta, nombre_archivo)
 
 
-def ruta_evidencia_reporte(titulo: str, nombre_archivo: str) -> str:
+def ruta_evidencia_reporte(codigo: str, titulo: str, nombre_archivo: str) -> str:
     """
     Devuelve la ruta completa donde debe guardarse una evidencia de un reporte.
+    El usuario solicitó que llevara el código al inicio.
 
     Parámetros
     ----------
-    titulo        : Título del reporte tal como lo ingresó el usuario.
+    codigo        : Código de 6 letras (ej. ZU4WYC) o "PENDIENTE"
+    titulo        : Título del reporte.
     nombre_archivo: Nombre del archivo con extensión.
 
     Retorna
     -------
-    Ruta absoluta:
-      ~/Documents/AuditFlow/Reportes/<titulo_sanitizado>/<nombre_archivo>
-    La carpeta se crea automáticamente si no existe.
+    ~/Documents/AuditFlow/Reportes/[CODIGO] Titulo/<nombre_archivo>
     """
-    nombre_carpeta = sanitizar_nombre_carpeta(titulo)
+    nombre_carpeta = sanitizar_nombre_carpeta(f"[{codigo}] {titulo}")
     carpeta = os.path.join(RUTA_REPORTES, nombre_carpeta)
     os.makedirs(carpeta, exist_ok=True)
     return os.path.join(carpeta, nombre_archivo)
@@ -112,20 +112,21 @@ def prefijo_nube_bitacora(fecha_iso: str) -> str:
     return f"bitacoras/{nombre_fecha}"
 
 
-def prefijo_nube_reporte(titulo: str) -> str:
+def prefijo_nube_reporte(codigo: str, titulo: str) -> str:
     """
-    Devuelve el prefijo de carpeta para MinIO del reporte dado.
+    Devuelve el prefijo de carpeta para MinIO / Local Storage del reporte dado.
+    Llevará el código al inicio.
 
     Parámetros
     ----------
-    titulo : "Riverside (08-25-2026) caso Natalie saco dinero de caja"
+    codigo : Código de 6 letras (ej. ZU4WYC) o "PENDIENTE"
+    titulo : Título del reporte
 
     Retorna
     -------
-    "reportes/Riverside (08-25-2026) caso Natalie saco dinero de caja"
-    (sanitizado, máx 120 chars)
+    "reportes/[CODIGO] Titulo"
     """
-    nombre_carpeta = sanitizar_nombre_carpeta(titulo)
+    nombre_carpeta = sanitizar_nombre_carpeta(f"[{codigo}] {titulo}")
     return f"reportes/{nombre_carpeta}"
 
 
@@ -229,6 +230,33 @@ def inicializar_db():
 
 
 # ─── Reportes ──────────────────────────────────────────────────────────────────
+
+def limpiar_borradores_fantasma():
+    """
+    Elimina borradores vacíos o sin título que se crearon accidentalmente en sesiones anteriores
+    y que no tienen ninguna evidencia local vinculada.
+    """
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    with db_session() as conexion:
+        # Eliminamos los borradores que:
+        # 1. No tienen título o su título es "Sin título [Borrador]"
+        # 2. Son de fechas anteriores a hoy (para no borrar algo que se acaba de crear)
+        # 3. No tienen notas
+        # 4. No tienen evidencias locales asociadas
+        # 5. No tienen ID remoto (o lo tienen, pero si está vacío localmente, es basura local)
+        conexion.execute(
+            """
+            DELETE FROM reporte_borrador 
+            WHERE (titulo IS NULL OR titulo = '' OR titulo = 'Sin título [Borrador]')
+              AND (notas_finales IS NULL OR notas_finales = '')
+              AND fecha_jornada < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM evidencia_borrador WHERE reporte_borrador_id = reporte_borrador.id
+              )
+            """,
+            (fecha_hoy,)
+        )
+        conexion.commit()
 
 def obtener_o_crear_borrador(usuario_id: str, restaurante_id: str) -> dict:
     """

@@ -5,7 +5,7 @@ import { Reporte } from './entities/reporte.entity';
 import { CreateReporteDto } from './dto/create-reporte.dto';
 import { UpdateReporteDto } from './dto/update-reporte.dto';
 import { EvidenciaReporte } from '../evidencias-reporte/entities/evidencia-reporte.entity';
-import { MinioService } from '../../common/minio/minio.service';
+import { StorageService } from '../../common/storage/storage.service';
 
 const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1
 const DIAS_VIGENCIA_CODIGO = 5;
@@ -19,7 +19,7 @@ export class ReportesService {
     @InjectRepository(EvidenciaReporte)
     private evidenciasRepo: Repository<EvidenciaReporte>,
 
-    private readonly minioService: MinioService,
+    private readonly storageService: StorageService,
   ) {}
 
   findAll() {
@@ -80,12 +80,11 @@ export class ReportesService {
     const evidencias = reporte.evidencias ?? [];
     let evidencias_borradas = 0;
 
-    // ── Limpiar archivos en MinIO ─────────────────────────────────────────────
+    // ── Limpiar archivos en almacenamiento local ──────────────────────────────
     for (const ev of evidencias) {
-      const key = this.extraerKeyDeUrl(ev.evidencia_url);
-      if (key) {
-        const ok = await this.minioService.eliminarArchivo(key);
-        if (ok) evidencias_borradas++;
+      if (ev.evidencia_url) {
+        await this.storageService.eliminarArchivo(ev.evidencia_url);
+        evidencias_borradas++;
       }
     }
 
@@ -142,30 +141,5 @@ export class ReportesService {
     return resultado;
   }
 
-  /**
-   * Extrae el "key" (clave de objeto) de MinIO a partir de la URL pública.
-   *
-   * La URL tiene la forma:
-   *   http://<host>:<port>/<bucket>/<key>
-   *
-   * Ejemplo:
-   *   "http://localhost:9000/auditflow/reportes/Riverside.../uuid.mp4"
-   *   → "reportes/Riverside.../uuid.mp4"
-   *
-   * Retorna null si la URL no tiene el formato esperado.
-   */
-  private extraerKeyDeUrl(url: string): string | null {
-    if (!url) return null;
-    try {
-      const urlObj = new URL(url);
-      // El pathname tiene la forma /<bucket>/<key>
-      // Quitamos el primer "/" y el nombre del bucket
-      const partes = urlObj.pathname.split('/').filter(Boolean);
-      if (partes.length < 2) return null;
-      // partes[0] = bucket, partes[1..N] = key (puede tener subcarpetas)
-      return partes.slice(1).join('/');
-    } catch {
-      return null;
-    }
-  }
+
 }

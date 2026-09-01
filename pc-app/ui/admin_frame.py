@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import threading
 import webbrowser
+import requests
 
 from api.client import (
     obtener_reportes,
@@ -532,59 +533,135 @@ class AdminFrame(ctk.CTkFrame):
             messagebox.showerror("Error", "No se pudo eliminar la fila.")
 
     def _abrir_evidencias_bitacora(self, fila):
-        urls = []
+        evidencias_list = []
         if fila.get("evidencia_url"):
-            urls.append(fila["evidencia_url"])
+            evidencias_list.append({"url": fila["evidencia_url"], "id": None, "tipo": "legacy"})
         for ev in fila.get("evidencias", []):
             if ev.get("evidencia_url"):
-                urls.append(ev["evidencia_url"])
+                evidencias_list.append({"url": ev["evidencia_url"], "id": ev["id"], "tipo": "bitacora"})
                 
-        if not urls:
+        if not evidencias_list:
             messagebox.showinfo("Info", "No se encontraron URLs de evidencia validas.")
             return
-            
-        self._mostrar_popup_evidencias(urls)
 
-    def _mostrar_popup_evidencias(self, urls):
+        # Construir nombre de carpeta identificable: fecha / texto_12chars
+        fecha = fila.get("fecha_jornada") or fila.get("fecha", "")
+        if isinstance(fecha, str): fecha = fecha[:10]
+        texto = fila.get("descripcion") or fila.get("notas") or fila.get("observacion") or ""
+        texto_corto = texto.strip()[:12].replace("/", "-").replace("\\", "-") if texto else "bitacora"
+        # Estructura: fecha/texto_12chars
+        nombre_fecha = self._sanitizar_nombre_carpeta(fecha) if fecha else "sin-fecha"
+        nombre_sub = self._sanitizar_nombre_carpeta(texto_corto)
+
+        def _nombre_carpeta_bit():
+            """Devuelve (carpeta_raiz_fecha, subcarpeta_info)."""
+            return nombre_fecha, nombre_sub
+
+        self._mostrar_popup_evidencias(evidencias_list, nombre_fecha, nombre_sub)
+
+    def _mostrar_popup_evidencias(self, evidencias_list, nombre_fecha="sin-fecha", nombre_sub="bitacora"):
+        # Carpeta destino: Documents/AuditFlow/Bitacoras/fecha/info_12chars/
+        carpeta_descarga = os.path.join(
+            os.path.expanduser("~"), "Documents", "AuditFlow", "Bitacoras",
+            self._sanitizar_nombre_carpeta(nombre_fecha),
+            self._sanitizar_nombre_carpeta(nombre_sub),
+        )
         popup = ctk.CTkToplevel(self.controlador)
         popup.title("Visor de Evidencias")
-        popup.geometry("700x500")
+        popup.geometry("900x600")
+        popup.minsize(800, 560)
+        popup.resizable(True, True)
         popup.configure(fg_color=BG_COLOR)
         popup.attributes("-topmost", True)
-        
+
+        # Barra superior con descarga múltiple
+        top_bar = ctk.CTkFrame(popup, fg_color=CARD_COLOR, height=44)
+        top_bar.pack(fill="x", padx=20, pady=(16, 0))
+        top_bar.pack_propagate(False)
+
+        lbl_prog = ctk.CTkLabel(top_bar, text="", font=ctk.CTkFont(size=11), text_color=TEXT_SEC)
+        lbl_prog.pack(side="left", padx=14)
+
+        checkboxes: list[tuple[ctk.BooleanVar, str]] = []
+
+        def _descargar_todos():
+            selec = [(nombre, url) for var, url in checkboxes for nombre in [url.rsplit("/", 1)[-1]] if var.get()]
+            if not selec:
+                messagebox.showwarning("Sin selección", "Marca al menos una evidencia.", parent=popup)
+                return
+            os.makedirs(carpeta_descarga, exist_ok=True)
+            btn_dl_todos.configure(state="disabled")
+            threading.Thread(target=self._descargar_lote_admin,
+                             args=(selec, carpeta_descarga, lbl_prog, btn_dl_todos, popup), daemon=True).start()
+
+        btn_dl_todos = ctk.CTkButton(
+            top_bar, text="⬇️ Descargar Selección", width=160, height=30,
+            fg_color="#0f766e", hover_color="#0d9488", font=ctk.CTkFont(size=11),
+            command=_descargar_todos
+        )
+        btn_dl_todos.pack(side="right", padx=14, pady=7)
+
         scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=20)
+        scroll.pack(fill="both", expand=True, padx=20, pady=10)
         
-        for url in urls:
+        for item in evidencias_list:
+            url = item["url"]
             f_ev = ctk.CTkFrame(scroll, fg_color=CARD_COLOR, corner_radius=10)
             f_ev.pack(fill="x", pady=8)
             
-            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=140, height=140, fg_color=BG_COLOR, corner_radius=8)
-            lbl_img.pack(side="left", padx=16, pady=16)
+            # Checkbox
+            var = ctk.BooleanVar(value=False)
+            checkboxes.append((var, url))
+            ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=16)
+
+            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=140, height=90, fg_color=BG_COLOR, corner_radius=8)
+            lbl_img.pack(side="left", padx=8, pady=12)
             
+            nombre_arch = url.rsplit("/", 1)[-1]
+            nombre_corto = (nombre_arch[:38] + "...") if len(nombre_arch) > 38 else nombre_arch
             ctk.CTkLabel(
-                f_ev, 
-                text=url.split("/")[-1][:40] + "...", 
-                font=ctk.CTkFont(size=13),
-                text_color=TEXT_MAIN,
-                anchor="w"
-            ).pack(side="left", padx=16, expand=True, fill="x")
-            
+                f_ev, text=f"{nombre_fecha}/{nombre_sub} — {nombre_corto}",
+                font=ctk.CTkFont(size=12), text_color=TEXT_MAIN, anchor="w"
+            ).pack(side="left", padx=10, expand=True, fill="x")
+
+            # Botón descarga individual
+            def _dl_individual(u=url):
+                os.makedirs(carpeta_descarga, exist_ok=True)
+                nombre_f = u.rsplit("/", 1)[-1]
+                lbl_prog.configure(text=f"Descargando {nombre_f[:20]}…")
+                threading.Thread(target=self._descargar_lote_admin,
+                                 args=([(nombre_f, u)], carpeta_descarga, lbl_prog, None, popup), daemon=True).start()
+
             ctk.CTkButton(
-                f_ev, text="Abrir Original", width=120, height=36,
+                f_ev, text="⬇️", width=36, height=32,
+                fg_color="#0f766e", hover_color="#0d9488",
+                command=_dl_individual
+            ).pack(side="right", padx=4)
+
+            ctk.CTkButton(
+                f_ev, text="Abrir", width=70, height=32,
                 fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 command=lambda u=url: webbrowser.open(u)
-            ).pack(side="right", padx=16)
+            ).pack(side="right", padx=(4, 8))
+
+            if item["id"]:
+                def _del_ev(i=item, w=f_ev):
+                    self._eliminar_evidencia_admin(i, w)
+                ctk.CTkButton(
+                    f_ev, text="🗑️", width=36, height=32,
+                    fg_color="#ef4444", hover_color="#dc2626",
+                    command=_del_ev
+                ).pack(side="right", padx=(4, 0))
             
             # Load thumbnail in background
             def _cargar_thumb(u=url, lbl=lbl_img):
                 try:
-                    img = generar_miniatura(u, size=(140, 140))
+                    img = generar_miniatura(u, size=(140, 90))
                     if img:
                         ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                         lbl.configure(text="", image=ctk_img)
-                        lbl.image = ctk_img # keep ref
+                        lbl.image = ctk_img
                     else:
                         lbl.configure(text="Sin vista previa", text_color=TEXT_SEC)
                 except Exception:
@@ -638,14 +715,44 @@ class AdminFrame(ctk.CTkFrame):
         txt.configure(state="disabled")
         
         # Evidencias
+        header_ev_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        header_ev_frame.pack(fill="x", pady=(0, 8))
+
         ctk.CTkLabel(
-            main_scroll, 
+            header_ev_frame, 
             text="Evidencias Adjuntas", 
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=TEXT_MAIN
-        ).pack(anchor="w", pady=(0, 12))
-        
+        ).pack(side="left")
+
         evidencias = reporte.get("evidencias", [])
+        urls_ev = [ev.get("evidencia_url") or ev.get("ruta_local") for ev in evidencias if ev.get("evidencia_url") or ev.get("ruta_local")]
+
+        # Carpeta: Documents/AuditFlow/Reportes/titulo - evidencias/
+        nombre_carpeta_rep = self._sanitizar_nombre_carpeta(f"{titulo} - evidencias")
+        carpeta_rep = os.path.join(os.path.expanduser("~"), "Documents", "AuditFlow", "Reportes", nombre_carpeta_rep)
+        lbl_prog_rep = ctk.CTkLabel(header_ev_frame, text="", font=ctk.CTkFont(size=11), text_color=TEXT_SEC)
+        lbl_prog_rep.pack(side="left", padx=14)
+
+        checkboxes_rep: list[tuple[ctk.BooleanVar, str]] = []
+
+        def _dl_todos_rep():
+            selec = [(url.rsplit("/", 1)[-1], url) for var, url in checkboxes_rep if var.get()]
+            if not selec:
+                messagebox.showwarning("Sin selección", "Marca al menos una evidencia.")
+                return
+            os.makedirs(carpeta_rep, exist_ok=True)
+            btn_dl_rep.configure(state="disabled")
+            threading.Thread(target=self._descargar_lote_admin,
+                             args=(selec, carpeta_rep, lbl_prog_rep, btn_dl_rep, None), daemon=True).start()
+
+        btn_dl_rep = ctk.CTkButton(
+            header_ev_frame, text="⬇️ Descargar Selección", width=160, height=30,
+            fg_color="#0f766e", hover_color="#0d9488", font=ctk.CTkFont(size=11),
+            command=_dl_todos_rep
+        )
+        btn_dl_rep.pack(side="right")
+        
         if not evidencias:
             ctk.CTkLabel(main_scroll, text="No hay evidencias adjuntas a este reporte.", text_color=TEXT_SEC).pack(anchor="w")
         else:
@@ -655,28 +762,60 @@ class AdminFrame(ctk.CTkFrame):
                 
                 f_ev = ctk.CTkFrame(main_scroll, fg_color=CARD_COLOR, corner_radius=10)
                 f_ev.pack(fill="x", pady=6)
+
+                # Checkbox
+                var = ctk.BooleanVar(value=False)
+                checkboxes_rep.append((var, url))
+                ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=12)
                 
-                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=100, height=100, fg_color=BG_COLOR, corner_radius=8)
-                lbl_img.pack(side="left", padx=16, pady=12)
+                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=100, height=80, fg_color=BG_COLOR, corner_radius=8)
+                lbl_img.pack(side="left", padx=8, pady=10)
                 
+                nombre_arch = url.rsplit("/", 1)[-1]
+                nombre_corto = (nombre_arch[:35] + "...") if len(nombre_arch) > 35 else nombre_arch
                 ctk.CTkLabel(
                     f_ev, 
-                    text=url.split("/")[-1][:40] + "...", 
-                    font=ctk.CTkFont(size=13),
+                    text=f"{titulo[:25]} — {nombre_corto}",
+                    font=ctk.CTkFont(size=12),
                     text_color=TEXT_MAIN,
                     anchor="w"
-                ).pack(side="left", padx=16, expand=True, fill="x")
-                
+                ).pack(side="left", padx=10, expand=True, fill="x")
+
+                # Botón descarga individual
+                def _dl_ind(u=url):
+                    os.makedirs(carpeta_rep, exist_ok=True)
+                    nf = u.rsplit("/", 1)[-1]
+                    lbl_prog_rep.configure(text=f"Descargando {nf[:20]}…")
+                    threading.Thread(target=self._descargar_lote_admin,
+                                     args=([(nf, u)], carpeta_rep, lbl_prog_rep, None, None), daemon=True).start()
+
                 ctk.CTkButton(
-                    f_ev, text="Abrir Original", width=120, height=36,
+                    f_ev, text="⬇️", width=36, height=30,
+                    fg_color="#0f766e", hover_color="#0d9488",
+                    command=_dl_ind
+                ).pack(side="right", padx=4)
+
+                ctk.CTkButton(
+                    f_ev, text="Abrir", width=70, height=30,
                     fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
                     font=ctk.CTkFont(size=12, weight="bold"),
                     command=lambda u=url: webbrowser.open(u)
-                ).pack(side="right", padx=16)
+                ).pack(side="right", padx=(4, 8))
+                
+                ev_id = ev.get("id")
+                is_nube = ev.get("evidencia_url") is not None
+                if ev_id and is_nube:
+                    def _del_rep_ev(id=ev_id, w=f_ev):
+                        self._eliminar_evidencia_admin({"id": id, "tipo": "reporte"}, w)
+                    ctk.CTkButton(
+                        f_ev, text="🗑️", width=36, height=30,
+                        fg_color="#ef4444", hover_color="#dc2626",
+                        command=_del_rep_ev
+                    ).pack(side="right", padx=(4, 0))
                 
                 def _cargar_thumb_rep(u=url, lbl=lbl_img):
                     try:
-                        img = generar_miniatura(u, size=(100, 100))
+                        img = generar_miniatura(u, size=(100, 80))
                         if img:
                             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                             lbl.configure(text="", image=ctk_img)
@@ -687,3 +826,94 @@ class AdminFrame(ctk.CTkFrame):
                         lbl.configure(text="Sin previa", text_color=TEXT_SEC)
                 
                 threading.Thread(target=_cargar_thumb_rep, daemon=True).start()
+
+    # ─── Utilidades de descarga ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitizar_nombre_carpeta(nombre: str) -> str:
+        """Elimina caracteres inválidos y saltos de línea para nombres de carpeta en Windows/Linux."""
+        nombre = nombre.replace("\n", " ").replace("\r", "")
+        for ch in r'<>:"/\|?*':
+            nombre = nombre.replace(ch, "-")
+        return nombre.strip()[:80] or "AuditFlow"
+
+    def _descargar_lote_admin(
+        self,
+        items: list[tuple[str, str]],
+        carpeta: str,
+        lbl_prog,
+        btn_reactivar,
+        parent_win,
+    ):
+        """
+        Hilo secundario: descarga cada (nombre, url) con requests stream=True.
+        Informa progreso mediante self.after(0, ...).
+        """
+        total = len(items)
+        exitos = 0
+        errores = []
+
+        for idx, (nombre, url) in enumerate(items, start=1):
+            self.after(0, lbl_prog.configure, {"text": f"Descargando {idx}/{total}…"})
+            try:
+                ruta_salida = os.path.join(carpeta, nombre)
+                # Saltar si el archivo ya existe (validación de duplicados)
+                if os.path.exists(ruta_salida):
+                    exitos += 1  # contar como éxito si ya está descargado
+                    continue
+
+                with requests.get(url, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    with open(ruta_salida, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                exitos += 1
+            except Exception as e:
+                errores.append(f"{nombre}: {e}")
+
+        if btn_reactivar:
+            self.after(0, btn_reactivar.configure, {"state": "normal"})
+
+        def _fin():
+            msg = f"Descarga terminada: {exitos} exitosos."
+            if errores:
+                msg += f"\n\nErrores ({len(errores)}):\n" + "\n".join(errores[:5])
+                if len(errores) > 5:
+                    msg += "\n..."
+            lbl_prog.configure(text=msg)
+            if not errores:
+                messagebox.showinfo("Descarga completa",
+                    f"✅ {exitos} archivos guardados en:\n{carpeta}")
+            else:
+                messagebox.showwarning("Descarga parcial",
+                    f"Se descargaron {exitos} de {total}.\n\nErrores:\n" + "\n".join(errores))
+
+        self.after(0, _fin)
+
+    def _eliminar_evidencia_admin(self, item: dict, widget: ctk.CTkFrame):
+        popup_window = widget.winfo_toplevel()
+        respuesta = messagebox.askyesno(
+            "Eliminar Evidencia", 
+            "Esta acción eliminará el archivo permanentemente del servidor.\n\n¿Deseas continuar?",
+            parent=popup_window
+        )
+        if not respuesta:
+            return
+            
+        try:
+            import requests
+            from api.client import API_BASE_URL
+            
+            tipo = item["tipo"]
+            ev_id = item["id"]
+            endpoint = f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}" if tipo == "bitacora" else f"{API_BASE_URL}/evidencias-reporte/{ev_id}"
+            
+            resp = requests.delete(endpoint, timeout=10)
+            if resp.status_code in (200, 204):
+                widget.destroy() # Feedback visual
+                self.ultimo_hash_bitacoras = None # Forzar recarga de bitácoras si aplica
+            else:
+                messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}", parent=popup_window)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error de red: {e}", parent=popup_window)

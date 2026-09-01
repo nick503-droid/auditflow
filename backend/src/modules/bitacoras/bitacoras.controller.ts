@@ -81,4 +81,9 @@ export class BitacorasController {
   remove(@Param('id') id: string) {
     return this.bitacorasService.remove(id);
   }
+
+  @Delete('evidencia/:id')
+  removeEvidencia(@Param('id') id: string) {
+    return this.bitacorasService.removeEvidencia(id);
+  }
 }

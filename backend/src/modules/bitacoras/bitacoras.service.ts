@@ -5,6 +5,8 @@ import { Bitacora } from './entities/bitacora.entity';
 import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
 import { UpdateBitacoraDto } from './dto/update-bitacora.dto';
+import { StorageService } from '../../common/storage/storage.service';
+import { ConfigService } from '@nestjs/config';
 
 const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1, se confunden al leer
 const DIAS_VIGENCIA_CODIGO = 5;
@@ -16,6 +18,8 @@ export class BitacorasService {
     private bitacorasRepo: Repository<Bitacora>,
     @InjectRepository(EvidenciaBitacora)
     private evidenciasRepo: Repository<EvidenciaBitacora>,
+    private storageService: StorageService,
+    private configService: ConfigService,
   ) {}
 
   findAll() {
@@ -136,6 +140,21 @@ export class BitacorasService {
 
   remove(id: string) {
     return this.bitacorasRepo.softDelete(id);
+  }
+
+  async removeEvidencia(id: string) {
+    const evidencia = await this.evidenciasRepo.findOneBy({ id });
+    if (!evidencia) {
+      return null;
+    }
+
+    if (evidencia.evidencia_url) {
+      // 1. Eliminar físicamente del almacenamiento local (Hard Delete de objeto multimedia)
+      await this.storageService.eliminarArchivo(evidencia.evidencia_url);
+    }
+
+    // 2. Eliminar registro de la DB (Hard Delete)
+    return this.evidenciasRepo.delete(id);
   }
 
   /**

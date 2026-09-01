@@ -31,7 +31,7 @@ from api.client import (
     obtener_bitacoras_por_fecha,
     adjuntar_evidencia_por_codigo,
     obtener_evidencias_bitacora,
-    subir_archivo,
+    subir_archivo_con_destino,
     crear_bitacora,
     actualizar_bitacora,
     obtener_restaurantes,
@@ -45,6 +45,7 @@ from db.local_db import (
     guardar_bitacora_local,
     marcar_bitacora_sincronizada,
     obtener_bitacoras_pendientes,
+    prefijo_nube_bitacora,
 )
 
 # ─── SISTEMA DE DISEÑO (Fase 5) ───────────────────────────────────────────────
@@ -620,8 +621,9 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _procesar_modificacion(self, idx: int):
         """
-        1) Guarda en SQLite local (offline-first, siempre funciona).
-        2) Intenta sincronizar con el backend en un hilo daemon.
+        API-First:
+        1) Intenta sincronizar con el backend directo en un hilo daemon.
+        2) Si falla, usa SQLite local como contingencia.
         """
         if idx >= len(self.filas):
             return
@@ -650,59 +652,50 @@ class BitacorasFrame(ctk.CTkFrame):
             "urgencia":       fila.get("urgencia", "leve"),
         }
 
-        # Paso 1: SQLite local (rápido, en hilo principal)
-        # SIEMPRE guarda para no perder el borrador de la descripción
-        local_id = guardar_bitacora_local(datos_locales)
-        fila["local_id"] = local_id
-
-        # Paso 2: intentar backend en hilo daemon (no bloquea UI)
-        # Al backend SÍ le exigimos restaurante_id
-        if rest_id:
-            threading.Thread(
-                target=self._subir_al_servidor,
-                args=(idx, local_id, datos_locales),
-                daemon=True,
-            ).start()
-
-    def _subir_al_servidor(self, idx: int, local_id: int, datos: dict):
-        """Hilo daemon: crea o actualiza en backend y actualiza el SQLite."""
-        try:
-            dto = {
-                "restaurante_id": datos["restaurante_id"],
-                "usuario_id":     datos["usuario_id"],
-                "descripcion":    datos["descripcion"],
-                "fecha":          datos["fecha"],
-                "hora":           datos["hora"],
-                "urgencia":       datos["urgencia"],
-            }
-            b_id   = datos.get("b_id", "")
-            codigo = datos.get("codigo", "")
-
-            if not b_id:
-                # Solo crear si hay algún contenido además de restaurante
-                if not (datos.get("hora") or datos.get("descripcion")):
-                    return
-                resultado = crear_bitacora(dto)
-                if resultado:
-                    b_id   = resultado.get("id", "")
+        def _sync_bitacora():
+            try:
+                dto = {
+                    "restaurante_id": datos_locales["restaurante_id"],
+                    "usuario_id":     datos_locales["usuario_id"],
+                    "descripcion":    datos_locales["descripcion"],
+                    "fecha":          datos_locales["fecha"],
+                    "hora":           datos_locales["hora"],
+                    "urgencia":       datos_locales["urgencia"],
+                }
+                b_id   = datos_locales.get("b_id", "")
+                
+                if not b_id:
+                    if not (datos_locales.get("hora") or datos_locales.get("descripcion")):
+                        return
+                    resultado = crear_bitacora(dto)
+                    if not resultado:
+                        raise Exception("Fallo en API")
+                    
+                    b_id = resultado.get("id", "")
                     codigo = resultado.get("codigo", "")
+                    
+                    # Store locally to keep ID tracking
+                    local_id = guardar_bitacora_local(datos_locales)
+                    marcar_bitacora_sincronizada(local_id, b_id, codigo)
                     self.after(0, self._aplicar_resultado_creacion, idx, b_id, codigo, local_id)
                 else:
-                    self.after(0, self._actualizar_indicador_sync, "offline")
-                    return
-            else:
-                resultado = actualizar_bitacora(b_id, dto)
-                if resultado is None:
-                    self.after(0, self._actualizar_indicador_sync, "offline")
-                    return
+                    resultado = actualizar_bitacora(b_id, dto)
+                    if not resultado:
+                        raise Exception("Fallo en API")
+                    
+                    local_id = guardar_bitacora_local(datos_locales)
+                    marcar_bitacora_sincronizada(local_id, b_id, datos_locales.get("codigo", ""))
+                
+                self.after(0, self._actualizar_indicador_sync, "ok")
+            except Exception:
+                # Fallback to local DB (Fail-safe)
+                local_id = guardar_bitacora_local(datos_locales)
+                if not datos_locales.get("local_id"):
+                    self.after(0, lambda: self.filas[idx].update({"local_id": local_id}))
+                self.after(0, self._actualizar_indicador_sync, "offline")
 
-            marcar_bitacora_sincronizada(local_id, b_id, codigo)
-            self.after(0, self._actualizar_indicador_sync, "ok")
-            self.ultimo_hash_bd = None
-
-        except Exception as e:
-            print(f"[subir_al_servidor] Error: {e}")
-            self.after(0, self._actualizar_indicador_sync, "offline")
+        self.after(0, self._actualizar_indicador_sync, "syncing")
+        threading.Thread(target=_sync_bitacora, daemon=True).start()
 
     def _aplicar_resultado_creacion(self, idx: int, b_id: str, codigo: str, local_id: int):
         """Llamado en el hilo principal tras crear exitosamente en el backend."""
@@ -989,6 +982,14 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self.boton_grabar.pack(pady=(0, 5), padx=16, fill="x")
 
+        self.boton_detener = ctk.CTkButton(
+            self.frame_evidencia,
+            text="⏹️ Detener y Adjuntar",
+            command=self._detener_grabacion,
+            fg_color="#4f46e5", hover_color="#4338ca",
+            font=ctk.CTkFont(size=12),
+        )
+
         self.boton_adjuntar = ctk.CTkButton(
             self.frame_evidencia,
             text="📎 Adjuntar archivo",
@@ -996,13 +997,26 @@ class BitacorasFrame(ctk.CTkFrame):
             fg_color="transparent", border_width=1, border_color="gray40",
             font=ctk.CTkFont(size=12),
         )
-        self.boton_adjuntar.pack(pady=(0, 8), padx=16, fill="x")
+        self.boton_adjuntar.pack(pady=(0, 4), padx=16, fill="x")
+
+        self.boton_screenshot_bit = ctk.CTkButton(
+            self.frame_evidencia,
+            text="📷 Tomar Captura",
+            command=self._tomar_screenshot,
+            fg_color="#0369a1", hover_color="#0284c7",
+            font=ctk.CTkFont(size=12),
+        )
+        self.boton_screenshot_bit.pack(pady=(0, 8), padx=16, fill="x")
 
         self.label_archivo = ctk.CTkLabel(
             self.frame_evidencia, text="Sin evidencia adjunta",
             text_color="gray50", font=ctk.CTkFont(size=10), wraplength=230,
         )
-        self.label_archivo.pack(pady=(0, 8), padx=16)
+        self.label_archivo.pack(pady=(0, 4), padx=16)
+
+        self.frame_lista_local = ctk.CTkScrollableFrame(self.frame_evidencia, height=80, fg_color="#0d1b2a")
+        # Por defecto no se muestra hasta que haya evidencias locales
+        # self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
 
         self.boton_subir = ctk.CTkButton(
             self.frame_evidencia,
@@ -1027,18 +1041,80 @@ class BitacorasFrame(ctk.CTkFrame):
         # Actualizar código (solo lectura)
         self.label_codigo.configure(text=codigo if codigo else "——————")
 
-        # Actualizar lista de evidencias
+        # Actualizar lista de evidencias de la nube
         for w in self.frame_lista_ev.winfo_children():
             w.destroy()
 
-        if evidencias:
-            for ev in evidencias:
-                self._agregar_chip_evidencia(ev)
-        else:
+        # Actualizar lista de evidencias locales
+        for w in self.frame_lista_local.winfo_children():
+            w.destroy()
+
+        # Reiniciar lista de checkboxes para descarga
+        self._checkboxes_desc_bit = []
+        
+        hay_nube = bool(evidencias)
+        hay_local = bool(self.rutas_evidencia)
+
+        if not hay_nube:
             ctk.CTkLabel(
                 self.frame_lista_ev, text="Sin evidencias aún",
                 text_color="gray50", font=ctk.CTkFont(size=10),
             ).pack(pady=10)
+        else:
+            for ev in evidencias:
+                self._agregar_chip_evidencia(ev)
+                
+        if not hay_local:
+            self.frame_lista_local.pack_forget()
+        else:
+            self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
+            for idx, ruta in enumerate(self.rutas_evidencia, start=1):
+                self._agregar_chip_evidencia_local(ruta, idx)
+
+    def _refrescar_lista_evidencias(self):
+        if not self._codigo_panel_activo:
+            return
+        
+        fila_actual = None
+        for fila in self.filas:
+            if fila.get("codigo") == self._codigo_panel_activo:
+                fila_actual = fila
+                break
+                
+        if fila_actual:
+            self._mostrar_panel_evidencia(self._codigo_panel_activo, fila_actual.get("evidencias", []))
+
+    def _eliminar_evidencia_local(self, ruta: str):
+        from tkinter import messagebox
+        import os
+        respuesta = messagebox.askyesno("Eliminar", "¿Seguro que quieres borrar esta evidencia local?")
+        if respuesta:
+            if ruta in self.rutas_evidencia:
+                self.rutas_evidencia.remove(ruta)
+            if os.path.exists(ruta):
+                try:
+                    os.remove(ruta)
+                except OSError:
+                    pass
+            self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta")
+            self._refrescar_lista_evidencias()
+
+    def _agregar_chip_evidencia_local(self, ruta: str, idx: int):
+        nombre = os.path.basename(ruta)
+        chip = ctk.CTkFrame(self.frame_lista_local, fg_color="#334155", corner_radius=6)
+        chip.pack(fill="x", pady=2, padx=2)
+        
+        top_row = ctk.CTkFrame(chip, fg_color="transparent")
+        top_row.pack(fill="x", padx=4, pady=2)
+        
+        ctk.CTkLabel(top_row, text=f"Ev. Local {idx}", font=ctk.CTkFont(size=10, weight="bold"), text_color="#38bdf8").pack(side="left")
+        
+        ctk.CTkButton(
+            top_row, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
+            command=lambda r=ruta: self._eliminar_evidencia_local(r)
+        ).pack(side="right")
+        
+        ctk.CTkLabel(chip, text=nombre, font=ctk.CTkFont(size=10), text_color="#94a3b8", justify="left").pack(side="left", padx=4, pady=(0,4))
 
     def _agregar_chip_evidencia(self, ev: dict):
         """Agrega un chip de miniatura o ícono de video para una evidencia.
@@ -1119,6 +1195,194 @@ class BitacorasFrame(ctk.CTkFrame):
                 chip, text=fecha_str, text_color="gray50", font=ctk.CTkFont(size=9),
             ).pack(side="right", padx=8)
 
+        # Checkbox para descarga múltiple y botón de eliminar (lado derecho)
+        if url and url.startswith("http"):
+            var = ctk.BooleanVar(value=False)
+            cb = ctk.CTkCheckBox(chip, text="", variable=var, width=20, height=20)
+            cb.pack(side="right", padx=(0, 4))
+            
+            ev_id = ev.get("id")
+            if ev_id:
+                ctk.CTkButton(
+                    chip, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
+                    command=lambda id=ev_id: self._eliminar_evidencia_nube(id)
+                ).pack(side="right", padx=(4, 8))
+                
+            if not hasattr(self, "_checkboxes_desc_bit"):
+                self._checkboxes_desc_bit = []
+            nombre_desc = url.rsplit("/", 1)[-1] if "/" in url else url
+            self._checkboxes_desc_bit.append((var, nombre_desc, url))
+
+    def _eliminar_evidencia_nube(self, ev_id: int):
+        from tkinter import messagebox
+        import requests
+        from api.client import API_BASE_URL
+        respuesta = messagebox.askyesno("Eliminar Evidencia", "Esta acción eliminará el archivo de la nube permanentemente.\n\n¿Estás completamente seguro?")
+        if respuesta:
+            try:
+                resp = requests.delete(f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}", timeout=10)
+                if resp.status_code in (200, 204):
+                    self.ultimo_hash_bd = None
+                    self._polling_bitacoras_job()
+                else:
+                    messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error de red: {e}")
+
+    # ─── Screenshot (selector estilo Snipping Tool) ────────────────────────
+
+    def _tomar_screenshot(self):
+        """Abre el selector visual de área (estilo Snipping Tool) para captura."""
+        self._abrir_selector_captura()
+
+    def _abrir_selector_captura(self):
+        """Ventana redimensionable/movible; al pulsar Capturar toma la bbox."""
+        try:
+            from PIL import ImageGrab  # noqa: validate dep
+        except ImportError:
+            from tkinter import messagebox
+            messagebox.showerror("Dependencia faltante", "Instala Pillow:\n  pip install pillow")
+            return
+
+        selector = ctk.CTkToplevel(self.controlador)
+        selector.title("📷  Seleccionar área a capturar")
+        selector.geometry("480x320+150+150")
+        selector.configure(fg_color="#0f172a")
+        selector.attributes("-topmost", True)
+        # Hace la ventana semi-transparente para que el usuario vea qué va a capturar
+        selector.attributes("-alpha", 0.4)
+        selector.resizable(True, True)
+
+        marco = ctk.CTkFrame(selector, fg_color="transparent",
+                             border_color="#4f46e5", border_width=2, corner_radius=6)
+        marco.pack(fill="both", expand=True, padx=6, pady=6)
+
+        ctk.CTkLabel(
+            marco,
+            text="Mueve y redimensiona esta ventana\nsobre el área que deseas capturar,\nluego pulsa 📷 Capturar.",
+            font=ctk.CTkFont(size=13),
+            text_color="#94a3b8",
+        ).pack(expand=True)
+
+        btn_bar = ctk.CTkFrame(selector, fg_color="#1e293b", height=52)
+        btn_bar.pack(fill="x", side="bottom")
+        btn_bar.pack_propagate(False)
+
+        def _ejecutar_captura():
+            selector.update_idletasks()
+            x = selector.winfo_x()
+            y = selector.winfo_y()
+            w = selector.winfo_width()
+            h = selector.winfo_height()
+            selector.withdraw()
+            selector.after(200, lambda: _finalizar(x, y, w, h))
+
+        def _finalizar(x, y, w, h):
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+            except Exception as e:
+                selector.destroy()
+                from tkinter import messagebox
+                messagebox.showerror("Error de captura", str(e))
+                return
+            selector.destroy()
+            self._guardar_screenshot_bit(img)
+
+        ctk.CTkButton(
+            btn_bar, text="📷  Capturar",
+            fg_color="#4f46e5", hover_color="#4338ca",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=_ejecutar_captura,
+        ).pack(side="left", padx=12, pady=10, expand=True, fill="x")
+
+        ctk.CTkButton(
+            btn_bar, text="Cancelar",
+            fg_color="transparent", border_width=1,
+            command=selector.destroy,
+        ).pack(side="right", padx=12, pady=10, ipadx=10)
+
+    def _guardar_screenshot_bit(self, img):
+        """Guarda la captura en temp y la adjunta como evidencia pendiente."""
+        import tempfile
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ruta_temp = os.path.join(tempfile.gettempdir(), f"screenshot_bit_{ts}.jpg")
+        try:
+            img.convert("RGB").save(ruta_temp, "JPEG", quality=85, optimize=True)
+        except OSError as e:
+            from tkinter import messagebox
+            messagebox.showerror("Error al guardar", str(e))
+            return
+        if ruta_temp not in self.rutas_evidencia:
+            self.rutas_evidencia.append(ruta_temp)
+        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
+
+    # ─── Descarga múltiple de evidencias (bitácoras) ─────────────────────────
+
+    def _on_descargar_seleccionados_bit(self):
+        """Inicia la descarga de evidencias de nube marcadas con checkbox."""
+        import threading
+        seleccionadas = [
+            (nombre, url)
+            for var, nombre, url in getattr(self, "_checkboxes_desc_bit", [])
+            if var.get()
+        ]
+        if not seleccionadas:
+            from tkinter import messagebox
+            messagebox.showwarning("Sin selección", "Marca al menos una evidencia para descargar.")
+            return
+
+        carpeta = os.path.join(os.path.expanduser("~"), "Downloads", "AuditFlow")
+        os.makedirs(carpeta, exist_ok=True)
+
+        self.boton_descargar_ev.configure(state="disabled")
+        self.lbl_progreso_desc_bit.configure(text=f"Preparando {len(seleccionadas)} archivos…")
+
+        threading.Thread(
+            target=self._descargar_hilo_bit,
+            args=(seleccionadas, carpeta),
+            daemon=True,
+        ).start()
+
+    def _descargar_hilo_bit(self, items: list, carpeta: str):
+        """Hilo secundario que descarga con requests stream=True."""
+        import requests
+        from tkinter import messagebox
+
+        total = len(items)
+        exitos = 0
+        errores = []
+
+        for idx, (nombre, url) in enumerate(items, start=1):
+            self.after(0, self.lbl_progreso_desc_bit.configure, {"text": f"Descargando {idx} de {total}…"})
+            try:
+                ruta_salida = os.path.join(carpeta, nombre)
+                if os.path.exists(ruta_salida):
+                    base, ext = os.path.splitext(nombre)
+                    ruta_salida = os.path.join(carpeta, f"{base}_{idx}{ext}")
+
+                with requests.get(url, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    with open(ruta_salida, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                exitos += 1
+            except Exception as e:
+                errores.append(f"{nombre}: {e}")
+
+        def _finalizar():
+            self.boton_descargar_ev.configure(state="normal")
+            if errores:
+                self.lbl_progreso_desc_bit.configure(text=f"⚠️ {exitos}/{total} descargados", text_color="#f59e0b")
+                messagebox.showwarning("Descarga parcial",
+                    f"Se descargaron {exitos} de {total}.\n\nErrores:\n" + "\n".join(errores))
+            else:
+                self.lbl_progreso_desc_bit.configure(text=f"✅ {exitos} archivos descargados", text_color="#4ade80")
+                messagebox.showinfo("Descarga completa", f"✅ {exitos} archivos guardados en:\n{carpeta}")
+
+        self.after(0, _finalizar)
+
     # ─── Grabación ────────────────────────────────────────────────────────────
 
     def _registrar_hotkeys(self):
@@ -1130,50 +1394,165 @@ class BitacorasFrame(ctk.CTkFrame):
             keyboard.remove_hotkey("ctrl+k+l")
         except Exception:
             pass
-        if self.grabando:
+        if getattr(self, "grabador", None) and self.grabador.estado != "detenido":
             self._detener_grabacion()
         self._ocultar_indicador_rec()
 
+    def _actualizar_botones_grabacion(self):
+        estado = self.grabador.estado
+        if estado == "detenido":
+            self.boton_grabar.configure(
+                text="🔴 Grabar pantalla\n(Ctrl+K+L)", 
+                fg_color="#7f1d1d", hover_color="#991b1b"
+            )
+            self.boton_detener.pack_forget()
+        elif estado == "grabando":
+            self.boton_grabar.configure(
+                text="⏸️ Pausar", 
+                fg_color="#eab308", hover_color="#ca8a04"
+            )
+            self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
+        elif estado == "pausado":
+            self.boton_grabar.configure(
+                text="▶️ Reanudar", 
+                fg_color="#10b981", hover_color="#059669"
+            )
+            self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
+
     def _toggle_grabacion(self):
-        if self.grabando:
-            self._detener_grabacion()
-        else:
+        if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
+        elif self.grabador.estado == "grabando":
+            self._pausar_grabacion()
+        elif self.grabador.estado == "pausado":
+            self._reanudar_grabacion()
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
-        self.ruta_evidencia_actual = self.grabador.iniciar(con_audio=con_audio)
-        self.grabando = True
+        self.grabador.iniciar(con_audio=con_audio)
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
+        self._actualizar_botones_grabacion()
+
+    def _pausar_grabacion(self):
+        self.grabador.pausar()
+        if getattr(self, "indicador", None):
+            # Cambiar dot a ámbar y texto del botón a ▶️ (indica "click para reanudar")
+            self.lbl_dot.configure(text="⏸️", text_color="#facc15")
+            self.btn_pausa_float.configure(
+                text="▶️  Reanudar", 
+                fg_color="#10b981", hover_color="#059669",
+                width=85
+            )
+            # Cambiar fondo del panel y hotkey label
+            self.lbl_hotkeys.configure(text="En Pausa — Ctrl+K+L para reanudar", text_color="#facc15")
+            # Detener el cronómetro
+            if getattr(self, "_timer_id_rec", None):
+                self.after_cancel(self._timer_id_rec)
+                self._timer_id_rec = None
+        self._actualizar_botones_grabacion()
+
+    def _reanudar_grabacion(self):
+        self.grabador.reanudar()
+        if getattr(self, "indicador", None):
+            # Restaurar estado visual a "Grabando"
+            self.lbl_dot.configure(text="🔴", text_color="#ef4444")
+            self.btn_pausa_float.configure(
+                text="⏸️",
+                fg_color="#eab308", hover_color="#ca8a04",
+                width=35
+            )
+            self.lbl_hotkeys.configure(
+                text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8",
+                text_color="gray"
+            )
+            # Reanudar el cronómetro
+            self._actualizar_crono_rec()
+        self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
-        self.grabador.detener()
-        self.grabando = False
+        ruta_final = self.grabador.detener()
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
-        if self.ruta_evidencia_actual:
-            self.rutas_evidencia.append(self.ruta_evidencia_actual)
-            self.ruta_evidencia_actual = None
-        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
+        self._actualizar_botones_grabacion()
+        if ruta_final and os.path.exists(ruta_final):
+            self.rutas_evidencia.append(ruta_final)
+        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta")
+        self._refrescar_lista_evidencias()
 
     def _mostrar_indicador_rec(self):
+        self._segundos_grabacion = 0
+        self._timer_id_rec = None
+
+        import keyboard
+        try:
+            keyboard.add_hotkey("ctrl+k+l", lambda: self.after(0, self._toggle_grabacion))
+            keyboard.add_hotkey("ctrl+f8",  lambda: self.after(0, self._detener_grabacion))
+        except Exception as e:
+            print(f"[bitacoras] Error al registrar hotkeys: {e}")
+
         self.indicador = ctk.CTkToplevel(self.controlador)
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
-        ancho, alto = 200, 42
-        x = self.indicador.winfo_screenwidth() - ancho - 20
-        self.indicador.geometry(f"{ancho}x{alto}+{x}+20")
-        ctk.CTkLabel(
+        self.indicador.configure(fg_color="#1e293b")
+        ancho, alto = 260, 90
+        x = self.indicador.winfo_screenwidth() - ancho - 40
+        self.indicador.geometry(f"{ancho}x{alto}+{x}+40")
+
+        self.indicador.grid_columnconfigure(1, weight=1)
+
+        self.lbl_dot = ctk.CTkLabel(self.indicador, text="🔴", text_color="#ef4444", font=ctk.CTkFont(size=14))
+        self.lbl_dot.grid(row=0, column=0, padx=(15, 5), pady=(15, 0))
+
+        self.lbl_crono = ctk.CTkLabel(self.indicador, text="00:00", text_color="white",
+                                       font=ctk.CTkFont(size=16, weight="bold", family="Consolas"))
+        self.lbl_crono.grid(row=0, column=1, sticky="w", pady=(15, 0))
+
+        self.btn_pausa_float = ctk.CTkButton(
+            self.indicador, text="⏸️", width=35, height=30,
+            fg_color="#eab308", hover_color="#ca8a04",
+            command=self._toggle_grabacion
+        )
+        self.btn_pausa_float.grid(row=0, column=2, padx=5, pady=(15, 0))
+
+        self.btn_stop_float = ctk.CTkButton(
+            self.indicador, text="⏹️", width=35, height=30,
+            fg_color="#ef4444", hover_color="#dc2626",
+            command=self._detener_grabacion
+        )
+        self.btn_stop_float.grid(row=0, column=3, padx=(0, 15), pady=(15, 0))
+
+        self.lbl_hotkeys = ctk.CTkLabel(
             self.indicador,
-            text="🔴 Grabando (Ctrl+K+L)",
-            fg_color="#1a1a1a", text_color="white",
-        ).pack(fill="both", expand=True)
+            text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8",
+            text_color="gray", font=ctk.CTkFont(size=11)
+        )
+        self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
+
+        self._actualizar_crono_rec()
+
+    def _actualizar_crono_rec(self):
+        if getattr(self, "indicador", None) and self.grabador.estado == "grabando":
+            mins, secs = divmod(self._segundos_grabacion, 60)
+            self.lbl_crono.configure(text=f"{mins:02d}:{secs:02d}")
+            self._segundos_grabacion += 1
+            self._timer_id_rec = self.after(1000, self._actualizar_crono_rec)
 
     def _ocultar_indicador_rec(self):
-        if self.indicador is not None:
-            self.indicador.destroy()
+        import keyboard
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+        if getattr(self, "_timer_id_rec", None):
+            self.after_cancel(self._timer_id_rec)
+            self._timer_id_rec = None
+        if getattr(self, "indicador", None):
+            try:
+                self.indicador.destroy()
+            except Exception:
+                pass
             self.indicador = None
 
     # ─── Adjuntar / Subir evidencia ───────────────────────────────────────────
@@ -1188,6 +1567,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 if r not in self.rutas_evidencia:
                     self.rutas_evidencia.append(r)
             self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
+            self._refrescar_lista_evidencias()
 
     def _on_subir_evidencia(self):
         codigo = self._codigo_panel_activo.strip().upper()
@@ -1206,8 +1586,21 @@ class BitacorasFrame(ctk.CTkFrame):
         exitos = 0
         con_audio = bool(self.switch_audio.get())
         
+        # Buscar la fecha de la bitácora para generar la carpeta destino correcta
+        fecha_iso = None
+        for fila in self.filas:
+            if fila.get("codigo") == codigo:
+                # "2026-08-30T00:00:00.000Z" -> "2026-08-30"
+                fecha_iso = str(fila.get("fecha", "")).split("T")[0]
+                break
+        if not fecha_iso:
+            from datetime import datetime
+            fecha_iso = datetime.now().strftime("%Y-%m-%d")
+            
+        prefijo = prefijo_nube_bitacora(fecha_iso)
+        
         for ruta in list(self.rutas_evidencia):
-            evidencia_url, error_upload = subir_archivo(ruta)
+            evidencia_url, error_upload = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
             if evidencia_url is None:
                 messagebox.showerror("Error", f"No se pudo subir {ruta}.\n\nMotivo: {error_upload}")
                 continue
@@ -1242,6 +1635,7 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Navegación ───────────────────────────────────────────────────────────
 
     def _on_volver(self):
+        self._ocultar_indicador_rec()
         self.hilo_polling_activo = False
         from ui.selection_frame import SelectionFrame
         self.controlador.mostrar_frame(SelectionFrame)

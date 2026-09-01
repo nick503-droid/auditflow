@@ -9,6 +9,12 @@ class MainWindow(ctk.CTk):
         # Calcular posición y tamaño DESPUÉS de que tkinter tenga pantalla disponible
         self.update_idletasks()
 
+        try:
+            from db.local_db import limpiar_borradores_fantasma
+            limpiar_borradores_fantasma()
+        except Exception as e:
+            print(f"[Auto-Clean] Error limpiando borradores fantasmas: {e}")
+
         pantalla_w = self.winfo_screenwidth()
         pantalla_h = self.winfo_screenheight()
 

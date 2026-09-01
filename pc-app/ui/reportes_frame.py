@@ -462,6 +462,13 @@ class ReportesFrame(ctk.CTkFrame):
             self.borrador = obtener_o_crear_borrador(
                 self.usuario["id"], self.restaurante["id"]
             )
+            # Guardamos el título real para que no quede como "Sin título" si sale sin sincronizar
+            marcar_reporte_pendiente(
+                self.borrador["id"],
+                self.titulo_reporte,
+                self.usuario["id"],
+                self.restaurante["id"]
+            )
             cloud_notas = reporte.get("notas_finales", "")
             if cloud_notas:
                 actualizar_notas(self.borrador["id"], cloud_notas)
@@ -473,17 +480,14 @@ class ReportesFrame(ctk.CTkFrame):
         self.frame_setup.destroy()
         self._construir_ui_editor()
         self._cargar_estado_previo()
-        self._registrar_hotkeys()
-        self._iniciar_polling()
+
+        # Abrir panel lateral automáticamente si hay evidencias de nube para ver/descargar
+        if self.evidencias_nube:
+            self.after(100, self._toggle_panel_lateral)
 
     def _on_crear_reporte_inicial(self):
         """
-        Crea un nuevo reporte — SIEMPRE entra al editor sin importar si hay red.
-
-        Flujo offline-first:
-          1. Guarda el borrador en SQLite con pendiente=1.
-          2. Entra al editor inmediatamente.
-          3. El polling_worker intentará crear en la nube cada 5 s.
+        Crea un nuevo reporte (API-First).
         """
         titulo = self.entry_titulo.get().strip()
         if not titulo:
@@ -499,8 +503,6 @@ class ReportesFrame(ctk.CTkFrame):
         self.reporte_remoto_id = None
         self.codigo_reporte = "PENDIENTE"
 
-        # Limpiar cualquier borrador previo de hoy para este par usuario/restaurante
-        # y crear uno nuevo limpio.
         borrador_viejo = obtener_o_crear_borrador(
             self.usuario["id"], self.restaurante["id"]
         )
@@ -508,8 +510,6 @@ class ReportesFrame(ctk.CTkFrame):
         self.borrador = obtener_o_crear_borrador(
             self.usuario["id"], self.restaurante["id"]
         )
-
-        # Marcar como pendiente (offline-first: la nube es secundaria)
         marcar_reporte_pendiente(
             self.borrador["id"],
             titulo,
@@ -517,12 +517,34 @@ class ReportesFrame(ctk.CTkFrame):
             self.restaurante["id"],
         )
 
-        # Entrar al editor inmediatamente — el polling_worker hará el trabajo de red
         self.frame_setup.destroy()
         self._construir_ui_editor()
         self._cargar_estado_previo()
-        self._registrar_hotkeys()
-        self._iniciar_polling()
+        
+        def _sync_init():
+            try:
+                dto = {
+                    "usuario_id": self.usuario["id"],
+                    "restaurante_id": self.restaurante["id"],
+                    "titulo": self.titulo_reporte,
+                    "notas_finales": "",
+                    "fecha_jornada": datetime.now().strftime("%Y-%m-%d"),
+                }
+                resultado = crear_reporte(dto)
+                if not resultado:
+                    raise Exception("Fallo en API")
+                
+                remote_id = resultado["id"]
+                codigo = resultado.get("codigo", "SINCOD")
+                self.reporte_remoto_id = remote_id
+                self._actualizar_codigo_ui(codigo)
+                marcar_reporte_sincronizado(self.borrador["id"], remote_id)
+                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "ok"))
+            except Exception:
+                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "offline"))
+
+        self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "syncing"))
+        threading.Thread(target=_sync_init, daemon=True).start()
 
     def _volver_al_menu_directo(self):
         self.hilo_polling_activo = False
@@ -655,7 +677,7 @@ class ReportesFrame(ctk.CTkFrame):
 
         self.boton_grabar = ctk.CTkButton(
             self.frame_side,
-            text="🔴  Grabar pantalla (Ctrl+K+L)",
+            text="🔴  Grabar pantalla",
             command=self._toggle_grabacion,
             fg_color="#c0392b",
             hover_color="#922b21",
@@ -663,12 +685,31 @@ class ReportesFrame(ctk.CTkFrame):
         )
         self.boton_grabar.pack(pady=(0, 6), padx=16, fill="x")
 
+        self.boton_detener = ctk.CTkButton(
+            self.frame_side,
+            text="⏹️  Detener y Adjuntar",
+            command=self._detener_grabacion,
+            fg_color="#4f46e5",
+            hover_color="#4338ca",
+            font=ctk.CTkFont(size=12),
+        )
+        # Oculto inicialmente (solo visible grabando/pausado)
+
         ctk.CTkButton(
             self.frame_side,
             text="📎  Adjuntar archivo",
             command=self._on_adjuntar,
             fg_color="transparent",
             border_width=1,
+            font=ctk.CTkFont(size=12),
+        ).pack(pady=(0, 4), padx=16, fill="x")
+
+        ctk.CTkButton(
+            self.frame_side,
+            text="📷  Tomar Captura",
+            command=self._tomar_screenshot,
+            fg_color="#0369a1",
+            hover_color="#0284c7",
             font=ctk.CTkFont(size=12),
         ).pack(pady=(0, 12), padx=16, fill="x")
 
@@ -747,125 +788,47 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _guardar_notas_ahora(self):
         """
-        Paso 1 (siempre): guarda en SQLite.
-        Paso 2 (si hay red): sincroniza con el backend en hilo daemon.
+        API-First:
+        Intenta guardar en el backend. Si falla, guarda en SQLite como Fail-safe.
         """
         texto = self.textbox_notas.get("1.0", "end").strip()
-        actualizar_notas(self.borrador["id"], texto)
 
-        if self.reporte_remoto_id:
-            def _sync():
-                res = actualizar_reporte(self.reporte_remoto_id, texto)
-                if res:
-                    marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
-                    self._texto_pendiente = False
-                    self.after(0, lambda: actualizar_indicador_reporte(
-                        self.label_estado_guardado, "ok"
-                    ))
+        def _sync_notas():
+            try:
+                if self.reporte_remoto_id:
+                    res = actualizar_reporte(self.reporte_remoto_id, texto)
+                    if not res:
+                        raise Exception("Fallo update")
                 else:
-                    marcar_notas_pendientes(self.borrador["id"])
-                    self._texto_pendiente = True
-                    self.after(0, lambda: actualizar_indicador_reporte(
-                        self.label_estado_guardado, "offline"
-                    ))
-            threading.Thread(target=_sync, daemon=True).start()
-        else:
-            marcar_notas_pendientes(self.borrador["id"])
-            self._texto_pendiente = True
-            actualizar_indicador_reporte(self.label_estado_guardado, "offline")
+                    dto = {
+                        "usuario_id": self.usuario["id"],
+                        "restaurante_id": self.restaurante["id"],
+                        "titulo": self.titulo_reporte,
+                        "notas_finales": texto,
+                        "fecha_jornada": datetime.now().strftime("%Y-%m-%d"),
+                    }
+                    res = crear_reporte(dto)
+                    if not res:
+                        raise Exception("Fallo create")
+                    self.reporte_remoto_id = res["id"]
+                    self._actualizar_codigo_ui(res.get("codigo", "SINCOD"))
 
+                actualizar_notas(self.borrador["id"], texto)
+                marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
+                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "ok"))
+            except Exception:
+                actualizar_notas(self.borrador["id"], texto)
+                marcar_notas_pendientes(self.borrador["id"])
+                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "offline"))
+
+        threading.Thread(target=_sync_notas, daemon=True).start()
         self._debounce_id = None
 
     # ═══════════════════════════════════════════════════════════════════════════
     # POLLING WORKER — SINCRONIZACIÓN SILENCIOSA
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _iniciar_polling(self):
-        self.hilo_polling_activo = True
-        threading.Thread(target=self._polling_worker, daemon=True).start()
-
-    def _polling_worker(self):
-        """
-        Hilo daemon que corre cada 5 s mientras el editor esté abierto.
-
-        Casos manejados:
-          1. Sin reporte_remoto_id y pendiente → crear reporte en la nube.
-          2. Con id pero texto pendiente       → actualizar notas en la nube.
-          3. finalizar_pendiente               → subir evidencias y cerrar.
-          4. Todo OK                           → mostrar ☁️ En la nube.
-        """
-        while self.hilo_polling_activo:
-            try:
-                borrador = obtener_borrador_completo(self.borrador["id"])
-                if not borrador:
-                    time.sleep(5)
-                    continue
-
-                # ── CASO 1: Reporte no existe en la nube todavía ──────────
-                if not self.reporte_remoto_id and borrador.get("pendiente"):
-                    dto = {
-                        "usuario_id": borrador["usuario_id"],
-                        "restaurante_id": borrador["restaurante_id"],
-                        "titulo": borrador.get("titulo") or self.titulo_reporte or "Reporte sin título",
-                        "notas_finales": borrador.get("notas_finales", ""),
-                        "fecha_jornada": borrador.get("fecha_jornada", ""),
-                    }
-                    resultado = crear_reporte(dto)
-                    if resultado:
-                        remote_id = resultado["id"]
-                        codigo = resultado.get("codigo", "SINCOD")
-                        self.reporte_remoto_id = remote_id
-                        marcar_reporte_sincronizado(self.borrador["id"], remote_id)
-                        self._texto_pendiente = False
-                        self._actualizar_codigo_ui(codigo)
-                        self.after(0, lambda: actualizar_indicador_reporte(
-                            self.label_estado_guardado, "ok"
-                        ))
-                    else:
-                        self.after(0, lambda: actualizar_indicador_reporte(
-                            self.label_estado_guardado, "offline"
-                        ))
-
-                # ── CASO 2: Hay id pero texto pendiente ───────────────────
-                elif self.reporte_remoto_id and (
-                    self._texto_pendiente or borrador.get("pendiente")
-                ):
-                    self.after(0, lambda: actualizar_indicador_reporte(
-                        self.label_estado_guardado, "syncing"
-                    ))
-                    notas = borrador.get("notas_finales", "")
-                    res = actualizar_reporte(self.reporte_remoto_id, notas)
-                    if res:
-                        marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
-                        self._texto_pendiente = False
-                        self.after(0, lambda: actualizar_indicador_reporte(
-                            self.label_estado_guardado, "ok"
-                        ))
-                    else:
-                        self.after(0, lambda: actualizar_indicador_reporte(
-                            self.label_estado_guardado, "offline"
-                        ))
-
-                # ── CASO 3: Finalizar quedó pendiente ─────────────────────
-                elif self._finalizar_pendiente and self.reporte_remoto_id:
-                    self.after(0, lambda: actualizar_indicador_reporte(
-                        self.label_estado_guardado, "syncing"
-                    ))
-                    exito = self._intentar_finalizar_ahora()
-                    if exito:
-                        self._finalizar_pendiente = False
-                        self.after(0, self._volver_al_menu_directo)
-
-                # ── CASO 4: Todo sincronizado ─────────────────────────────
-                elif self.reporte_remoto_id and not self._texto_pendiente:
-                    self.after(0, lambda: actualizar_indicador_reporte(
-                        self.label_estado_guardado, "ok"
-                    ))
-
-            except Exception as e:
-                print(f"[reportes_polling] Error: {e}")
-
-            time.sleep(5)
+    # Eliminado: POLLING WORKER y dependencias de sincronización periódica
 
     def _actualizar_codigo_ui(self, codigo: str):
         """Actualiza el label del código de vinculación en el hilo principal."""
@@ -881,13 +844,15 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _prefijo_nube(self) -> str:
         """Devuelve el prefijo MinIO del reporte activo."""
+        codigo = self.codigo_reporte or "PENDIENTE"
         titulo = self.titulo_reporte or "sin_titulo"
-        return prefijo_nube_reporte(titulo)
+        return prefijo_nube_reporte(codigo, titulo)
 
     def _ruta_destino_evidencia(self, nombre_archivo: str) -> str:
         """Ruta local estructurada para una evidencia de este reporte."""
+        codigo = self.codigo_reporte or "PENDIENTE"
         titulo = self.titulo_reporte or "sin_titulo"
-        return ruta_evidencia_reporte(titulo, nombre_archivo)
+        return ruta_evidencia_reporte(codigo, titulo, nombre_archivo)
 
     def _refrescar_lista_evidencias(self):
         if not hasattr(self, "frame_lista_evidencias"):
@@ -909,19 +874,58 @@ class ReportesFrame(ctk.CTkFrame):
                 self.label_estado_evidencias.configure(text="")
             return
 
-        # 1. Mostrar Evidencias en la Nube
+        # 1. Evidencias en la Nube
         for i, ev in enumerate(evidencias_nube, start=1):
             url = ev.get("evidencia_url", "")
             nombre = url.split("/")[-1] if url else f"Nube_{i}"
-            self._crear_tarjeta_evidencia(nombre, url, f"☁️ Nube {i}", "#64748b")
+            ev_id = ev.get("id")
+            cmd = (lambda id=ev_id: self._eliminar_evidencia_nube(id)) if ev_id else None
+            self._crear_tarjeta_evidencia(nombre, url, f"☁️ Nube {i}", "#64748b", delete_command=cmd)
 
-        # 2. Mostrar Evidencias Locales (pendientes de subir)
+        # 2. Evidencias Locales (pendientes de subir)
         for i, ev in enumerate(evidencias_locales, start=1):
             nombre = os.path.basename(ev["ruta_local"])
             ruta = ev["ruta_local"]
-            self._crear_tarjeta_evidencia(nombre, ruta, f"Ev. {i}", "#38bdf8")
+            cmd = lambda id=ev["id"]: self._eliminar_evidencia_local(id)
+            self._crear_tarjeta_evidencia(nombre, ruta, f"Ev. {i}", "#38bdf8", delete_command=cmd)
 
-    def _crear_tarjeta_evidencia(self, nombre: str, ruta_o_url: str, etiqueta: str, color_etiqueta: str):
+    def _eliminar_evidencia_local(self, ev_id: int):
+        from db.local_db import db_session
+        respuesta = messagebox.askyesno("Eliminar", "¿Estás seguro de eliminar esta evidencia local?")
+        if not respuesta:
+            return
+        
+        with db_session() as conn:
+            fila = conn.execute("SELECT ruta_local FROM evidencia_borrador WHERE id = ?", (ev_id,)).fetchone()
+            if fila:
+                try:
+                    os.remove(fila["ruta_local"])
+                except OSError:
+                    pass
+            conn.execute("DELETE FROM evidencia_borrador WHERE id = ?", (ev_id,))
+            conn.commit()
+            
+        self._refrescar_lista_evidencias()
+
+    def _eliminar_evidencia_nube(self, ev_id: int):
+        import requests
+        from api.client import API_BASE_URL
+        respuesta = messagebox.askyesno("Eliminar Evidencia", "Esta acción eliminará el archivo de la nube permanentemente.\n\n¿Estás completamente seguro?")
+        if respuesta:
+            try:
+                resp = requests.delete(f"{API_BASE_URL}/evidencias-reporte/{ev_id}", timeout=10)
+                if resp.status_code in (200, 204):
+                    # Actualizar cache local de la nube eliminando ese elemento
+                    if hasattr(self, "evidencias_nube"):
+                        self.evidencias_nube = [e for e in self.evidencias_nube if e.get("id") != ev_id]
+                    self._refrescar_lista_evidencias()
+                else:
+                    messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error de red: {e}")
+
+    def _crear_tarjeta_evidencia(self, nombre: str, ruta_o_url: str, etiqueta: str, color_etiqueta: str, delete_command=None):
+        """Tarjeta de evidencia con miniatura inline y botón de previsualización."""
         card = ctk.CTkFrame(self.frame_lista_evidencias, fg_color="#334155", corner_radius=5)
         card.pack(fill="x", pady=3, padx=2)
 
@@ -943,16 +947,57 @@ class ReportesFrame(ctk.CTkFrame):
             fg_color="#475569",
             hover_color="#64748b",
             command=lambda r=ruta_o_url: self._previsualizar_archivo(r),
-        ).pack(side="right")
+        ).pack(side="right", padx=(4, 0))
+
+        if delete_command is not None:
+            ctk.CTkButton(
+                top_row,
+                text="🗑️",
+                width=26,
+                height=18,
+                fg_color="#ef4444",
+                hover_color="#dc2626",
+                command=delete_command,
+            ).pack(side="right")
+
+        # Fila inferior: miniatura + nombre
+        body_row = ctk.CTkFrame(card, fg_color="transparent")
+        body_row.pack(fill="x", padx=8, pady=(0, 5))
+
+        # Miniatura inline para imágenes locales
+        ext = os.path.splitext(nombre)[1].lower()
+        es_imagen = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+        if es_imagen and (ruta_o_url.startswith("http") or os.path.exists(ruta_o_url)):
+            def _cargar_thumb(r=ruta_o_url, parent=body_row):
+                try:
+                    from PIL import Image
+                    import requests
+                    if r.startswith("http"):
+                        img = Image.open(requests.get(r, stream=True).raw).convert("RGB")
+                    else:
+                        img = Image.open(r).convert("RGB")
+                    img.thumbnail((54, 38))
+                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(54, 38))
+                    lbl_thumb = ctk.CTkLabel(parent, image=ctk_img, text="", cursor="hand2")
+                    lbl_thumb.image = ctk_img
+                    lbl_thumb.pack(side="left", padx=(0, 6))
+                    lbl_thumb.bind("<Button-1>", lambda e, ru=r: self._previsualizar_archivo(ru))
+                except Exception:
+                    pass  # falla silenciosa si PIL no está o el archivo es inválido
+            threading.Thread(target=_cargar_thumb, daemon=True).start()
+        elif ext in (".mp4", ".avi", ".mov", ".mkv", ".webm"):
+            ctk.CTkLabel(body_row, text="🎥", font=ctk.CTkFont(size=20)).pack(side="left", padx=(0, 6))
 
         ctk.CTkLabel(
-            card,
+            body_row,
             text=nombre,
             font=ctk.CTkFont(size=10),
             text_color="#94a3b8",
-            wraplength=180,
+            wraplength=130,
             justify="left",
-        ).pack(anchor="w", padx=8, pady=(0, 5))
+        ).pack(side="left", anchor="w")
+
+
 
     def _previsualizar_archivo(self, ruta: str):
         if ruta.startswith("http"):
@@ -973,7 +1018,180 @@ class ReportesFrame(ctk.CTkFrame):
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo abrir:\n{e}")
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CAPTURA DE PANTALLA
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _abrir_selector_captura(self):
+        """
+        Abre una ventana estilo Snipping Tool: el usuario la mueve/redimensiona
+        sobre el área que quiere capturar y presiona 📷 Capturar.
+        """
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            messagebox.showerror("Dependencia faltante", "Instala Pillow:\n  pip install pillow")
+            return
+
+        selector = ctk.CTkToplevel(self.controlador)
+        selector.title("📷  Seleccionar área a capturar")
+        selector.geometry("480x320+150+150")
+        selector.configure(fg_color="#0f172a")
+        selector.attributes("-topmost", True)
+        # Hace la ventana semi-transparente para que el usuario vea qué va a capturar
+        selector.attributes("-alpha", 0.4)
+        selector.resizable(True, True)
+
+        marco = ctk.CTkFrame(selector, fg_color="transparent",
+                             border_color="#4f46e5", border_width=2, corner_radius=6)
+        marco.pack(fill="both", expand=True, padx=6, pady=6)
+
+        ctk.CTkLabel(
+            marco,
+            text="Mueve y redimensiona esta ventana\nsobre el área que deseas capturar,\nluego pulsa 📷 Capturar.",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#ffffff",
+        ).pack(expand=True)
+
+        btn_bar = ctk.CTkFrame(selector, fg_color="#1e293b", height=52)
+        btn_bar.pack(fill="x", side="bottom")
+        btn_bar.pack_propagate(False)
+
+        def _ejecutar_captura():
+            selector.update_idletasks()
+            x = selector.winfo_x()
+            y = selector.winfo_y()
+            w = selector.winfo_width()
+            h = selector.winfo_height()
+            selector.withdraw()
+            selector.after(200, lambda: _finalizar(x, y, w, h, selector))
+
+        def _finalizar(x, y, w, h, win):
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+            except Exception as e:
+                win.destroy()
+                messagebox.showerror("Error de captura", str(e))
+                return
+            win.destroy()
+            self._guardar_screenshot(img)
+
+        ctk.CTkButton(
+            btn_bar, text="📷  Capturar",
+            fg_color="#4f46e5", hover_color="#4338ca",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=_ejecutar_captura,
+        ).pack(side="left", padx=12, pady=10, expand=True, fill="x")
+
+        ctk.CTkButton(
+            btn_bar, text="Cancelar",
+            fg_color="transparent", border_width=1, text_color="#ffffff",
+            command=selector.destroy,
+        ).pack(side="right", padx=12, pady=10, ipadx=10)
+
+    def _guardar_screenshot(self, img):
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre = f"screenshot_{ts}.jpg"
+        ruta_destino = self._ruta_destino_evidencia(nombre)
+
+        try:
+            img.convert("RGB").save(ruta_destino, "JPEG", quality=85, optimize=True)
+        except OSError as e:
+            messagebox.showerror("Error al guardar", f"No se pudo guardar la captura:\n{e}")
+            return
+
+        carpeta_destino = self._prefijo_nube()
+        agregar_evidencia(
+            self.borrador["id"],
+            ruta_destino,
+            bool(self.switch_audio.get()),
+            carpeta_destino=carpeta_destino,
+        )
+        self._refrescar_lista_evidencias()
+        if self.label_estado_evidencias.winfo_exists():
+            actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
+
+    def _tomar_screenshot(self):
+        """Abre el selector visual de captura."""
+        self._abrir_selector_captura()
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # DESCARGA MÚLTIPLE DE EVIDENCIAS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _on_descargar_seleccionados(self):
+        """Inicia la descarga de las evidencias de nube marcadas con checkbox."""
+        seleccionadas = [
+            (nombre, url)
+            for var, nombre, url in getattr(self, "_checkboxes_descarga", [])
+            if var.get()
+        ]
+        if not seleccionadas:
+            messagebox.showwarning("Sin selección", "Marca al menos una evidencia de nube para descargar.")
+            return
+
+        # Crear carpeta destino
+        carpeta = os.path.join(os.path.expanduser("~"), "Downloads", "AuditFlow")
+        os.makedirs(carpeta, exist_ok=True)
+
+        self.boton_descargar.configure(state="disabled")
+        self.lbl_progreso_descarga.configure(text=f"Preparando {len(seleccionadas)} archivos…")
+
+        threading.Thread(
+            target=self._descargar_hilo,
+            args=(seleccionadas, carpeta),
+            daemon=True,
+        ).start()
+
+    def _descargar_hilo(self, items: list[tuple[str, str]], carpeta: str):
+        """
+        Hilo secundario: descarga cada URL con requests stream=True.
+        Reporta progreso al hilo principal mediante self.after(0, …).
+        """
+        import requests
+
+        total = len(items)
+        exitos = 0
+        errores = []
+
+        for idx, (nombre, url) in enumerate(items, start=1):
+            self.after(0, self.lbl_progreso_descarga.configure,
+                       {"text": f"Descargando {idx} de {total}…"})
+            try:
+                ruta_salida = os.path.join(carpeta, nombre)
+                # Evitar sobreescritura ciega
+                if os.path.exists(ruta_salida):
+                    base, ext = os.path.splitext(nombre)
+                    ruta_salida = os.path.join(carpeta, f"{base}_{idx}{ext}")
+
+                with requests.get(url, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    with open(ruta_salida, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                exitos += 1
+            except Exception as e:
+                errores.append(f"{nombre}: {e}")
+
+        # Notificar resultado en el hilo principal
+        def _finalizar():
+            self.boton_descargar.configure(state="normal")
+            if errores:
+                self.lbl_progreso_descarga.configure(text=f"⚠️ {exitos}/{total} descargados", text_color="#f59e0b")
+                messagebox.showwarning(
+                    "Descarga parcial",
+                    f"Se descargaron {exitos} de {total}.\n\nErrores:\n" + "\n".join(errores),
+                )
+            else:
+                self.lbl_progreso_descarga.configure(text=f"✅ {exitos} archivos descargados", text_color="#4ade80")
+                messagebox.showinfo("Descarga completa", f"✅ {exitos} archivos guardados en:\n{carpeta}")
+
+        self.after(0, _finalizar)
+
     def _on_adjuntar(self):
+
         """
         Permite adjuntar un archivo existente.
         Lo copia a ~/Documents/AuditFlow/Reportes/<título>/ para mantener
@@ -1015,39 +1233,83 @@ class ReportesFrame(ctk.CTkFrame):
     # GRABACIÓN DE PANTALLA
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _registrar_hotkeys(self):
-        keyboard.add_hotkey("ctrl+k+l", self._toggle_grabacion)
-
     def _al_destruir(self, event):
         self.hilo_polling_activo = False
-        try:
-            keyboard.remove_hotkey("ctrl+k+l")
-        except Exception:
-            pass
         self._ocultar_indicador_rec()
 
+    def _actualizar_botones_grabacion(self):
+        estado = self.grabador.estado
+        if estado == "detenido":
+            self.boton_grabar.configure(
+                text="🔴  Grabar pantalla", 
+                fg_color="#c0392b", hover_color="#922b21"
+            )
+            self.boton_detener.pack_forget()
+        elif estado == "grabando":
+            self.boton_grabar.configure(
+                text="⏸️  Pausar", 
+                fg_color="#eab308", hover_color="#ca8a04"
+            )
+            self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
+        elif estado == "pausado":
+            self.boton_grabar.configure(
+                text="▶️  Reanudar", 
+                fg_color="#10b981", hover_color="#059669"
+            )
+            self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
+
     def _toggle_grabacion(self):
-        if self.grabando:
-            self._detener_grabacion()
-        else:
+        if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
+        elif self.grabador.estado == "grabando":
+            self._pausar_grabacion()
+        elif self.grabador.estado == "pausado":
+            self._reanudar_grabacion()
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
-        # El grabador siempre graba en AuditFlow_Temp (sin cambio en recorder.py).
-        # La ruta final se obtiene al detener — en ese momento se registra en SQLite
-        # con la carpeta de destino correcta para la subida a MinIO.
         self.grabador.iniciar(con_audio=con_audio)
-        self.grabando = True
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
+        self._actualizar_botones_grabacion()
+
+    def _pausar_grabacion(self):
+        self.grabador.pausar()
+        if getattr(self, "indicador", None):
+            self.lbl_dot.configure(text="⏸️", text_color="#facc15")
+            self.btn_pausa_float.configure(
+                text="▶️  Reanudar",
+                fg_color="#10b981", hover_color="#059669",
+                width=85
+            )
+            self.lbl_hotkeys.configure(text="En Pausa — Ctrl+K+L para reanudar", text_color="#facc15")
+            if getattr(self, "_timer_id", None):
+                self.after_cancel(self._timer_id)
+                self._timer_id = None
+        self._actualizar_botones_grabacion()
+
+    def _reanudar_grabacion(self):
+        self.grabador.reanudar()
+        if getattr(self, "indicador", None):
+            self.lbl_dot.configure(text="🔴", text_color="#ef4444")
+            self.btn_pausa_float.configure(
+                text="⏸️",
+                fg_color="#eab308", hover_color="#ca8a04",
+                width=35
+            )
+            self.lbl_hotkeys.configure(
+                text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8",
+                text_color="gray"
+            )
+            self._actualizar_crono()
+        self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
         ruta_final = self.grabador.detener()
-        self.grabando = False
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
+        self._actualizar_botones_grabacion()
 
         if ruta_final and os.path.exists(ruta_final):
             con_audio = bool(self.switch_audio.get())
@@ -1064,22 +1326,68 @@ class ReportesFrame(ctk.CTkFrame):
                 actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
 
     def _mostrar_indicador_rec(self):
+        self._segundos_grabacion = 0
+        self._timer_id = None
+        
+        import keyboard
+        try:
+            keyboard.add_hotkey("ctrl+k+l", lambda: self.after(0, self._toggle_grabacion_desde_float))
+            keyboard.add_hotkey("ctrl+f8",  lambda: self.after(0, self._detener_grabacion))
+        except Exception as e:
+            print(f"Error al registrar hotkeys: {e}")
+        
         self.indicador = ctk.CTkToplevel(self.controlador)
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
-        ancho, alto = 200, 40
-        x = self.indicador.winfo_screenwidth() - ancho - 20
-        self.indicador.geometry(f"{ancho}x{alto}+{x}+20")
-        ctk.CTkLabel(
-            self.indicador,
-            text="🔴  Grabando (Ctrl+K+L)",
-            fg_color="#1a1a1a",
-            text_color="white",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(fill="both", expand=True)
+        self.indicador.configure(fg_color="#1e293b")
+        ancho, alto = 260, 90
+        x = self.indicador.winfo_screenwidth() - ancho - 40
+        y = 40
+        self.indicador.geometry(f"{ancho}x{alto}+{x}+{y}")
+        
+        self.indicador.grid_columnconfigure(1, weight=1)
+        
+        self.lbl_dot = ctk.CTkLabel(self.indicador, text="🔴", text_color="#ef4444", font=ctk.CTkFont(size=14))
+        self.lbl_dot.grid(row=0, column=0, padx=(15, 5), pady=(15, 0))
+        
+        self.lbl_crono = ctk.CTkLabel(self.indicador, text="00:00", text_color="white", font=ctk.CTkFont(size=16, weight="bold", family="Consolas"))
+        self.lbl_crono.grid(row=0, column=1, sticky="w", pady=(15, 0))
+        
+        self.btn_pausa_float = ctk.CTkButton(self.indicador, text="⏸️", width=35, height=30, fg_color="#eab308", hover_color="#ca8a04", command=self._toggle_grabacion_desde_float)
+        self.btn_pausa_float.grid(row=0, column=2, padx=5, pady=(15, 0))
+        
+        self.btn_stop_float = ctk.CTkButton(self.indicador, text="⏹️", width=35, height=30, fg_color="#ef4444", hover_color="#dc2626", command=self._detener_grabacion)
+        self.btn_stop_float.grid(row=0, column=3, padx=(0, 15), pady=(15, 0))
+        
+        self.lbl_hotkeys = ctk.CTkLabel(self.indicador, text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8", text_color="gray", font=ctk.CTkFont(size=11))
+        self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
+        
+        self._actualizar_crono()
+        
+    def _actualizar_crono(self):
+        if getattr(self, "indicador", None) and self.grabador.estado == "grabando":
+            mins, secs = divmod(self._segundos_grabacion, 60)
+            self.lbl_crono.configure(text=f"{mins:02d}:{secs:02d}")
+            self._segundos_grabacion += 1
+            self._timer_id = self.after(1000, self._actualizar_crono)
+
+    def _toggle_grabacion_desde_float(self):
+        if self.grabador.estado == "grabando":
+            self._pausar_grabacion()
+        elif self.grabador.estado == "pausado":
+            self._reanudar_grabacion()
 
     def _ocultar_indicador_rec(self):
-        if self.indicador is not None:
+        import keyboard
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+
+        if getattr(self, "_timer_id", None):
+            self.after_cancel(self._timer_id)
+            self._timer_id = None
+        if getattr(self, "indicador", None) is not None:
             try:
                 self.indicador.destroy()
             except Exception:
@@ -1216,25 +1524,54 @@ class ReportesFrame(ctk.CTkFrame):
         threading.Thread(target=_tarea, daemon=True).start()
 
     def _on_volver(self):
-        texto = self.textbox_notas.get("1.0", "end-1c").strip()
-
-        if texto:
-            actualizar_notas(
-                self.borrador["id"],
-                texto,
-                marcar_pendiente=bool(not self.reporte_remoto_id or self._texto_pendiente),
-            )
-            # Sincronización de cortesía al salir
-            if self.reporte_remoto_id:
-                try:
-                    actualizar_reporte(self.reporte_remoto_id, texto)
-                except Exception:
-                    pass
-
-        respuesta = messagebox.askyesno(
-            "Salir al menú",
-            "¿Volver al menú principal?\n\n"
-            "Tu progreso está guardado localmente y se sincronizará automáticamente.",
-        )
-        if respuesta:
+        # Asegurar que el indicador flotante de grabación se cierre al salir
+        self._ocultar_indicador_rec()
+        
+        notas = self.textbox_notas.get("1.0", "end-1c").strip()
+        evidencias = obtener_evidencias(self.borrador["id"])
+        
+        # 1. Si está completamente vacío (sin notas y sin evidencias locales)
+        if not notas and not evidencias and not getattr(self, "evidencias_nube", []):
+            eliminar_borrador_completo(self.borrador["id"])
+            # Nota: Si ya se había creado en el server, quedará vacío allá. Idealmente debería eliminarse.
             self._volver_al_menu_directo()
+            return
+
+        # 2. Si tiene evidencias pero no tiene notas (faltan datos obligatorios)
+        if not notas:
+            respuesta = messagebox.askyesno(
+                "Faltan datos",
+                "Faltan datos para enviar (el reporte no tiene descripción/notas).\n\n"
+                "¿Deseas cerrar de todos modos y ELIMINAR este reporte?",
+                icon="warning"
+            )
+            if respuesta:
+                eliminar_borrador_completo(self.borrador["id"])
+                # Aquí si tuviéramos un endpoint para borrar, lo llamaríamos (para otra iteración).
+                self._volver_al_menu_directo()
+            return
+
+        # 3. Tiene notas, procedemos a auto-guardar y auto-enviar (comportamiento inteligente)
+        # Hacemos lo mismo que _on_finalizar pero de forma más silenciosa o con un mensaje de "Guardando..."
+        actualizar_notas(self.borrador["id"], notas)
+        self.boton_finalizar.configure(state="disabled", text="Sincronizando...")
+        self.update()
+
+        def _tarea_volver():
+            if not self.reporte_remoto_id:
+                # Aún sin ID en servidor, dejarlo pendiente de finalizar
+                marcar_notas_pendientes(self.borrador["id"])
+                self._texto_pendiente = True
+                self._finalizar_pendiente = True
+                self.after(0, self._volver_al_menu_directo)
+                return
+
+            exito = self._intentar_finalizar_ahora()
+            if exito:
+                self.after(0, self._volver_al_menu_directo)
+            else:
+                # Falló la subida (probablemente sin internet), se queda pendiente
+                self._finalizar_pendiente = True
+                self.after(0, self._volver_al_menu_directo)
+
+        threading.Thread(target=_tarea_volver, daemon=True).start()

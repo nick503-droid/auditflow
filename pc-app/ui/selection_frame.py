@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from tkinter import messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from api.client import obtener_usuarios, crear_usuario, crear_restaurante
 
@@ -22,6 +22,7 @@ class SelectionFrame(ctk.CTkFrame):
 
         self.usuario_seleccionado = None
         self.usuarios_data = {}
+        self.fecha_bitacora = datetime.now().strftime("%Y-%m-%d")
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -89,7 +90,7 @@ class SelectionFrame(ctk.CTkFrame):
         # Botones de gestión rápida
         ctk.CTkButton(
             user_box,
-            text="➕ Usuario",
+            text="➕ Nuevo Usuario",
             command=self._popup_nuevo_usuario,
             fg_color="transparent",
             hover_color=CARD_HOVER,
@@ -97,14 +98,14 @@ class SelectionFrame(ctk.CTkFrame):
             border_color=CARD_COLOR,
             text_color=TEXT_SEC,
             font=ctk.CTkFont(size=12),
-            width=100,
+            width=120,
             height=32,
             corner_radius=8
         ).pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(
             user_box,
-            text="➕ Restaurante",
+            text="➕ Nuevo Restaurante",
             command=self._popup_nuevo_restaurante,
             fg_color="transparent",
             hover_color=CARD_HOVER,
@@ -112,7 +113,7 @@ class SelectionFrame(ctk.CTkFrame):
             border_color=CARD_COLOR,
             text_color=TEXT_SEC,
             font=ctk.CTkFont(size=12),
-            width=110,
+            width=140,
             height=32,
             corner_radius=8
         ).pack(side="left")
@@ -133,26 +134,28 @@ class SelectionFrame(ctk.CTkFrame):
             comando=self._abrir_bitacoras
         )
         
-        # Campo de fecha integrado dentro de la tarjeta de Bitácoras
-        self.entry_fecha = ctk.CTkEntry(
-            self.card_bitacoras, 
-            justify="center",
-            fg_color=BG_COLOR,
-            border_color=CARD_HOVER,
-            text_color=TEXT_MAIN,
-            font=ctk.CTkFont(size=14),
-            height=36,
-            corner_radius=8
-        )
-        self.entry_fecha.insert(0, datetime.now().strftime("%Y-%m-%d"))
-        self.entry_fecha.pack(fill="x", padx=24, pady=(0, 24), side="bottom")
-        
-        ctk.CTkLabel(
+        # Selector de Fecha en píldoras (Segmented Button)
+        self.seg_fecha = ctk.CTkSegmentedButton(
             self.card_bitacoras,
-            text="Fecha de la jornada (YYYY-MM-DD):",
+            values=["Hoy", "Ayer", "📅 Otra"],
+            command=self._on_fecha_cambiada,
+            selected_color=ACCENT_COLOR,
+            selected_hover_color=ACCENT_HOVER,
+            unselected_color=BG_COLOR,
+            unselected_hover_color=CARD_HOVER,
+            text_color=TEXT_MAIN,
+            font=ctk.CTkFont(size=12)
+        )
+        self.seg_fecha.set("Hoy")
+        self.seg_fecha.pack(fill="x", padx=24, pady=(0, 24), side="bottom")
+        
+        self.lbl_fecha = ctk.CTkLabel(
+            self.card_bitacoras,
+            text=f"Fecha de la jornada: {self.fecha_bitacora}",
             font=ctk.CTkFont(size=11),
             text_color=TEXT_SEC
-        ).pack(side="bottom", anchor="w", padx=24, pady=(0, 5))
+        )
+        self.lbl_fecha.pack(side="bottom", anchor="center", padx=24, pady=(0, 5))
 
         # 2. Tarjeta: Reportes
         self.card_reportes = self._crear_tarjeta_modulo(
@@ -176,6 +179,64 @@ class SelectionFrame(ctk.CTkFrame):
 
         # Inicialmente deshabilitar las tarjetas hasta seleccionar usuario
         self._set_estado_tarjetas("disabled")
+
+    def _on_fecha_cambiada(self, valor):
+        if valor == "Hoy":
+            self.fecha_bitacora = datetime.now().strftime("%Y-%m-%d")
+            self.lbl_fecha.configure(text=f"Fecha de la jornada: {self.fecha_bitacora}")
+        elif valor == "Ayer":
+            self.fecha_bitacora = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            self.lbl_fecha.configure(text=f"Fecha de la jornada: {self.fecha_bitacora}")
+        elif valor == "📅 Otra":
+            self._abrir_calendario()
+
+    def _abrir_calendario(self):
+        cal_window = ctk.CTkToplevel(self)
+        cal_window.title("Seleccionar Fecha")
+        cal_window.geometry("320x340")
+        cal_window.attributes("-topmost", True)
+        cal_window.grab_set()
+
+        from tkcalendar import Calendar
+        cal = Calendar(
+            cal_window, 
+            selectmode="day", 
+            date_pattern="y-mm-dd",
+            background=BG_COLOR,
+            foreground="white",
+            headersbackground=CARD_COLOR,
+            headersforeground="white",
+            normalbackground=CARD_COLOR,
+            normalforeground="white",
+            weekendbackground=CARD_COLOR,
+            weekendforeground="white",
+            selectbackground=ACCENT_COLOR,
+            selectforeground="white"
+        )
+        cal.pack(pady=15, padx=15, fill="both", expand=True)
+
+        def _on_aceptar():
+            self.fecha_bitacora = cal.get_date()
+            self.lbl_fecha.configure(text=f"Fecha de la jornada: {self.fecha_bitacora}")
+            cal_window.destroy()
+            if messagebox.askyesno("Confirmar", f"¿Abrir bitácora con fecha {self.fecha_bitacora}?"):
+                if self.dropdown_usuario.get() and self.dropdown_usuario.get() != "Selecciona un usuario...":
+                    self._abrir_bitacoras()
+                else:
+                    messagebox.showerror("Error", "Por favor selecciona un usuario antes de continuar.")
+
+        def _on_cancelar():
+            self.seg_fecha.set("Hoy")
+            self._on_fecha_cambiada("Hoy")
+            cal_window.destroy()
+            
+        cal_window.protocol("WM_DELETE_WINDOW", _on_cancelar)
+
+        btn_frame = ctk.CTkFrame(cal_window, fg_color="transparent")
+        btn_frame.pack(pady=(0, 15))
+        
+        ctk.CTkButton(btn_frame, text="Cancelar", command=_on_cancelar, width=100, fg_color="transparent", border_width=1).pack(side="left", padx=10)
+        ctk.CTkButton(btn_frame, text="Aceptar", command=_on_aceptar, width=100, fg_color=ACCENT_COLOR).pack(side="left", padx=10)
 
     def _crear_tarjeta_modulo(self, parent, col, icono, titulo, descripcion, comando):
         """Crea una tarjeta interactiva con hover effects."""
@@ -268,17 +329,37 @@ class SelectionFrame(ctk.CTkFrame):
                 # Desvincular eventos temporalmente
                 for w in (card, card.winfo_children()[0]):
                     for child in w.winfo_children():
-                        child.unbind("<Button-1>")
-                    w.unbind("<Button-1>")
+                        try:
+                            child.unbind("<Button-1>")
+                        except (NotImplementedError, Exception):
+                            pass
+                        try:
+                            child.configure(state="disabled")
+                        except Exception:
+                            pass
+                    try:
+                        w.unbind("<Button-1>")
+                    except (NotImplementedError, Exception):
+                        pass
             else:
                 card._action_btn.configure(state="normal", fg_color=ACCENT_COLOR)
                 card.configure(cursor="hand2")
                 # Revincular eventos
                 for w in (card, card.winfo_children()[0]):
                     for child in w.winfo_children():
-                        if not isinstance(child, ctk.CTkEntry):  # No vincular click al entry
-                            child.bind("<Button-1>", card._on_click)
-                    w.bind("<Button-1>", card._on_click)
+                        try:
+                            if not isinstance(child, ctk.CTkSegmentedButton):
+                                child.bind("<Button-1>", card._on_click)
+                        except (NotImplementedError, Exception):
+                            pass
+                        try:
+                            child.configure(state="normal")
+                        except Exception:
+                            pass
+                    try:
+                        w.bind("<Button-1>", card._on_click)
+                    except (NotImplementedError, Exception):
+                        pass
 
     # ─── LÓGICA DE DATOS Y NAVEGACIÓN ───
 
@@ -305,18 +386,11 @@ class SelectionFrame(ctk.CTkFrame):
             self._set_estado_tarjetas("normal")
 
     def _abrir_bitacoras(self):
-        fecha = self.entry_fecha.get().strip()
-        try:
-            datetime.strptime(fecha, "%Y-%m-%d")
-        except ValueError:
-            messagebox.showwarning("Fecha inválida", "Usa el formato exacto: YYYY-MM-DD")
-            return
-
         from ui.bitacoras_frame import BitacorasFrame
         self.controlador.mostrar_frame(
             BitacorasFrame,
             usuario=self.usuario_seleccionado,
-            fecha=fecha
+            fecha=self.fecha_bitacora
         )
 
     def _abrir_reportes(self):
@@ -343,7 +417,7 @@ class SelectionFrame(ctk.CTkFrame):
             res = crear_usuario({"nombre": nombre.strip()})
             if res:
                 messagebox.showinfo("Éxito", f"Usuario '{nombre.strip()}' creado correctamente.")
-                self._cargar_usuarios()
+                self._cargar_usuarios() # Refresca UI
                 self.dropdown_usuario.set(nombre.strip())
                 self._on_usuario_seleccionado(nombre.strip())
             else:
