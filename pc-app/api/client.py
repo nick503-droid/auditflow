@@ -1,38 +1,68 @@
 import requests
 import os
 import mimetypes
+import json
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:3000")
+CACHE_PATH = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp", "cache.json")
+
+def _guardar_cache(llave, datos):
+    try:
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        else:
+            cache = {}
+        cache[llave] = datos
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
+def _leer_cache(llave):
+    try:
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+                return cache.get(llave, [])
+    except Exception:
+        pass
+    return []
 
 
 # ─── Catálogos ────────────────────────────────────────────────────────────────
 
 def obtener_usuarios():
-    """Trae la lista de usuarios activos desde el backend."""
+    """Trae la lista de usuarios activos desde el backend con soporte OFFLINE."""
     try:
         response = requests.get(
             f"{API_BASE_URL}/usuarios",
-            timeout=5
+            timeout=3
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        _guardar_cache("usuarios", data)
+        return data
     except requests.exceptions.RequestException as e:
-        print(f"Error al obtener usuarios: {e}")
-        return []
+        print(f"Servidor inaccesible, cargando usuarios desde caché local.")
+        return _leer_cache("usuarios")
 
 
 def obtener_restaurantes():
-    """Trae la lista de restaurantes desde el backend."""
+    """Trae la lista de restaurantes desde el backend con soporte OFFLINE."""
     try:
         response = requests.get(
             f"{API_BASE_URL}/restaurantes",
-            timeout=5
+            timeout=3
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        _guardar_cache("restaurantes", data)
+        return data
     except requests.exceptions.RequestException as e:
-        print(f"Error al obtener restaurantes: {e}")
-        return []
+        print(f"Servidor inaccesible, cargando restaurantes desde caché local.")
+        return _leer_cache("restaurantes")
 
 
 def crear_usuario(dto: dict) -> dict | None:

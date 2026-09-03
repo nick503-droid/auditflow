@@ -892,6 +892,10 @@ class BitacorasFrame(ctk.CTkFrame):
                 local_idx = ids_local[b_id]
                 self.filas[local_idx].update(datos_nuevos)
                 self._reconstruir_tarjeta(local_idx)
+                
+                # Auto-refresco del panel lateral de evidencias si está abierto para esta fila
+                if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
+                    self.after(0, lambda c=datos_nuevos["codigo"], evs=evids: self._mostrar_panel_evidencia(c, evs))
             else:
                 datos_nuevos["local_id"]     = None
                 datos_nuevos["_debounce_id"] = None
@@ -1560,7 +1564,7 @@ class BitacorasFrame(ctk.CTkFrame):
     def _on_adjuntar(self):
         rutas = filedialog.askopenfilenames(
             title="Selecciona las evidencias",
-            filetypes=[("Videos e imágenes", "*.mp4 *.jpg *.jpeg *.png")],
+            filetypes=[("Videos e imágenes", "*.mp4;*.jpg;*.jpeg;*.png")],
         )
         if rutas:
             for r in rutas:

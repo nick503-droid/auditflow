@@ -1,0 +1,9 @@
+{
+  "appId": "com.restaurant.auditflow",
+  "appName": "AuditFlow",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

@@ -23,6 +23,12 @@ export class StorageService {
     if (!fs.existsSync(this.storagePath)) {
       fs.mkdirSync(this.storagePath, { recursive: true });
     }
+    
+    // Asegurar que exista la carpeta temporal
+    const tempPath = path.join(this.storagePath, 'temp');
+    if (!fs.existsSync(tempPath)) {
+      fs.mkdirSync(tempPath, { recursive: true });
+    }
   }
 
   /**
@@ -61,6 +67,57 @@ export class StorageService {
     // Usamos replace para asegurar que las barras sean forward slashes en la URL, incluso en Windows
     const publicUrlPath = relativoPath.replace(/\\/g, '/');
     return `${this.backendUrl}/evidencias/${publicUrlPath}`;
+  }
+
+  /**
+   * Guarda el archivo en una carpeta temporal (/temp) y retorna el nombre generado.
+   */
+  async guardarEnTemp(buffer: Buffer, nombreOriginal: string): Promise<string> {
+    const uuid = randomUUID();
+    const nombreLimpio = nombreOriginal.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const marcaTiempo = Date.now();
+    const nombreFisico = `${marcaTiempo}_${uuid}_${nombreLimpio}`;
+    
+    const tempPath = path.join(this.storagePath, 'temp', nombreFisico);
+    await fs.promises.writeFile(tempPath, buffer);
+    
+    return nombreFisico;
+  }
+
+  /**
+   * Mueve un archivo de la carpeta temporal a su destino final.
+   * Retorna la URL pública final.
+   */
+  async moverDeTemp(nombreFisico: string, prefijo: string): Promise<string> {
+    const tempPath = path.join(this.storagePath, 'temp', nombreFisico);
+    
+    if (!fs.existsSync(tempPath)) {
+      throw new Error(`El archivo temporal no existe: ${nombreFisico}`);
+    }
+    
+    const relativoPath = path.join(prefijo, nombreFisico);
+    const absolutoPath = path.join(this.storagePath, relativoPath);
+    
+    const carpetaDestino = path.dirname(absolutoPath);
+    if (!fs.existsSync(carpetaDestino)) {
+      fs.mkdirSync(carpetaDestino, { recursive: true });
+    }
+    
+    await fs.promises.rename(tempPath, absolutoPath);
+    
+    const publicUrlPath = relativoPath.replace(/\\/g, '/');
+    return `${this.backendUrl}/evidencias/${publicUrlPath}`;
+  }
+
+  /**
+   * Elimina un archivo directamente de la carpeta temporal (Rollback).
+   */
+  async eliminarDeTemp(nombreFisico: string): Promise<void> {
+    const tempPath = path.join(this.storagePath, 'temp', nombreFisico);
+    if (fs.existsSync(tempPath)) {
+      await fs.promises.unlink(tempPath);
+      this.logger.log(`Rollback: Archivo temporal eliminado ${nombreFisico}`);
+    }
   }
 
   /**

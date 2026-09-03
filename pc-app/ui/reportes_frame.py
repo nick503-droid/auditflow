@@ -779,6 +779,26 @@ class ReportesFrame(ctk.CTkFrame):
         if self.borrador and self.borrador.get("notas_finales"):
             self.textbox_notas.insert("1.0", self.borrador["notas_finales"])
         self._refrescar_lista_evidencias()
+        self.hilo_polling_activo = True
+        threading.Thread(target=self._polling_evidencias_worker, daemon=True).start()
+
+    def _polling_evidencias_worker(self):
+        import time, requests
+        from api.client import API_BASE_URL
+        while self.hilo_polling_activo:
+            if self.reporte_remoto_id and self._panel_visible:
+                try:
+                    res = requests.get(f"{API_BASE_URL}/reportes/{self.reporte_remoto_id}", timeout=5)
+                    if res.status_code == 200:
+                        data = res.json()
+                        nuevas_ev = data.get("evidencias", [])
+                        # Comparar si hay cambios en la nube
+                        if hash(str(nuevas_ev)) != hash(str(getattr(self, "evidencias_nube", []))):
+                            self.evidencias_nube = nuevas_ev
+                            self.after(0, self._refrescar_lista_evidencias)
+                except Exception:
+                    pass
+            time.sleep(5)
 
     def _on_texto_cambiado(self, event=None):
         if self._debounce_id is not None:

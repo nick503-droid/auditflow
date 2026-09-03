@@ -8,6 +8,7 @@ import { ReportesModule } from './modules/reportes/reportes.module';
 import { EvidenciasReporteModule } from './modules/evidencias-reporte/evidencias-reporte.module';
 import { StorageModule } from './common/storage/storage.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { MobileSyncModule } from './modules/mobile-sync/mobile-sync.module';
 
 @Module({
   imports: [
@@ -44,6 +45,8 @@ import { UploadsModule } from './modules/uploads/uploads.module';
     StorageModule,
 
     UploadsModule,
+    
+    MobileSyncModule,
   ],
 })
 export class AppModule {}
