@@ -413,7 +413,8 @@ class AdminFrame(ctk.CTkFrame):
         lbl_cargando.pack(pady=40)
         
         def _fetch():
-            self.filas_bitacora = obtener_bitacoras_por_fecha(fecha)
+            res = obtener_bitacoras_por_fecha(fecha)
+            self.filas_bitacora = res if res is not None else []
             self.after(0, lambda: self._aplicar_filtros(None))
             
         threading.Thread(target=_fetch, daemon=True).start()

@@ -233,7 +233,7 @@ def obtener_bitacoras_por_fecha(fecha: str):
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al obtener bitácoras para la fecha {fecha}: {e}")
-        return []
+        return None
 
 
 def obtener_bitacoras_todas():

@@ -112,7 +112,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self.fecha_actual = fecha if fecha else datetime.now().strftime("%Y-%m-%d")
 
         self.lock = threading.Lock()
-        self.editando = False
+        self.filas_editando = set()
         # --- DETENCIÓN LIMPIA DE HILOS ---
         # threading.Event es la herramienta correcta para señalar a un hilo
         # que debe detenerse. A diferencia de un bool, wait() libera el GIL
@@ -328,8 +328,8 @@ class BitacorasFrame(ctk.CTkFrame):
             hora_entry.insert(0, hora_val)
         hora_entry.grid(row=0, column=1, padx=2, pady=3)
         hora_entry.bind("<KeyRelease>", lambda e=None, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
-        hora_entry.bind("<FocusIn>",  lambda e=None: self._marcar_editando(True))
-        hora_entry.bind("<FocusOut>", lambda e=None: self._marcar_editando(False))
+        hora_entry.bind("<FocusIn>",  lambda e=None, i=idx: self._marcar_editando(i, True))
+        hora_entry.bind("<FocusOut>", lambda e=None, i=idx: self._marcar_editando(i, False))
 
         # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
@@ -345,8 +345,8 @@ class BitacorasFrame(ctk.CTkFrame):
             desc_box.insert("1.0", desc_val)
         desc_box.grid(row=0, column=2, padx=2, pady=3, sticky="ew")
         desc_box.bind("<KeyRelease>", lambda e=None, i=idx, w=desc_box: self._on_keyrelease_textbox(i, w))
-        desc_box.bind("<FocusIn>",   lambda e=None: self._marcar_editando(True))
-        desc_box.bind("<FocusOut>",  lambda e=None: self._marcar_editando(False))
+        desc_box.bind("<FocusIn>",   lambda e=None, i=idx: self._marcar_editando(i, True))
+        desc_box.bind("<FocusOut>",  lambda e=None, i=idx: self._marcar_editando(i, False))
         # Ajustar altura inicial al contenido ya cargado
         self.after(50, lambda w=desc_box: self._ajustar_altura_textbox(w))
 
@@ -522,9 +522,12 @@ class BitacorasFrame(ctk.CTkFrame):
 
     # ─── Callbacks de campo ───────────────────────────────────────────────────
 
-    def _marcar_editando(self, estado: bool):
+    def _marcar_editando(self, idx: int, estado: bool):
         with self.lock:
-            self.editando = estado
+            if estado:
+                self.filas_editando.add(idx)
+            else:
+                self.filas_editando.discard(idx)
 
     def _on_campo_inmediato(self, idx: int, campo: str, valor: str):
         """Para OptionMenus (no tienen KeyRelease) — cambio registrado de inmediato."""
@@ -765,6 +768,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "descripcion":    fila.get("descripcion", ""),
                 "hora":           fila.get("hora", ""),
                 "urgencia":       fila.get("urgencia", "leve"),
+                "client_id":      fila.get("client_id", ""),
             }
             
             def _crear_worker():
@@ -909,9 +913,6 @@ class BitacorasFrame(ctk.CTkFrame):
         Normaliza también valores legacy de urgencia (low/medium/critical).
         """
         with self.lock:
-            if self.editando:
-                return
-
             nuevo_hash = hash(str(bitacoras))
             if self.ultimo_hash_bd == nuevo_hash:
                 if not self.filas:
@@ -944,8 +945,40 @@ class BitacorasFrame(ctk.CTkFrame):
             }
             if b_id in ids_local:
                 local_idx = ids_local[b_id]
-                self.filas[local_idx].update(datos_nuevos)
-                self._reconstruir_tarjeta(local_idx)
+                
+                # Performance fix (Diffing): Solo reconstruir la tarjeta si los datos
+                # relevantes de renderizado cambiaron.
+                cambios = False
+                for k, v in datos_nuevos.items():
+                    if k in ["b_id", "local_id", "_debounce_id"]: 
+                        continue
+                    if self.filas[local_idx].get(k) != v:
+                        cambios = True
+                        break
+
+                if cambios:
+                    with self.lock:
+                        esta_editando = local_idx in self.filas_editando
+
+                    self.filas[local_idx].update(datos_nuevos)
+                    
+                    if esta_editando:
+                        # Si está editando, solo actualizamos el botón de evidencia directamente 
+                        # para no destruir el Textbox y hacerle perder el cursor.
+                        ev_btn = self.filas[local_idx].get("_widgets", {}).get("evidencia")
+                        if ev_btn and ev_btn.winfo_exists():
+                            evs = datos_nuevos.get("evidencias", [])
+                            tiene_ev = len(evs) > 0 or datos_nuevos.get("evidencia") == "Sí"
+                            if tiene_ev:
+                                n = len(evs) if evs else 1
+                                ev_btn.configure(
+                                    text=f"✅ {n} ev.",
+                                    fg_color=COLOR_BOTON_EV_OK,
+                                    hover_color="#14532d"
+                                )
+                    else:
+                        # Si no está editando, podemos reconstruir la fila completa
+                        self._reconstruir_tarjeta(local_idx)
                 
                 # Auto-refresco del panel lateral de evidencias si está abierto para esta fila
                 if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
