@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import shutil
+import requests
 
 from db.local_db import (
     obtener_o_crear_borrador,
@@ -47,6 +48,7 @@ from api.client import (
     obtener_reportes,
     obtener_restaurantes,
     actualizar_reporte,
+    API_BASE_URL,
 )
 from core.recorder import GrabadorPantalla, es_archivo_grabado
 from core.sync_helper import actualizar_indicador_reporte
@@ -96,7 +98,10 @@ class ReportesFrame(ctk.CTkFrame):
         self._panel_visible = False
 
         # Hilo de polling
-        self.hilo_polling_activo = False
+        # threading.Event permite detención limpia e inmediata (sin esperar
+        # que el time.sleep(5) expire) al cambiar de pantalla o cerrar la app.
+        self.stop_event = threading.Event()
+        self._hilo_polling: threading.Thread | None = None
 
         # Borrador SQLite (se inicializa cuando se conoce el restaurante)
         self.borrador = None
@@ -547,7 +552,10 @@ class ReportesFrame(ctk.CTkFrame):
         threading.Thread(target=_sync_init, daemon=True).start()
 
     def _volver_al_menu_directo(self):
-        self.hilo_polling_activo = False
+        # Detener el hilo de polling de forma limpia antes de navegar.
+        self.stop_event.set()
+        if self._hilo_polling and self._hilo_polling.is_alive():
+            self._hilo_polling.join(timeout=1)
         try:
             keyboard.remove_hotkey("ctrl+k+l")
         except Exception:
@@ -779,13 +787,14 @@ class ReportesFrame(ctk.CTkFrame):
         if self.borrador and self.borrador.get("notas_finales"):
             self.textbox_notas.insert("1.0", self.borrador["notas_finales"])
         self._refrescar_lista_evidencias()
-        self.hilo_polling_activo = True
-        threading.Thread(target=self._polling_evidencias_worker, daemon=True).start()
+        self.stop_event.clear()  # Limpiar por si el frame se re-usa
+        self._hilo_polling = threading.Thread(
+            target=self._polling_evidencias_worker, daemon=True, name="ReportesPolling"
+        )
+        self._hilo_polling.start()
 
     def _polling_evidencias_worker(self):
-        import time, requests
-        from api.client import API_BASE_URL
-        while self.hilo_polling_activo:
+        while not self.stop_event.is_set():
             if self.reporte_remoto_id and self._panel_visible:
                 try:
                     res = requests.get(f"{API_BASE_URL}/reportes/{self.reporte_remoto_id}", timeout=5)
@@ -798,7 +807,8 @@ class ReportesFrame(ctk.CTkFrame):
                             self.after(0, self._refrescar_lista_evidencias)
                 except Exception:
                     pass
-            time.sleep(5)
+            # wait() se interrumpe de inmediato cuando stop_event.set() se llama
+            self.stop_event.wait(5)
 
     def _on_texto_cambiado(self, event=None):
         if self._debounce_id is not None:
@@ -875,7 +885,7 @@ class ReportesFrame(ctk.CTkFrame):
         return ruta_evidencia_reporte(codigo, titulo, nombre_archivo)
 
     def _refrescar_lista_evidencias(self):
-        if not hasattr(self, "frame_lista_evidencias"):
+        if not hasattr(self, "frame_lista_evidencias") or not self.frame_lista_evidencias.winfo_exists():
             return
         for widget in self.frame_lista_evidencias.winfo_children():
             widget.destroy()
@@ -928,21 +938,24 @@ class ReportesFrame(ctk.CTkFrame):
         self._refrescar_lista_evidencias()
 
     def _eliminar_evidencia_nube(self, ev_id: int):
-        import requests
-        from api.client import API_BASE_URL
         respuesta = messagebox.askyesno("Eliminar Evidencia", "Esta acción eliminará el archivo de la nube permanentemente.\n\n¿Estás completamente seguro?")
         if respuesta:
-            try:
-                resp = requests.delete(f"{API_BASE_URL}/evidencias-reporte/{ev_id}", timeout=10)
-                if resp.status_code in (200, 204):
-                    # Actualizar cache local de la nube eliminando ese elemento
-                    if hasattr(self, "evidencias_nube"):
-                        self.evidencias_nube = [e for e in self.evidencias_nube if e.get("id") != ev_id]
-                    self._refrescar_lista_evidencias()
-                else:
-                    messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Error de red: {e}")
+            def _eliminar_worker():
+                try:
+                    resp = requests.delete(f"{API_BASE_URL}/evidencias-reporte/{ev_id}", timeout=10)
+                    if resp.status_code in (200, 204):
+                        def _on_success():
+                            # Actualizar cache local de la nube eliminando ese elemento
+                            if hasattr(self, "evidencias_nube"):
+                                self.evidencias_nube = [e for e in self.evidencias_nube if e.get("id") != ev_id]
+                            self._refrescar_lista_evidencias()
+                        self.after(0, _on_success)
+                    else:
+                        self.after(0, lambda: messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}"))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Error de red", f"Error de red: {e}"))
+            
+            threading.Thread(target=_eliminar_worker, daemon=True).start()
 
     def _crear_tarjeta_evidencia(self, nombre: str, ruta_o_url: str, etiqueta: str, color_etiqueta: str, delete_command=None):
         """Tarjeta de evidencia con miniatura inline y botón de previsualización."""
@@ -991,17 +1004,21 @@ class ReportesFrame(ctk.CTkFrame):
             def _cargar_thumb(r=ruta_o_url, parent=body_row):
                 try:
                     from PIL import Image
-                    import requests
                     if r.startswith("http"):
                         img = Image.open(requests.get(r, stream=True).raw).convert("RGB")
                     else:
                         img = Image.open(r).convert("RGB")
                     img.thumbnail((54, 38))
                     ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(54, 38))
-                    lbl_thumb = ctk.CTkLabel(parent, image=ctk_img, text="", cursor="hand2")
-                    lbl_thumb.image = ctk_img
-                    lbl_thumb.pack(side="left", padx=(0, 6))
-                    lbl_thumb.bind("<Button-1>", lambda e, ru=r: self._previsualizar_archivo(ru))
+                    
+                    def _actualizar_ui():
+                        if parent.winfo_exists():
+                            lbl_thumb = ctk.CTkLabel(parent, image=ctk_img, text="", cursor="hand2")
+                            lbl_thumb.image = ctk_img
+                            lbl_thumb.pack(side="left", padx=(0, 6))
+                            lbl_thumb.bind("<Button-1>", lambda e=None, ru=r: self._previsualizar_archivo(ru))
+                    
+                    self.after(0, _actualizar_ui)
                 except Exception:
                     pass  # falla silenciosa si PIL no está o el archivo es inválido
             threading.Thread(target=_cargar_thumb, daemon=True).start()
@@ -1169,7 +1186,6 @@ class ReportesFrame(ctk.CTkFrame):
         Hilo secundario: descarga cada URL con requests stream=True.
         Reporta progreso al hilo principal mediante self.after(0, …).
         """
-        import requests
 
         total = len(items)
         exitos = 0
@@ -1254,7 +1270,10 @@ class ReportesFrame(ctk.CTkFrame):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _al_destruir(self, event):
-        self.hilo_polling_activo = False
+        # Detener el hilo de polling de forma limpia e inmediata.
+        self.stop_event.set()
+        if self._hilo_polling and self._hilo_polling.is_alive():
+            self._hilo_polling.join(timeout=1)
         self._ocultar_indicador_rec()
 
     def _actualizar_botones_grabacion(self):

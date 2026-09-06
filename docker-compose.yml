@@ -1,4 +1,18 @@
-docker run -d -p 9000:9000 -p 9001:9001 --name minio-dev \
-  -e "MINIO_ROOT_USER=admin" \
-  -e "MINIO_ROOT_PASSWORD=admin123456" \
-  minio/minio server /data --console-address ":9001"
+version: '3.8'
+
+services:
+  minio-dev:
+    image: minio/minio:latest
+    container_name: minio-dev
+    ports:
+      - "9100:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin123456
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  minio_data:

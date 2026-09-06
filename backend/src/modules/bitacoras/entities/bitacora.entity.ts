@@ -6,6 +6,7 @@ import {
   OneToMany,
   JoinColumn,
   DeleteDateColumn,
+  Index,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
 import { Restaurante } from '../../restaurantes/entities/restaurante.entity';
@@ -46,14 +47,6 @@ export class Bitacora {
   @Column({ type: 'text' })
   descripcion: string;
 
-  /**
-   * Mantenido como nullable para compatibilidad con registros anteriores.
-   * Las nuevas evidencias se guardan en la tabla evidencias_bitacora.
-   * @deprecated Usa la relación `evidencias` para evidencias nuevas.
-   */
-  @Column({ type: 'varchar', nullable: true })
-  evidencia_url: string;
-
   @Column({ type: 'tinyint', default: 0 })
   con_audio: boolean;
 
@@ -66,6 +59,12 @@ export class Bitacora {
   @Column({ type: 'enum', enum: NivelUrgencia, default: NivelUrgencia.LEVE })
   urgencia: NivelUrgencia;
 
+  /**
+   * Código corto de 6 caracteres para vincular evidencia desde móvil o PC.
+   * Indexado para acelerar lookups frecuentes por código en mobile-sync
+   * y adjuntarEvidenciaPorCodigo (O(log n) en lugar de full table scan).
+   */
+  @Index('idx_bitacoras_codigo')
   @Column({ type: 'varchar', length: 6, default: 'MIGRAC' })
   codigo: string;
 

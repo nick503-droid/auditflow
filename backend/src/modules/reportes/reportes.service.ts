@@ -1,14 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Reporte } from './entities/reporte.entity';
 import { CreateReporteDto } from './dto/create-reporte.dto';
 import { UpdateReporteDto } from './dto/update-reporte.dto';
 import { EvidenciaReporte } from '../evidencias-reporte/entities/evidencia-reporte.entity';
 import { StorageService } from '../../common/storage/storage.service';
-
-const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1
-const DIAS_VIGENCIA_CODIGO = 5;
+import { generarCodigoUnico } from '../../common/utils/code-generator';
 
 @Injectable()
 export class ReportesService {
@@ -38,7 +36,10 @@ export class ReportesService {
 
   // El método es asíncrono para esperar la generación del código único
   async create(dto: CreateReporteDto) {
-    const codigo = await this.generarCodigoUnico();
+    const codigo = await generarCodigoUnico(this.reportesRepo, {
+      campoCodigo: 'codigo',
+      campoFecha: 'fecha_jornada',
+    });
 
     const nuevo = this.reportesRepo.create({
       ...dto,
@@ -107,39 +108,5 @@ export class ReportesService {
 
     return { eliminado: true, evidencias_borradas };
   }
-
-  // ─── Helpers ───────────────────────────────────────────────────────────────
-
-  private async generarCodigoUnico(): Promise<string> {
-    const fechaLimite = new Date();
-    fechaLimite.setDate(fechaLimite.getDate() - DIAS_VIGENCIA_CODIGO);
-
-    for (let intento = 0; intento < 10; intento++) {
-      const candidato = this.generarCodigoAleatorio();
-
-      const existente = await this.reportesRepo.findOne({
-        where: {
-          codigo: candidato,
-          fecha_jornada: MoreThanOrEqual(fechaLimite as any),
-        },
-      });
-
-      if (!existente) {
-        return candidato;
-      }
-    }
-
-    throw new Error('No se pudo generar un código de reporte único');
-  }
-
-  private generarCodigoAleatorio(): string {
-    let resultado = '';
-    for (let i = 0; i < 6; i++) {
-      const indice = Math.floor(Math.random() * CARACTERES_CODIGO.length);
-      resultado += CARACTERES_CODIGO[indice];
-    }
-    return resultado;
-  }
-
 
 }

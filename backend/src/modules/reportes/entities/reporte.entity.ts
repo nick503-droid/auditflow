@@ -6,6 +6,7 @@ import {
   JoinColumn,
   OneToMany,
   DeleteDateColumn,
+  Index,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
 import { Restaurante } from '../../restaurantes/entities/restaurante.entity';
@@ -23,6 +24,12 @@ export class Reporte {
   @Column({ type: 'varchar', length: 255, default: 'Reporte de Auditoría' })
   titulo: string;
 
+  /**
+   * Código corto de 6 caracteres para vincular evidencia desde móvil.
+   * Indexado para acelerar lookups frecuentes por código en mobile-sync
+   * (O(log n) en lugar de full table scan).
+   */
+  @Index('idx_reportes_codigo')
   @Column({ type: 'varchar', length: 6, default: 'SINCOD' })
   codigo: string;
 

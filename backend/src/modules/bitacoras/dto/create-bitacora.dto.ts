@@ -2,6 +2,14 @@ import { IsUUID, IsString, IsOptional, IsBoolean, IsDateString, IsEnum } from 'c
 import { NivelUrgencia } from '../entities/bitacora.entity';
 
 export class CreateBitacoraDto {
+  /**
+   * Identificador generado por el cliente (UUID v4) para garantizar idempotencia.
+   * Si se envía y ya existe en la base de datos, el servidor ignorará la creación.
+   */
+  @IsOptional()
+  @IsUUID()
+  client_id?: string;
+
   @IsUUID()
   restaurante_id: string;
 

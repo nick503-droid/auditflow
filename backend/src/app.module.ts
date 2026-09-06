@@ -28,7 +28,10 @@ import { MobileSyncModule } from './modules/mobile-sync/mobile-sync.module';
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_DATABASE'),
         autoLoadEntities: true, // detecta entities de cada módulo automáticamente
-        synchronize: true, // ⚠️ solo en desarrollo: crea tablas automáticamente
+        // ⚠️  SEGURIDAD: synchronize altera el schema de la BD en cada restart.
+        // Solo se activa en entorno de desarrollo. En producción debe ser false.
+        synchronize: config.get<string>('NODE_ENV') !== 'production',
+        logging: config.get<string>('NODE_ENV') === 'development' ? ['error', 'warn'] : false,
       }),
     }),
 

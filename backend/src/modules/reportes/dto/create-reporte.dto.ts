@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, IsDateString } from 'class-validator';
 
 export class CreateReporteDto {
   @IsString()
@@ -18,5 +18,6 @@ export class CreateReporteDto {
   notas_finales?: string;
   
   @IsOptional()
-  fecha_jornada?: any;
+  @IsDateString()
+  fecha_jornada?: string;
 }

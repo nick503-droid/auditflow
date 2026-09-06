@@ -901,19 +901,26 @@ class AdminFrame(ctk.CTkFrame):
         if not respuesta:
             return
             
-        try:
-            import requests
-            from api.client import API_BASE_URL
-            
-            tipo = item["tipo"]
-            ev_id = item["id"]
-            endpoint = f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}" if tipo == "bitacora" else f"{API_BASE_URL}/evidencias-reporte/{ev_id}"
-            
-            resp = requests.delete(endpoint, timeout=10)
-            if resp.status_code in (200, 204):
-                widget.destroy() # Feedback visual
-                self.ultimo_hash_bitacoras = None # Forzar recarga de bitácoras si aplica
-            else:
-                messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}", parent=popup_window)
-        except Exception as e:
-            messagebox.showerror("Error", f"Error de red: {e}", parent=popup_window)
+        def _eliminar_worker():
+            try:
+                import requests
+                from api.client import API_BASE_URL
+                
+                tipo = item["tipo"]
+                ev_id = item["id"]
+                endpoint = f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}" if tipo == "bitacora" else f"{API_BASE_URL}/evidencias-reporte/{ev_id}"
+                
+                resp = requests.delete(endpoint, timeout=10)
+                if resp.status_code in (200, 204):
+                    def _on_success():
+                        if widget.winfo_exists():
+                            widget.destroy() # Feedback visual
+                        self.ultimo_hash_bitacoras = None # Forzar recarga de bitácoras si aplica
+                    self.after(0, _on_success)
+                else:
+                    self.after(0, lambda: messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}", parent=popup_window))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Error de red", f"Error de red: {e}", parent=popup_window))
+                
+        import threading
+        threading.Thread(target=_eliminar_worker, daemon=True).start()

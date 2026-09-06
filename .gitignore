@@ -1,10 +1,55 @@
-# Node / NestJS
-backend/node_modules/
-backend/dist/
-backend/.env
+# ==============================================================================
+# ARCHIVO GENERAL DE IGNORADOS (GITIGNORE) PARA MONOREPO AUDITFLOW
+# ==============================================================================
 
-# General
+# ─── Entornos Virtuales y Secretos ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# ─── Python (PC-App de Escritorio) ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+pip-log.txt
+pc-app/api/cache.json
+temp_selection.py
+*.sqlite
+*.sqlite3
+*.db
+
+# ─── Node.js (Backend NestJS y Mobile App Vue 3) ──────────────────────────
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Base de Datos y Almacenamiento Local ───────────────────────────────────
+/minio_data/
+/local_storage/
+/uploads/
+/evidencias/
+dump.rdb
+
+# ─── Logs del Sistema ───────────────────────────────────────────────────────
+logs/
 *.log
-.DS_Store
 
-backend/.env
+# ─── Sistema Operativo y Editores ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

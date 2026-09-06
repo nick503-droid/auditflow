@@ -26,6 +26,7 @@ import os
 import threading
 import time
 import webbrowser
+import uuid
 
 from api.client import (
     obtener_bitacoras_por_fecha,
@@ -112,7 +113,12 @@ class BitacorasFrame(ctk.CTkFrame):
 
         self.lock = threading.Lock()
         self.editando = False
-        self.hilo_polling_activo = True
+        # --- DETENCIÓN LIMPIA DE HILOS ---
+        # threading.Event es la herramienta correcta para señalar a un hilo
+        # que debe detenerse. A diferencia de un bool, wait() libera el GIL
+        # mientras duerme y responde al set() de inmediato (sin esperar 5 s).
+        self.stop_event = threading.Event()
+        self._hilo_polling: threading.Thread | None = None
         self.ultimo_hash_bd = None
 
         # Evidencia
@@ -321,9 +327,9 @@ class BitacorasFrame(ctk.CTkFrame):
         if hora_val:
             hora_entry.insert(0, hora_val)
         hora_entry.grid(row=0, column=1, padx=2, pady=3)
-        hora_entry.bind("<KeyRelease>", lambda e, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
-        hora_entry.bind("<FocusIn>",  lambda e: self._marcar_editando(True))
-        hora_entry.bind("<FocusOut>", lambda e: self._marcar_editando(False))
+        hora_entry.bind("<KeyRelease>", lambda e=None, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
+        hora_entry.bind("<FocusIn>",  lambda e=None: self._marcar_editando(True))
+        hora_entry.bind("<FocusOut>", lambda e=None: self._marcar_editando(False))
 
         # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
@@ -338,9 +344,9 @@ class BitacorasFrame(ctk.CTkFrame):
         if desc_val:
             desc_box.insert("1.0", desc_val)
         desc_box.grid(row=0, column=2, padx=2, pady=3, sticky="ew")
-        desc_box.bind("<KeyRelease>", lambda e, i=idx, w=desc_box: self._on_keyrelease_textbox(i, w))
-        desc_box.bind("<FocusIn>",   lambda e: self._marcar_editando(True))
-        desc_box.bind("<FocusOut>",  lambda e: self._marcar_editando(False))
+        desc_box.bind("<KeyRelease>", lambda e=None, i=idx, w=desc_box: self._on_keyrelease_textbox(i, w))
+        desc_box.bind("<FocusIn>",   lambda e=None: self._marcar_editando(True))
+        desc_box.bind("<FocusOut>",  lambda e=None: self._marcar_editando(False))
         # Ajustar altura inicial al contenido ya cargado
         self.after(50, lambda w=desc_box: self._ajustar_altura_textbox(w))
 
@@ -506,6 +512,8 @@ class BitacorasFrame(ctk.CTkFrame):
             "evidencias": [],
             "evidencia": "",   # campo legacy para compatibilidad con el reconciliador
             "_debounce_id": None,
+            "_creando_en_nube": False,
+            "client_id": str(uuid.uuid4()), # UUID único para idempotencia
         }
         self.filas.append(nueva_fila)
         idx = len(self.filas) - 1
@@ -628,6 +636,12 @@ class BitacorasFrame(ctk.CTkFrame):
         if idx >= len(self.filas):
             return
         fila = self.filas[idx]
+
+        # Evitar crear duplicados si ya hay una petición POST en vuelo.
+        if fila.get("_creando_en_nube") and not fila.get("b_id"):
+            self._programar_guardado(idx)
+            return
+
         fila["_debounce_id"] = None
 
         rest_nombre = fila.get("restaurante", "").strip()
@@ -650,6 +664,7 @@ class BitacorasFrame(ctk.CTkFrame):
             "fecha":          self.fecha_actual,
             "hora":           fila.get("hora", ""),
             "urgencia":       fila.get("urgencia", "leve"),
+            "client_id":      fila.get("client_id", ""),
         }
 
         def _sync_bitacora():
@@ -661,12 +676,14 @@ class BitacorasFrame(ctk.CTkFrame):
                     "fecha":          datos_locales["fecha"],
                     "hora":           datos_locales["hora"],
                     "urgencia":       datos_locales["urgencia"],
+                    "client_id":      datos_locales["client_id"],
                 }
                 b_id   = datos_locales.get("b_id", "")
                 
                 if not b_id:
                     if not (datos_locales.get("hora") or datos_locales.get("descripcion")):
                         return
+                    
                     resultado = crear_bitacora(dto)
                     if not resultado:
                         raise Exception("Fallo en API")
@@ -689,10 +706,18 @@ class BitacorasFrame(ctk.CTkFrame):
                 self.after(0, self._actualizar_indicador_sync, "ok")
             except Exception:
                 # Fallback to local DB (Fail-safe)
+                if not datos_locales.get("b_id"):
+                    self.after(0, lambda: self.filas[idx].update({"_creando_en_nube": False}))
                 local_id = guardar_bitacora_local(datos_locales)
                 if not datos_locales.get("local_id"):
                     self.after(0, lambda: self.filas[idx].update({"local_id": local_id}))
                 self.after(0, self._actualizar_indicador_sync, "offline")
+
+        if not fila.get("b_id") and (fila.get("hora") or fila.get("descripcion")):
+            # BLOQUEO SÍNCRONO: se asigna inmediatamente en el hilo principal
+            # ANTES de lanzar el hilo de guardado. Esto bloquea cualquier otro
+            # debounce que intente hacer POST.
+            fila["_creando_en_nube"] = True
 
         self.after(0, self._actualizar_indicador_sync, "syncing")
         threading.Thread(target=_sync_bitacora, daemon=True).start()
@@ -703,6 +728,7 @@ class BitacorasFrame(ctk.CTkFrame):
             return
         self.filas[idx]["b_id"]   = b_id
         self.filas[idx]["codigo"] = codigo
+        self.filas[idx]["_creando_en_nube"] = False
         self.ultimo_hash_bd = None
         self._reconstruir_tarjeta(idx)
 
@@ -720,7 +746,13 @@ class BitacorasFrame(ctk.CTkFrame):
             )
             return
 
-        # Si la fila no tiene ID → crear en backend ahora mismo
+        # Deshabilitar botón temporalmente para evitar doble clic
+        ev_btn = fila.get("_widgets", {}).get("evidencia")
+        if ev_btn and ev_btn.winfo_exists():
+            ev_btn.configure(state="disabled", text="Operando...")
+            self.update()
+
+        # Si la fila no tiene ID → crear en backend ahora mismo en un hilo
         if not fila.get("b_id"):
             vig_nombre = self.combo_vigilante.get().strip()
             rest_id = self.mapa_restaurantes[rest_nombre]
@@ -734,29 +766,46 @@ class BitacorasFrame(ctk.CTkFrame):
                 "hora":           fila.get("hora", ""),
                 "urgencia":       fila.get("urgencia", "leve"),
             }
-            resultado = crear_bitacora(dto)
-            if not resultado:
-                messagebox.showerror("Error", "No se pudo crear el registro en el servidor.")
-                return
+            
+            def _crear_worker():
+                try:
+                    resultado = crear_bitacora(dto)
+                    if not resultado:
+                        raise Exception("No se pudo crear el registro en el servidor.")
+                    
+                    def _on_success():
+                        fila["b_id"]   = resultado.get("id", "")
+                        fila["codigo"] = resultado.get("codigo", "")
+                        self.ultimo_hash_bd = None
+                        self._reconstruir_tarjeta(idx)
+                        self._continuar_evidencia(idx)
+                    self.after(0, _on_success)
+                except Exception as e:
+                    def _on_error():
+                        self._reconstruir_tarjeta(idx)  # Restaura el botón a su estado normal
+                        messagebox.showerror("Error de Conexión", str(e))
+                    self.after(0, _on_error)
+                    
+            threading.Thread(target=_crear_worker, daemon=True).start()
+        else:
+            self._continuar_evidencia(idx)
 
-            fila["b_id"]   = resultado.get("id", "")
-            fila["codigo"] = resultado.get("codigo", "")
-            self.ultimo_hash_bd = None
-            self._reconstruir_tarjeta(idx)
-
-        # Mostrar panel con indicador de carga, luego fetch fresco de evidencias
+    def _continuar_evidencia(self, idx: int):
+        fila = self.filas[idx]
         codigo = fila["codigo"]
         self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []))  # muestra estado cacheado mientras carga
 
         def _fetch_evidencias():
-            evidencias_frescas = obtener_evidencias_bitacora(codigo)
-            def _actualizar():
-                fila["evidencias"] = evidencias_frescas   # mantiene caché local consistente
-                self._mostrar_panel_evidencia(codigo, evidencias_frescas)
-                # Reconstruir botón de evidencia para reflejar conteo actualizado
-                self._reconstruir_tarjeta(idx)
-            self.after(0, _actualizar)
-
+            try:
+                evidencias_frescas = obtener_evidencias_bitacora(codigo)
+                def _actualizar():
+                    fila["evidencias"] = evidencias_frescas   # mantiene caché local consistente
+                    if getattr(self, "_codigo_panel_activo", None) == codigo:
+                        self._mostrar_panel_evidencia(codigo, evidencias_frescas)
+                    self._reconstruir_tarjeta(idx)
+                self.after(0, _actualizar)
+            except Exception:
+                pass
         threading.Thread(target=_fetch_evidencias, daemon=True).start()
 
     # ─── Carga inicial ────────────────────────────────────────────────────────
@@ -780,11 +829,14 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Polling ──────────────────────────────────────────────────────────────
 
     def _iniciar_polling(self):
-        self.hilo_polling_activo = True
-        threading.Thread(target=self._polling_worker, daemon=True).start()
+        self.stop_event.clear()  # Asegurar que el event esté limpio al (re)iniciar
+        self._hilo_polling = threading.Thread(
+            target=self._polling_worker, daemon=True, name="BitacorasPolling"
+        )
+        self._hilo_polling.start()
 
     def _polling_worker(self):
-        while self.hilo_polling_activo:
+        while not self.stop_event.is_set():
             # Intentar sincronizar pendientes offline antes de consultar
             try:
                 self._sincronizar_pendientes()
@@ -802,7 +854,9 @@ class BitacorasFrame(ctk.CTkFrame):
                 print(f"[polling] Error: {e}")
                 self.after(0, self._actualizar_indicador_sync, "offline")
 
-            time.sleep(5)
+            # wait() duerme hasta que transcurran 5 s O stop_event.set() despierte
+            # al hilo anticipadamente — evita los 5 s de latencia al destruir el frame.
+            self.stop_event.wait(5)
 
     def _sincronizar_pendientes(self):
         """Sube registros offline a medida que la conexión se restablece."""
@@ -1220,18 +1274,25 @@ class BitacorasFrame(ctk.CTkFrame):
     def _eliminar_evidencia_nube(self, ev_id: int):
         from tkinter import messagebox
         import requests
+        import threading
         from api.client import API_BASE_URL
+        
         respuesta = messagebox.askyesno("Eliminar Evidencia", "Esta acción eliminará el archivo de la nube permanentemente.\n\n¿Estás completamente seguro?")
         if respuesta:
-            try:
-                resp = requests.delete(f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}", timeout=10)
-                if resp.status_code in (200, 204):
-                    self.ultimo_hash_bd = None
-                    self._polling_bitacoras_job()
-                else:
-                    messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Error de red: {e}")
+            def _eliminar_worker():
+                try:
+                    resp = requests.delete(f"{API_BASE_URL}/bitacoras/evidencia/{ev_id}", timeout=10)
+                    if resp.status_code in (200, 204):
+                        def _on_success():
+                            self.ultimo_hash_bd = None
+                            self._polling_bitacoras_job()
+                        self.after(0, _on_success)
+                    else:
+                        self.after(0, lambda: messagebox.showerror("Error", f"No se pudo eliminar: {resp.text}"))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Error de red", f"Error de red: {e}"))
+            
+            threading.Thread(target=_eliminar_worker, daemon=True).start()
 
     # ─── Screenshot (selector estilo Snipping Tool) ────────────────────────
 
@@ -1393,7 +1454,12 @@ class BitacorasFrame(ctk.CTkFrame):
         keyboard.add_hotkey("ctrl+k+l", self._toggle_grabacion)
 
     def _al_destruir(self, event):
-        self.hilo_polling_activo = False
+        # Señalar al hilo de polling que debe detenerse.
+        # stop_event.set() despierta inmediatamente el stop_event.wait(5)
+        # del worker, evitando que el hilo quede vivo hasta el próximo ciclo.
+        self.stop_event.set()
+        if self._hilo_polling and self._hilo_polling.is_alive():
+            self._hilo_polling.join(timeout=1)
         try:
             keyboard.remove_hotkey("ctrl+k+l")
         except Exception:
@@ -1587,7 +1653,8 @@ class BitacorasFrame(ctk.CTkFrame):
         self.boton_subir.configure(state="disabled", text="Subiendo…")
         self.update()
 
-        exitos = 0
+        # variables capturadas para el hilo
+        rutas_a_subir = list(self.rutas_evidencia)
         con_audio = bool(self.switch_audio.get())
         
         # Buscar la fecha de la bitácora para generar la carpeta destino correcta
@@ -1603,43 +1670,62 @@ class BitacorasFrame(ctk.CTkFrame):
             
         prefijo = prefijo_nube_bitacora(fecha_iso)
         
-        for ruta in list(self.rutas_evidencia):
-            evidencia_url, error_upload = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
-            if evidencia_url is None:
-                messagebox.showerror("Error", f"No se pudo subir {ruta}.\n\nMotivo: {error_upload}")
-                continue
+        def _subir_worker():
+            exitos = 0
+            for ruta in rutas_a_subir:
+                evidencia_url, error_upload = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
+                if evidencia_url is None:
+                    self.after(0, lambda r=ruta, e=error_upload: messagebox.showerror("Error", f"No se pudo subir {r}.\n\nMotivo: {e}"))
+                    continue
+                    
+                data, error_link = adjuntar_evidencia_por_codigo(codigo, evidencia_url, con_audio)
                 
-            data, error_link = adjuntar_evidencia_por_codigo(codigo, evidencia_url, con_audio)
+                if error_link:
+                    self.after(0, lambda r=ruta, e=error_link: messagebox.showerror("Error", f"No se pudo vincular {r}: {e}"))
+                else:
+                    exitos += 1
+                    # remover la ruta de forma segura en el main thread
+                    self.after(0, lambda r=ruta: self._remover_ruta_y_archivo(r))
             
-            if error_link:
-                messagebox.showerror("Error", f"No se pudo vincular {ruta}: {error_link}")
-            else:
-                exitos += 1
-                self.rutas_evidencia.remove(ruta)
-                if es_archivo_grabado(ruta):
+            def _on_finish():
+                if exitos > 0:
+                    self.switch_audio.deselect()
                     try:
-                        os.remove(ruta)
-                    except OSError:
+                        evidencias_frescas = obtener_evidencias_bitacora(codigo)
+                        if getattr(self, "_codigo_panel_activo", None) == codigo:
+                            self._mostrar_panel_evidencia(codigo, evidencias_frescas)
+                        self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
+                        self.ultimo_hash_bd = None
+                        self._polling_bitacoras_job()  # Forzar actualización en cuadricula
+                    except Exception:
                         pass
-        
-        if exitos > 0:
-            self.switch_audio.deselect()
-            evidencias_frescas = obtener_evidencias_bitacora(codigo)
-            self._mostrar_panel_evidencia(codigo, evidencias_frescas)
-            self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
-            self.ultimo_hash_bd = None
+                
+                if self.rutas_evidencia:
+                    self.label_archivo.configure(text=f"Quedan {len(self.rutas_evidencia)} archivos por subir")
+                else:
+                    self.label_archivo.configure(text="Sin evidencia adjunta")
+                    
+                if self.boton_subir.winfo_exists():
+                    self.boton_subir.configure(state="normal", text="⬆️  Subir y Vincular")
             
-        if self.rutas_evidencia:
-            self.label_archivo.configure(text=f"Quedan {len(self.rutas_evidencia)} archivos por subir")
-        else:
-            self.label_archivo.configure(text="Sin evidencia adjunta")
-            
-        self.boton_subir.configure(state="normal", text="⬆️  Subir y Vincular")
+            self.after(0, _on_finish)
+
+        threading.Thread(target=_subir_worker, daemon=True).start()
+
+    def _remover_ruta_y_archivo(self, ruta):
+        if ruta in self.rutas_evidencia:
+            self.rutas_evidencia.remove(ruta)
+        if es_archivo_grabado(ruta):
+            try:
+                os.remove(ruta)
+            except OSError:
+                pass
+        self._refrescar_lista_evidencias()
 
     # ─── Navegación ───────────────────────────────────────────────────────────
 
     def _on_volver(self):
         self._ocultar_indicador_rec()
-        self.hilo_polling_activo = False
+        self.stop_event.set()
         from ui.selection_frame import SelectionFrame
         self.controlador.mostrar_frame(SelectionFrame)

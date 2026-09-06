@@ -20,51 +20,92 @@ export class MobileSyncService {
   ) {}
 
   /**
-   * Busca un código en Bitácoras o Reportes.
-   * Retorna información básica para que la app móvil sepa si es válido.
+   * Valida un código de 6 caracteres buscando primero en Bitácoras y luego
+   * en Reportes. Retorna un resumen plano con los campos que necesita la App
+   * Móvil para mostrar el destino de la evidencia.
+   *
+   * OPTIMIZACIÓN N+1:
+   *  - Usa QueryBuilder con .select() estricto: solo trae los campos necesarios
+   *    en lugar de hidratar el objeto completo con todas sus relaciones.
+   *  - El conteo de evidencias se obtiene via subquery COUNT en la misma query,
+   *    eliminando la carga de todo el array de evidencias en memoria.
+   *  - Ambas búsquedas se benefician del índice idx_bitacoras_codigo /
+   *    idx_reportes_codigo creado en las entidades.
    */
   async validarCodigo(codigo: string) {
     const codToUpper = codigo.toUpperCase();
-    
-    // 1. Buscar en Bitácoras
-    const bitacora = await this.bitacorasRepo.findOne({
-      where: { codigo: codToUpper },
-      order: { fecha: 'DESC' },
-      relations: { restaurante: true, usuario: true, evidencias: true },
-    });
-    
+
+    // ── 1. Buscar en Bitácoras ────────────────────────────────────────────────
+    // Selección estricta de campos + subquery COUNT para evidencias_count.
+    // Un solo round-trip a la BD; sin cargar restaurante ni usuario completos.
+    const bitacora = await this.bitacorasRepo
+      .createQueryBuilder('b')
+      .select([
+        'b.id            AS id',
+        'b.fecha         AS fecha',
+        'b.hora          AS hora',
+        'b.descripcion   AS descripcion',
+        'r.nombre        AS restaurante',
+        'u.nombre        AS usuario',
+        // Subquery COUNT — evita cargar el array completo de evidencias
+        '(SELECT COUNT(*) FROM evidencias_bitacora eb WHERE eb.bitacora_id = b.id AND eb.deleted_at IS NULL) AS evidencias_count',
+      ])
+      .innerJoin('b.restaurante', 'r')
+      .innerJoin('b.usuario', 'u')
+      .where('b.codigo = :codigo', { codigo: codToUpper })
+      .orderBy('b.fecha', 'DESC')
+      .limit(1)
+      .getRawOne<{
+        id: string;
+        fecha: Date;
+        hora: string;
+        descripcion: string;
+        restaurante: string;
+        usuario: string;
+        evidencias_count: string; // MySQL devuelve COUNT como string
+      }>();
+
     if (bitacora) {
       return {
         valido: true,
         tipo: 'bitacora',
         id: bitacora.id,
         fecha: bitacora.fecha,
-        // Datos planos extraídos de las relaciones
-        restaurante: bitacora.restaurante?.nombre || 'Sin Restaurante',
-        hora: bitacora.hora || '--:--',
-        descripcion: bitacora.descripcion || 'Sin descripción',
-        usuario: bitacora.usuario?.nombre || 'Usuario Desconocido',
-        evidencias_count: bitacora.evidencias?.length || 0,
+        restaurante: bitacora.restaurante ?? 'Sin Restaurante',
+        hora: bitacora.hora ?? '--:--',
+        descripcion: bitacora.descripcion ?? 'Sin descripción',
+        usuario: bitacora.usuario ?? 'Usuario Desconocido',
+        evidencias_count: Number(bitacora.evidencias_count),
       };
     }
-    
-    // 2. Buscar en Reportes
-    const reporte = await this.reportesRepo.findOne({
-      where: { codigo: codToUpper },
-      relations: { evidencias: true },
-    });
-    
+
+    // ── 2. Buscar en Reportes ─────────────────────────────────────────────────
+    const reporte = await this.reportesRepo
+      .createQueryBuilder('rep')
+      .select([
+        'rep.id     AS id',
+        'rep.titulo AS titulo',
+        '(SELECT COUNT(*) FROM evidencias_reporte er WHERE er.reporte_id = rep.id AND er.deleted_at IS NULL) AS evidencias_count',
+      ])
+      .where('rep.codigo = :codigo', { codigo: codToUpper })
+      .limit(1)
+      .getRawOne<{
+        id: string;
+        titulo: string;
+        evidencias_count: string;
+      }>();
+
     if (reporte) {
       return {
         valido: true,
         tipo: 'reporte',
         id: reporte.id,
-        titulo: reporte.titulo || 'Reporte Sin Título',
-        evidencias_count: reporte.evidencias?.length || 0,
+        titulo: reporte.titulo ?? 'Reporte Sin Título',
+        evidencias_count: Number(reporte.evidencias_count),
       };
     }
-    
-    // No existe
+
+    // No existe en ninguna tabla
     throw new NotFoundException('Código de vinculación inválido o expirado.');
   }
 
