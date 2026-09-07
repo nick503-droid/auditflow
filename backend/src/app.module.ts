@@ -12,26 +12,29 @@ import { MobileSyncModule } from './modules/mobile-sync/mobile-sync.module';
 
 @Module({
   imports: [
-    // Carga el .env y lo hace disponible en toda la app (como una store global)
     ConfigModule.forRoot({
       isGlobal: true,
+      // En producción, Docker inyecta variables directamente al SO (process.env). 
+      // Ignoramos la búsqueda del archivo .env que fue excluido por .dockerignore
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
+      ignoreEnvVars: false,
     }),
 
-    // Conexión a MySQL, usando las variables del .env
+    // Conexión a MySQL, usando las variables inyectadas
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'mysql',
         host: config.get('DB_HOST'),
-        port: config.get('DB_PORT'),
-        username: config.get('DB_USERNAME'),
-        password: config.get('DB_PASSWORD'),
-        database: config.get('DB_DATABASE'),
-        autoLoadEntities: true, // detecta entities de cada módulo automáticamente
-        // ⚠️  SEGURIDAD: synchronize altera el schema de la BD en cada restart.
-        // Solo se activa en entorno de desarrollo. En producción debe ser false.
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-        logging: config.get<string>('NODE_ENV') === 'development' ? ['error', 'warn'] : false,
+        port: config.get('DB_PORT', 3306),
+        // Mapea tanto los nombres viejos como los nuevos de producción
+        username: config.get('DB_USER') || config.get('DB_USERNAME'),
+        password: config.get('DB_PASS') || config.get('DB_PASSWORD'),
+        database: config.get('DB_NAME') || config.get('DB_DATABASE'),
+        autoLoadEntities: true,
+        // En producción 'DB_SYNC' puede controlarse explícitamente, o false por defecto
+        synchronize: config.get('DB_SYNC') === 'true' || config.get('NODE_ENV') !== 'production',
+        logging: config.get('NODE_ENV') === 'development' ? ['error', 'warn'] : false,
       }),
     }),
 
