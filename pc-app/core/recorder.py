@@ -55,7 +55,7 @@ class GrabadorPantalla:
             stdin=subprocess.PIPE,
             stdout=self.archivo_log,
             stderr=self.archivo_log,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
         )
         self.rutas_video_temp.append(ruta_fragmento)
         return ruta_fragmento
@@ -153,7 +153,12 @@ class GrabadorPantalla:
                 "-c", "copy",
                 video_unificado
             ]
-            subprocess.run(comando_concat, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                comando_concat, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             
             # Limpiar concat list
             if os.path.exists(ruta_concat):
@@ -225,6 +230,7 @@ class GrabadorPantalla:
             comando,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
 
         if os.path.exists(self.ruta_audio_temp):

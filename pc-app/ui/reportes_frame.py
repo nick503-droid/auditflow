@@ -1344,25 +1344,32 @@ class ReportesFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
-        ruta_final = self.grabador.detener()
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
         self._actualizar_botones_grabacion()
 
-        if ruta_final and os.path.exists(ruta_final):
-            con_audio = bool(self.switch_audio.get())
-            carpeta_destino = self._prefijo_nube()
-            agregar_evidencia(
-                self.borrador["id"],
-                ruta_final,
-                con_audio=con_audio,
-                carpeta_destino=carpeta_destino,
-            )
-            self._refrescar_lista_evidencias()
+        def procesar_video():
+            ruta_final = self.grabador.detener()
+            if ruta_final and os.path.exists(ruta_final):
+                con_audio = bool(self.switch_audio.get())
+                carpeta_destino = self._prefijo_nube()
+                agregar_evidencia(
+                    self.borrador["id"],
+                    ruta_final,
+                    con_audio=con_audio,
+                    carpeta_destino=carpeta_destino,
+                )
+                
+                self.after(0, self._refrescar_lista_evidencias)
+                self.after(0, lambda: self._actualizar_estado_lbl("offline"))
 
-            if self.label_estado_evidencias.winfo_exists():
-                actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
+        import threading
+        threading.Thread(target=procesar_video, daemon=True).start()
+
+    def _actualizar_estado_lbl(self, estado):
+        if self.label_estado_evidencias.winfo_exists():
+            actualizar_indicador_reporte(self.label_estado_evidencias, estado)
 
     def _mostrar_indicador_rec(self):
         self._segundos_grabacion = 0

@@ -12,7 +12,11 @@ export class StorageService {
 
   constructor(private configService: ConfigService) {
     this.storagePath = this.configService.get<string>('STORAGE_PATH', '');
-    this.backendUrl = this.configService.get<string>('BACKEND_URL', 'http://localhost:3000');
+    
+    // Fallback inteligente para la IP pública
+    this.backendUrl = this.configService.get<string>('BACKEND_URL') 
+                      || this.configService.get<string>('MINIO_PUBLIC_ENDPOINT') 
+                      || 'http://192.168.1.150:3000';
 
     if (!this.storagePath) {
       this.logger.warn('STORAGE_PATH no está definido en .env. Usando "./local_storage" por defecto.');

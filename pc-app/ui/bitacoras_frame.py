@@ -1574,15 +1574,26 @@ class BitacorasFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
-        ruta_final = self.grabador.detener()
+        # Ocultar el indicador de inmediato
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
         self._actualizar_botones_grabacion()
-        if ruta_final and os.path.exists(ruta_final):
-            self.rutas_evidencia.append(ruta_final)
-        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta")
-        self._refrescar_lista_evidencias()
+
+        # Ejecutar FFmpeg (unión de video/audio) en un hilo para no congelar la UI
+        def procesar_video():
+            ruta_final = self.grabador.detener()
+            if ruta_final and os.path.exists(ruta_final):
+                self.rutas_evidencia.append(ruta_final)
+            
+            # Actualizar la UI desde el hilo principal
+            self.after(0, self._refrescar_lista_evidencias)
+            self.after(0, lambda: self.label_archivo.configure(
+                text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta"
+            ))
+
+        import threading
+        threading.Thread(target=procesar_video, daemon=True).start()
 
     def _mostrar_indicador_rec(self):
         self._segundos_grabacion = 0
