@@ -27,7 +27,7 @@ export class EvidenciaReporte {
   @Column({ type: 'tinyint', default: 0 })
   con_audio: boolean;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'int', default: 0 })
   orden_reproduccion: number;
 
   @DeleteDateColumn()

@@ -14,9 +14,14 @@ export class StorageService {
     this.storagePath = this.configService.get<string>('STORAGE_PATH', '');
     
     // Fallback inteligente para la IP pública
-    this.backendUrl = this.configService.get<string>('BACKEND_URL') 
-                      || this.configService.get<string>('MINIO_PUBLIC_ENDPOINT') 
-                      || 'http://192.168.1.150:3000';
+    let url = this.configService.get<string>('BACKEND_URL') 
+              || this.configService.get<string>('MINIO_PUBLIC_ENDPOINT') 
+              || 'http://192.168.1.150:3000';
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'http://' + url;
+    }
+    this.backendUrl = url;
 
     if (!this.storagePath) {
       this.logger.warn('STORAGE_PATH no está definido en .env. Usando "./local_storage" por defecto.');

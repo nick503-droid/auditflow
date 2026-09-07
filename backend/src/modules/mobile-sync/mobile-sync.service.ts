@@ -160,6 +160,7 @@ export class MobileSyncService {
           reporte_id: info.id,
           evidencia_url: urlFinal,
           con_audio: conAudio,
+          orden_reproduccion: 0,
         });
         await this.evidenciasReporteRepo.save(nueva);
       }
