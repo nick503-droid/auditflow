@@ -454,12 +454,10 @@ const capturarEvidencia = async () => {
   try {
     // Configuración estricta para aligerar la carga de red sin compresión JS
     const photo = await Camera.getPhoto({
-      quality: 60,                   // Calidad media para reducir peso final
+      quality: 90,                   // Alta calidad
       allowEditing: false,
-      resultType: CameraResultType.Uri, // Retorna la URI nativa, muy rápido
-      source: CameraSource.Camera,   // Solo cámara fotográfica
-      width: 1280,                   // Límite HD para evitar 4K/1080p pesados
-      height: 720,
+      resultType: CameraResultType.Uri,
+      source: CameraSource.Camera,   
       saveToGallery: false
     });
 
