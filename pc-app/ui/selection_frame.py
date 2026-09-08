@@ -2,7 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 from datetime import datetime, timedelta
 
-from api.client import obtener_usuarios, crear_usuario, crear_restaurante
+from api.client import obtener_usuarios
 
 # ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
 BG_COLOR = "#0f172a"
@@ -87,36 +87,21 @@ class SelectionFrame(ctk.CTkFrame):
         )
         self.dropdown_usuario.pack(side="left", padx=(0, 15))
 
-        # Botones de gestión rápida
+        # Botón de Administración del Sistema
         ctk.CTkButton(
             user_box,
-            text="➕ Nuevo Usuario",
-            command=self._popup_nuevo_usuario,
+            text="⚙️ Administrar Sistema",
+            command=self._abrir_system_admin,
             fg_color="transparent",
             hover_color=CARD_HOVER,
             border_width=1,
             border_color=CARD_COLOR,
             text_color=TEXT_SEC,
-            font=ctk.CTkFont(size=12),
-            width=120,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=160,
             height=32,
             corner_radius=8
         ).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(
-            user_box,
-            text="➕ Nuevo Restaurante",
-            command=self._popup_nuevo_restaurante,
-            fg_color="transparent",
-            hover_color=CARD_HOVER,
-            border_width=1,
-            border_color=CARD_COLOR,
-            text_color=TEXT_SEC,
-            font=ctk.CTkFont(size=12),
-            width=140,
-            height=32,
-            corner_radius=8
-        ).pack(side="left")
 
         # ─── GRID DE MÓDULOS (Tarjetas) ───
         self.cards_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
@@ -399,6 +384,10 @@ class SelectionFrame(ctk.CTkFrame):
             ReportesFrame,
             usuario=self.usuario_seleccionado
         )
+
+    def _abrir_system_admin(self):
+        from ui.system_admin_frame import SystemAdminFrame
+        self.controlador.mostrar_frame(SystemAdminFrame)
 
     def _abrir_administrador(self):
         from ui.admin_frame import AdminFrame

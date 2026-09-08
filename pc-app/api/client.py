@@ -420,3 +420,18 @@ def crear_evidencia_reporte(dto: dict):
     except requests.exceptions.RequestException as e:
         print(f"Error al crear evidencia de reporte: {e}")
         return None
+
+# ─── SISTEMA ──────────────────────────────────────────────────────────────────
+
+def obtener_system_info():
+    """Consulta las métricas del servidor (IP y Almacenamiento)."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/system/info",
+            timeout=5
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error de red al obtener info del sistema: {e}")
+        return None
