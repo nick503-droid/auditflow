@@ -197,10 +197,10 @@ class BitacorasFrame(ctk.CTkFrame):
             self.top_bar, text="Vigilante a cargo:", font=ctk.CTkFont(size=12)
         ).pack(side="left", padx=(20, 5))
 
-        nombres_usuarios = list(self.mapa_usuarios.keys()) if self.mapa_usuarios else [self.usuario_activo["nombre"]]
-        self.combo_vigilante = ctk.CTkComboBox(self.top_bar, values=nombres_usuarios, width=160)
-        self.combo_vigilante.set(self.usuario_activo["nombre"])
-        self.combo_vigilante.pack(side="left", padx=5)
+        # Texto estático ahora que el login es centralizado
+        ctk.CTkLabel(
+            self.top_bar, text=self.usuario_activo["nombre"], font=ctk.CTkFont(size=12, weight="bold")
+        ).pack(side="left", padx=5)
 
         # Indicador de conexión
         self.label_sync = ctk.CTkLabel(
@@ -499,7 +499,7 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Agregar fila vacía ───────────────────────────────────────────────────
 
     def _agregar_fila_vacia(self):
-        vigilante_actual = self.combo_vigilante.get()
+        vigilante_actual = self.usuario_activo["nombre"]
         nueva_fila = {
             "b_id": "",
             "local_id": None,
@@ -651,7 +651,7 @@ class BitacorasFrame(ctk.CTkFrame):
         rest_id = self.mapa_restaurantes.get(rest_nombre)
 
         # Vigilante siempre del selector global — no del campo por fila
-        vig_nombre = self.combo_vigilante.get().strip()
+        vig_nombre = self.usuario_activo["nombre"].strip()
         usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
 
         if not rest_id or not usr_id:
@@ -760,7 +760,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # Si la fila no tiene ID → crear en backend ahora mismo en un hilo
         if not fila.get("b_id"):
-            vig_nombre = self.combo_vigilante.get().strip()
+            vig_nombre = self.usuario_activo["nombre"].strip()
             rest_id = self.mapa_restaurantes[rest_nombre]
             usr_id  = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
 
