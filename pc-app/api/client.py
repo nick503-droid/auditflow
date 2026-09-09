@@ -3,7 +3,7 @@ import os
 import mimetypes
 import json
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:3000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://192.168.1.150:3000")
 CACHE_PATH = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp", "cache.json")
 
 def _guardar_cache(llave, datos):
@@ -30,6 +30,26 @@ def _leer_cache(llave):
         pass
     return []
 
+
+# ─── Autenticación ────────────────────────────────────────────────────────────
+
+def login(username: str, password: str) -> dict | None:
+    """
+    Valida credenciales contra el backend.
+    Retorna el perfil del usuario { id, nombre, role } o None si falla.
+    """
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/auth/login",
+            json={"username": username, "password": password},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error de red al intentar login: {e}")
+        return None
 
 # ─── Catálogos ────────────────────────────────────────────────────────────────
 
@@ -139,19 +159,24 @@ def crear_bitacora(dto):
 
 
 def actualizar_bitacora(id: str, dto: dict):
-    """Actualiza una bitácora en el backend."""
+    """Actualiza una bitácora en el backend.
+    
+    Retorna el objeto actualizado, o un dict {'__conflict__': True} si
+    otro usuario modificó el registro al mismo tiempo (HTTP 409).
+    """
     try:
         response = requests.patch(
             f"{API_BASE_URL}/bitacoras/{id}",
             json=dto,
             timeout=10
         )
+        if response.status_code == 409:
+            return {"__conflict__": True,
+                    "mensaje": "El registro fue modificado por otro usuario. Copia tus cambios, actualiza la vista y vuelve a intentarlo."}
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al actualizar bitácora: {e}")
-        if getattr(e, "response", None) is not None:
-            print(f"Respuesta del servidor: {e.response.text}")
         return None
 
 
@@ -372,6 +397,8 @@ def crear_reporte(dto: dict):
 def actualizar_reporte(reporte_id: str, notas_finales: str):
     """
     Actualiza las notas finales de un reporte existente.
+    Retorna el objeto actualizado, o {'__conflict__': True} si el backend
+    responde 409 (colisión de escritura concurrente).
     """
     try:
         response = requests.patch(
@@ -379,6 +406,9 @@ def actualizar_reporte(reporte_id: str, notas_finales: str):
             json={"notas_finales": notas_finales},
             timeout=10
         )
+        if response.status_code == 409:
+            return {"__conflict__": True,
+                    "mensaje": "El reporte fue modificado por otro usuario. Copia tus cambios, actualiza la vista y vuelve a intentarlo."}
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -389,15 +419,8 @@ def actualizar_reporte(reporte_id: str, notas_finales: str):
 def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str) -> dict | None:
     """
     Cambia el título de un reporte en el backend.
-
-    Parámetros
-    ----------
-    reporte_id   : UUID del reporte en el backend.
-    nuevo_titulo : Nuevo título limpio ingresado por el usuario.
-
-    Retorna
-    -------
-    El reporte actualizado, o None si hubo error.
+    Retorna el reporte actualizado, {'__conflict__': True} en caso de 409,
+    o None si hubo error de red.
     """
     try:
         response = requests.patch(
@@ -405,12 +428,13 @@ def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str) -> dict | None:
             json={"titulo": nuevo_titulo},
             timeout=10
         )
+        if response.status_code == 409:
+            return {"__conflict__": True,
+                    "mensaje": "El reporte fue modificado por otro usuario. Copia tus cambios, actualiza la vista y vuelve a intentarlo."}
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"[renombrar_reporte] Error al renombrar {reporte_id}: {e}")
-        if getattr(e, "response", None) is not None:
-            print(f"Respuesta del servidor: {e.response.text}")
         return None
 
 
@@ -450,4 +474,20 @@ def crear_evidencia_reporte(dto: dict):
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al crear evidencia de reporte: {e}")
+        return None
+
+
+# ─── SISTEMA ──────────────────────────────────────────────────────────────────
+
+def obtener_system_info():
+    """Consulta las métricas del servidor (IP y Almacenamiento)."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/system/info",
+            timeout=5
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error de red al obtener info del sistema: {e}")
         return None
