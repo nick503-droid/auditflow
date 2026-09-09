@@ -51,6 +51,7 @@ export class AuthService implements OnModuleInit {
       nombre: usuario.nombre,
       username: usuario.username,
       role: usuario.role,
+      require_password_change: usuario.require_password_change,
     };
   }
 }

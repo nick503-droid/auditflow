@@ -25,6 +25,9 @@ export class Usuario {
   @Column({ type: 'tinyint', default: 1 })
   activo: number;
 
+  @Column({ type: 'boolean', default: true })
+  require_password_change: boolean;
+
   @DeleteDateColumn()
   deleted_at: Date;
 }

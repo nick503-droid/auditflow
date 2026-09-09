@@ -138,6 +138,19 @@ def crear_restaurante(dto: dict) -> dict | None:
             print(f"Respuesta del servidor: {e.response.text}")
         return None
 
+def cambiar_password(user_id: str, new_password: str) -> bool:
+    try:
+        response = requests.patch(
+            f"{API_BASE_URL}/usuarios/{user_id}/password",
+            json={"newPassword": newPassword},
+            timeout=10
+        )
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Error al cambiar contraseña: {e}")
+        return False
+
 
 # ─── Bitácoras ────────────────────────────────────────────────────────────────
 

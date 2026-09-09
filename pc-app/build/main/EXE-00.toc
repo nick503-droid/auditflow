@@ -70,7 +70,7 @@
  [],
  False,
  False,
- 1788927418,
+ 1788930196,
  [('runw.exe',
    'C:\\Users\\Nick\\Documents\\Projects\\auditflow\\pc-app\\venv\\lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],

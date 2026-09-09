@@ -146,13 +146,91 @@ class LoginFrame(ctk.CTkFrame):
     def _procesar_resultado(self, perfil: dict | None):
         self.btn_login.configure(state="normal", text="Ingresar →")
         if perfil:
-            session.set_session(perfil)
-            from ui.selection_frame import SelectionFrame
-            self.controlador.mostrar_frame(SelectionFrame)
+            if perfil.get("require_password_change"):
+                self._popup_cambiar_password(perfil)
+            else:
+                self._finalizar_login(perfil)
         else:
             self._mostrar_error("Usuario o contraseña incorrectos.")
             self.entry_pass.delete(0, "end")
             self.entry_pass.focus()
+
+    def _finalizar_login(self, perfil):
+        session.set_session(perfil)
+        from ui.selection_frame import SelectionFrame
+        self.controlador.mostrar_frame(SelectionFrame)
+
+    def _popup_cambiar_password(self, perfil):
+        # Modal para forzar el cambio
+        win = ctk.CTkToplevel(self.controlador)
+        win.title("Cambio de contraseña obligatorio")
+        win.geometry("400x380")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.grab_set()
+
+        def _on_close():
+            self.entry_pass.delete(0, "end")
+            win.destroy()
+        
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        
+        ctk.CTkLabel(
+            win, text="Cambio Requerido", 
+            font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_MAIN
+        ).pack(pady=(30, 5))
+        
+        ctk.CTkLabel(
+            win, text="Por razones de seguridad, debes cambiar tu\ncontraseña temporal para continuar.", 
+            font=ctk.CTkFont(size=12), text_color=TEXT_SEC
+        ).pack(pady=(0, 20))
+        
+        # Nueva Contraseña
+        entry_new = ctk.CTkEntry(win, placeholder_text="Nueva contraseña", show="•", width=300, height=40)
+        entry_new.pack(pady=10)
+        
+        # Confirmar
+        entry_conf = ctk.CTkEntry(win, placeholder_text="Confirmar contraseña", show="•", width=300, height=40)
+        entry_conf.pack(pady=10)
+        
+        # Error Label
+        lbl_err = ctk.CTkLabel(win, text="", text_color=ERROR_COLOR, font=ctk.CTkFont(size=12))
+        lbl_err.pack(pady=5)
+        
+        def _on_guardar():
+            p1 = entry_new.get()
+            p2 = entry_conf.get()
+            
+            if len(p1) < 6:
+                lbl_err.configure(text="Mínimo 6 caracteres.")
+                return
+            if p1 != p2:
+                lbl_err.configure(text="Las contraseñas no coinciden.")
+                return
+                
+            btn_guardar.configure(state="disabled", text="Guardando...")
+            
+            from api.client import cambiar_password
+            def _task():
+                res = cambiar_password(perfil["id"], p1)
+                def _ui():
+                    if res:
+                        messagebox.showinfo("Éxito", "Contraseña actualizada. Bienvenido.")
+                        win.destroy()
+                        perfil["require_password_change"] = False
+                        self._finalizar_login(perfil)
+                    else:
+                        btn_guardar.configure(state="normal", text="Actualizar Contraseña")
+                        lbl_err.configure(text="Error de conexión.")
+                self.after(0, _ui)
+            threading.Thread(target=_task, daemon=True).start()
+            
+        btn_guardar = ctk.CTkButton(
+            win, text="Actualizar Contraseña", width=300, height=40,
+            fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
+            command=_on_guardar
+        )
+        btn_guardar.pack(pady=(10, 0))
 
     def _mostrar_error(self, mensaje: str):
         self.lbl_error.configure(text=f"⚠ {mensaje}")

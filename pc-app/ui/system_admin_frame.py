@@ -172,7 +172,7 @@ class SystemAdminFrame(ctk.CTkFrame):
         """Formulario completo para crear un auditor con credenciales y rol."""
         win = ctk.CTkToplevel(self.controlador)
         win.title("Registrar Nuevo Auditor")
-        win.geometry("440x420")
+        win.geometry("440x550")
         win.resizable(False, False)
         win.attributes("-topmost", True)
         win.grab_set()

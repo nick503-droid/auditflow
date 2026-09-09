@@ -47,6 +47,15 @@ export class UsuariosService {
     return this.findOne(id);
   }
 
+  async changePassword(id: string, newPassword: string) {
+    const hash = await bcrypt.hash(newPassword, 10);
+    await this.usuariosRepo.update(id, { 
+      password: hash, 
+      require_password_change: false 
+    });
+    return { success: true };
+  }
+
   remove(id: string) {
     return this.usuariosRepo.softDelete(id);
   }
