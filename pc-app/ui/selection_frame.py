@@ -2,8 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 from datetime import datetime, timedelta
 
-from api.client import obtener_usuarios
-import session
+from api.client import obtener_usuarios, crear_usuario, crear_restaurante
 
 # ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
 BG_COLOR = "#0f172a"
@@ -88,44 +87,33 @@ class SelectionFrame(ctk.CTkFrame):
         )
         self.dropdown_usuario.pack(side="left", padx=(0, 15))
 
-        # Saludo del usuario logueado
-        nombre_activo = session.get_nombre()
-        ctk.CTkLabel(
-            user_box,
-            text=f"Hola, {nombre_activo}",
-            font=ctk.CTkFont(size=12),
-            text_color=TEXT_SEC
-        ).pack(side="left", padx=(0, 15))
-
-        # Botón de Administración del Sistema (SOLO para ADMIN)
-        if session.get_role() == 'ADMIN':
-            ctk.CTkButton(
-                user_box,
-                text="⚙️ Administrar Sistema",
-                command=self._abrir_system_admin,
-                fg_color="transparent",
-                hover_color=CARD_HOVER,
-                border_width=1,
-                border_color=CARD_COLOR,
-                text_color=TEXT_SEC,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                width=160,
-                height=32,
-                corner_radius=8
-            ).pack(side="left", padx=(0, 10))
-
-        # Botón Cerrar Sesión
+        # Botones de gestión rápida
         ctk.CTkButton(
             user_box,
-            text="🚪 Salir",
-            command=self._cerrar_sesion,
+            text="➕ Nuevo Usuario",
+            command=self._popup_nuevo_usuario,
             fg_color="transparent",
-            hover_color="#450a0a",
+            hover_color=CARD_HOVER,
             border_width=1,
-            border_color="#7f1d1d",
-            text_color="#fca5a5",
+            border_color=CARD_COLOR,
+            text_color=TEXT_SEC,
             font=ctk.CTkFont(size=12),
-            width=80,
+            width=120,
+            height=32,
+            corner_radius=8
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            user_box,
+            text="➕ Nuevo Restaurante",
+            command=self._popup_nuevo_restaurante,
+            fg_color="transparent",
+            hover_color=CARD_HOVER,
+            border_width=1,
+            border_color=CARD_COLOR,
+            text_color=TEXT_SEC,
+            font=ctk.CTkFont(size=12),
+            width=140,
             height=32,
             corner_radius=8
         ).pack(side="left")
@@ -411,15 +399,6 @@ class SelectionFrame(ctk.CTkFrame):
             ReportesFrame,
             usuario=self.usuario_seleccionado
         )
-
-    def _abrir_system_admin(self):
-        from ui.system_admin_frame import SystemAdminFrame
-        self.controlador.mostrar_frame(SystemAdminFrame)
-
-    def _cerrar_sesion(self):
-        session.clear_session()
-        from ui.login_frame import LoginFrame
-        self.controlador.mostrar_frame(LoginFrame)
 
     def _abrir_administrador(self):
         from ui.admin_frame import AdminFrame

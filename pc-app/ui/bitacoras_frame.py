@@ -700,6 +700,9 @@ class BitacorasFrame(ctk.CTkFrame):
                     self.after(0, self._aplicar_resultado_creacion, idx, b_id, codigo, local_id)
                 else:
                     resultado = actualizar_bitacora(b_id, dto)
+                    if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
+                        self.after(0, lambda r=resultado: messagebox.showwarning("Conflicto", r["mensaje"]))
+                        return
                     if not resultado:
                         raise Exception("Fallo en API")
                     
@@ -890,6 +893,9 @@ class BitacorasFrame(ctk.CTkFrame):
                         codigo = resultado.get("codigo", "")
                 else:
                     resultado = actualizar_bitacora(b_id, dto)
+                    if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
+                        self.after(0, lambda r=resultado: messagebox.showwarning("Conflicto Sincronización", r["mensaje"]))
+                        continue
 
                 if resultado is not None:
                     marcar_bitacora_sincronizada(p["id"], b_id, codigo)

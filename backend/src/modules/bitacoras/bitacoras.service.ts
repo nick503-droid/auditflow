@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { Bitacora } from './entities/bitacora.entity';
 import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
 import { UpdateBitacoraDto } from './dto/update-bitacora.dto';
 import { StorageService } from '../../common/storage/storage.service';
 import { ConfigService } from '@nestjs/config';
-import { generarCodigoUnico } from '../../common/utils/code-generator';
+
+const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1, se confunden al leer
+const DIAS_VIGENCIA_CODIGO = 5;
 
 @Injectable()
 export class BitacorasService {
@@ -18,7 +20,7 @@ export class BitacorasService {
     private evidenciasRepo: Repository<EvidenciaBitacora>,
     private storageService: StorageService,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   findAll() {
     return this.bitacorasRepo.find({
@@ -71,43 +73,19 @@ export class BitacorasService {
   }
 
   async create(dto: CreateBitacoraDto) {
-    const { client_id, ...restoDto } = dto;
+    const codigo = await this.generarCodigoUnico();
 
-    // 1. Idempotencia (Camino rápido para reintentos diferidos)
-    if (client_id) {
-      // Retiramos las relations pesadas. Solo necesitamos saber si existe.
-      const existente = await this.bitacorasRepo.findOne({
-        where: { id: client_id },
-      });
-      if (existente) return existente; 
-    }
-
-    const codigo = await generarCodigoUnico(this.bitacorasRepo, {
-      campoCodigo: 'codigo',
-      campoFecha: 'fecha',
-    });
-
+    // Normalizar campos opcionales: si no vienen, usar valores neutros
+    // para que el registro sea válido y el código quede generado de inmediato.
     const nueva = this.bitacorasRepo.create({
-      id: client_id, // Si es undefined, TypeORM generará el UUID
       descripcion: '',
       hora: '',
-      ...restoDto,
-      fecha: dto.fecha ? dto.fecha : new Date(),
+      ...dto,
+      // Pasamos el string de la fecha directamente si existe para evitar desfases de zona horaria
+      fecha: dto.fecha ? (dto.fecha) : new Date(),
       codigo,
     });
-    
-    // 2. Inserción Segura (Atrapa concurrencia exacta)
-    try {
-      return await this.bitacorasRepo.save(nueva);
-    } catch (error) {
-      // 1062 es el código de MySQL para ER_DUP_ENTRY (Duplicate entry for primary key)
-      if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
-        // Alguien más (el otro hilo) lo insertó fracciones de segundo antes.
-        // Retornamos la entidad que intentábamos guardar, simulando éxito.
-        return nueva; 
-      }
-      throw error;
-    }
+    return this.bitacorasRepo.save(nueva);
   }
 
   async update(id: string, dto: UpdateBitacoraDto) {
@@ -135,49 +113,29 @@ export class BitacorasService {
   }
 
   /**
-   * Adjunta una nueva evidencia a la bitácora identificada por `codigo`.
-   *
-   * OPTIMIZACIÓN N+1 (antes: 3 queries → ahora: 2 queries):
-   *   1. findPorCodigo(codigo)  → SELECT bitacora completo con relaciones  [eliminado]
-   *   2. evidenciasRepo.save()  → INSERT evidencia                          [conservado]
-   *   3. findOne(bitacora.id)   → SELECT bitácora + relaciones nuevamente   [conservado, pero ligero]
-   *
-   * Nueva estrategia:
-   *   Q1 (lean): SELECT b.id FROM bitacoras WHERE codigo = ? LIMIT 1
-   *              → solo el UUID, sin hidratar relaciones ni evidencias.
-   *   Q2       : INSERT INTO evidencias_bitacora ...
-   *   Q3 (lean): SELECT evidencias WHERE bitacora_id = ?
-   *              → devuelve solo las evidencias (lo que el controller retorna).
+   * Agrega una nueva evidencia a la bitácora identificada por `codigo`.
+   * El código NO se invalida — se puede reutilizar cuantas veces sea necesario
+   * dentro de la ventana de retención de DIAS_VIGENCIA_CODIGO días.
    */
   async adjuntarEvidenciaPorCodigo(
     codigo: string,
     evidencia_url: string,
     con_audio: boolean,
   ) {
-    // Q1 — Obtener solo el id de la bitácora; sin cargar relaciones costosas.
-    const fila = await this.bitacorasRepo
-      .createQueryBuilder('b')
-      .select('b.id', 'id')
-      .where('b.codigo = :codigo', { codigo: codigo.toUpperCase() })
-      .orderBy('b.fecha', 'DESC')
-      .limit(1)
-      .getRawOne<{ id: string }>();
-
-    if (!fila) {
+    const bitacora = await this.findPorCodigo(codigo);
+    if (!bitacora) {
       return null;
     }
 
-    // Q2 — Insertar la nueva evidencia directamente con el id obtenido.
+    // Insertar en la tabla hija — no sobreescribe, agrega una nueva fila
     const nueva = this.evidenciasRepo.create({
-      bitacora_id: fila.id,
+      bitacora_id: bitacora.id,
       evidencia_url,
       con_audio,
     });
     await this.evidenciasRepo.save(nueva);
 
-    // Q3 — Retornar la bitácora con sus relaciones para el response del controller.
-    //      findOne() aquí es necesario para que el PC-App actualice su panel lateral.
-    return this.findOne(fila.id);
+    return this.findOne(bitacora.id);
   }
 
   remove(id: string) {
@@ -199,4 +157,44 @@ export class BitacorasService {
     return this.evidenciasRepo.delete(id);
   }
 
+  /**
+   * Genera un código de 6 caracteres y verifica que no choque con
+   * ningún código usado en los últimos DIAS_VIGENCIA_CODIGO días.
+   * Si hay colisión (muy raro, pero posible), reintenta.
+   */
+  private async generarCodigoUnico(): Promise<string> {
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() - DIAS_VIGENCIA_CODIGO);
+
+    for (let intento = 0; intento < 10; intento++) {
+      const candidato = this.generarCodigoAleatorio();
+
+      const existente = await this.bitacorasRepo.findOne({
+        where: {
+          codigo: candidato,
+          fecha: MoreThanOrEqual(fechaLimite),
+        },
+      });
+
+      if (!existente) {
+        return candidato;
+      }
+    }
+
+    // Si después de 10 intentos sigue chocando (extremadamente improbable),
+    // algo raro está pasando — mejor fallar ruidosamente que devolver un
+    // código duplicado
+    throw new Error(
+      'No se pudo generar un código único después de 10 intentos',
+    );
+  }
+
+  private generarCodigoAleatorio(): string {
+    let resultado = '';
+    for (let i = 0; i < 6; i++) {
+      const indice = Math.floor(Math.random() * CARACTERES_CODIGO.length);
+      resultado += CARACTERES_CODIGO[indice];
+    }
+    return resultado;
+  }
 }

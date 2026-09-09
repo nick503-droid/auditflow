@@ -295,7 +295,9 @@ class AdminFrame(ctk.CTkFrame):
             return
             
         res = renombrar_reporte_remoto(reporte["id"], nuevo_titulo)
-        if res:
+        if res and isinstance(res, dict) and res.get("__conflict__"):
+            messagebox.showwarning("Conflicto", res["mensaje"])
+        elif res:
             messagebox.showinfo("Éxito", "Reporte renombrado correctamente.")
             self._abrir_vista_reportes()
         else:

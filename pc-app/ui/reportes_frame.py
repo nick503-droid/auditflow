@@ -827,6 +827,9 @@ class ReportesFrame(ctk.CTkFrame):
             try:
                 if self.reporte_remoto_id:
                     res = actualizar_reporte(self.reporte_remoto_id, texto)
+                    if res and isinstance(res, dict) and res.get("__conflict__"):
+                        self.after(0, lambda r=res: messagebox.showwarning("Conflicto", r["mensaje"]))
+                        return
                     if not res:
                         raise Exception("Fallo update")
                 else:
@@ -1462,7 +1465,11 @@ class ReportesFrame(ctk.CTkFrame):
             # 1. Guardar notas
             notas = borrador.get("notas_finales", "")
             if notas:
-                if not actualizar_reporte(self.reporte_remoto_id, notas):
+                res = actualizar_reporte(self.reporte_remoto_id, notas)
+                if res and isinstance(res, dict) and res.get("__conflict__"):
+                    self.after(0, lambda r=res: messagebox.showwarning("Conflicto", r["mensaje"]))
+                    return False
+                if not res:
                     return False
 
             # 2. Subir evidencias

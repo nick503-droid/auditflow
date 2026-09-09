@@ -3,56 +3,66 @@ import os
 import mimetypes
 import json
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://192.168.1.150:3000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:3000")
+CACHE_PATH = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp", "cache.json")
 
-# ─── Autenticación ────────────────────────────────────────────────────────────
-
-def login(username: str, password: str) -> dict | None:
-    """
-    Valida credenciales contra el backend.
-    Retorna el perfil del usuario { id, nombre, role } o None si falla.
-    """
+def _guardar_cache(llave, datos):
     try:
-        response = requests.post(
-            f"{API_BASE_URL}/auth/login",
-            json={"username": username, "password": password},
-            timeout=5
-        )
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error de red al intentar login: {e}")
-        return None
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        else:
+            cache = {}
+        cache[llave] = datos
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
+def _leer_cache(llave):
+    try:
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+                return cache.get(llave, [])
+    except Exception:
+        pass
+    return []
+
 
 # ─── Catálogos ────────────────────────────────────────────────────────────────
 
-
 def obtener_usuarios():
-    """Trae la lista de usuarios activos desde el backend. (Sin caché)"""
+    """Trae la lista de usuarios activos desde el backend con soporte OFFLINE."""
     try:
         response = requests.get(
             f"{API_BASE_URL}/usuarios",
             timeout=3
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        _guardar_cache("usuarios", data)
+        return data
     except requests.exceptions.RequestException as e:
-        print(f"Error al obtener usuarios desde el servidor: {e}")
-        return []
+        print(f"Servidor inaccesible, cargando usuarios desde caché local.")
+        return _leer_cache("usuarios")
+
 
 def obtener_restaurantes():
-    """Trae la lista de restaurantes desde el backend. (Sin caché)"""
+    """Trae la lista de restaurantes desde el backend con soporte OFFLINE."""
     try:
         response = requests.get(
             f"{API_BASE_URL}/restaurantes",
             timeout=3
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        _guardar_cache("restaurantes", data)
+        return data
     except requests.exceptions.RequestException as e:
-        print(f"Error al obtener restaurantes desde el servidor: {e}")
-        return []
+        print(f"Servidor inaccesible, cargando restaurantes desde caché local.")
+        return _leer_cache("restaurantes")
 
 
 def crear_usuario(dto: dict) -> dict | None:
@@ -223,7 +233,7 @@ def obtener_bitacoras_por_fecha(fecha: str):
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al obtener bitácoras para la fecha {fecha}: {e}")
-        return None
+        return []
 
 
 def obtener_bitacoras_todas():
@@ -440,19 +450,4 @@ def crear_evidencia_reporte(dto: dict):
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error al crear evidencia de reporte: {e}")
-        return None
-
-# ─── SISTEMA ──────────────────────────────────────────────────────────────────
-
-def obtener_system_info():
-    """Consulta las métricas del servidor (IP y Almacenamiento)."""
-    try:
-        response = requests.get(
-            f"{API_BASE_URL}/system/info",
-            timeout=5
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error de red al obtener info del sistema: {e}")
         return None
