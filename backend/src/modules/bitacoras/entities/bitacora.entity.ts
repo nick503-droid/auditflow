@@ -57,7 +57,7 @@ export class Bitacora {
   @Column({ type: 'tinyint', default: 0 })
   con_audio: boolean;
 
-  @Column({ type: 'date', default: () => 'CURRENT_DATE' })
+  @Column({ type: 'date', default: () => 'CURRENT_TIMESTAMP' })
   fecha: Date;
 
   @Column({ type: 'varchar', length: 20, default: '00:00' })
