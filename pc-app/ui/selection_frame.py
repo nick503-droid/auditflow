@@ -21,15 +21,12 @@ class SelectionFrame(ctk.CTkFrame):
         super().__init__(master, fg_color=BG_COLOR, **kwargs)
         self.controlador = controlador
 
-        self.usuario_seleccionado = None
-        self.usuarios_data = {}
         self.fecha_bitacora = datetime.now().strftime("%Y-%m-%d")
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         self._construir_ui()
-        self._cargar_usuarios()
 
     def _construir_ui(self):
         # Contenedor central responsivo
@@ -63,30 +60,6 @@ class SelectionFrame(ctk.CTkFrame):
         # Derecha: Selector de Usuario y Botones de Gestión Rápida
         user_box = ctk.CTkFrame(header_frame, fg_color="transparent")
         user_box.grid(row=0, column=1, sticky="e")
-
-        ctk.CTkLabel(
-            user_box,
-            text="👤 Usuario Activo:",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=TEXT_SEC
-        ).pack(side="left", padx=(0, 10))
-
-        self.dropdown_usuario = ctk.CTkOptionMenu(
-            user_box, 
-            values=["Cargando..."], 
-            command=self._on_usuario_seleccionado,
-            fg_color=CARD_COLOR,
-            button_color=CARD_COLOR,
-            button_hover_color=CARD_HOVER,
-            dropdown_fg_color=CARD_COLOR,
-            dropdown_hover_color=CARD_HOVER,
-            text_color=TEXT_MAIN,
-            font=ctk.CTkFont(size=13),
-            corner_radius=8,
-            width=200,
-            height=36
-        )
-        self.dropdown_usuario.pack(side="left", padx=(0, 15))
 
         # Saludo del usuario logueado
         nombre_activo = session.get_nombre()
@@ -145,8 +118,6 @@ class SelectionFrame(ctk.CTkFrame):
             descripcion="Auditorías colaborativas por restaurante. Múltiples auditores pueden adjuntar evidencias al mismo día.",
             comando=self._abrir_bitacoras
         )
-        
-        # Selector de Fecha en píldoras (Segmented Button)
         self.seg_fecha = ctk.CTkSegmentedButton(
             self.card_bitacoras,
             values=["Hoy", "Ayer", "📅 Otra"],
@@ -189,8 +160,6 @@ class SelectionFrame(ctk.CTkFrame):
             comando=self._abrir_administrador
         )
 
-        # Inicialmente deshabilitar las tarjetas hasta seleccionar usuario
-        self._set_estado_tarjetas("disabled")
 
     def _on_fecha_cambiada(self, valor):
         if valor == "Hoy":
@@ -324,92 +293,34 @@ class SelectionFrame(ctk.CTkFrame):
             w.bind("<Leave>", _hover_out)
             w.bind("<Button-1>", _on_click)
 
-        # Guardar ref al botón para habilitar/deshabilitar
+        # Guardar ref al botón
         card._action_btn = btn
         card._hover_in = _hover_in
         card._hover_out = _hover_out
         card._on_click = _on_click
-
         return card
 
     def _set_estado_tarjetas(self, estado: str):
-        """Habilita o deshabilita los clics en las tarjetas."""
-        for card in [self.card_bitacoras, self.card_reportes, self.card_admin]:
-            if estado == "disabled":
-                card._action_btn.configure(state="disabled", fg_color=CARD_HOVER)
-                card.configure(cursor="arrow")
-                # Desvincular eventos temporalmente
-                for w in (card, card.winfo_children()[0]):
-                    for child in w.winfo_children():
-                        try:
-                            child.unbind("<Button-1>")
-                        except (NotImplementedError, Exception):
-                            pass
-                        try:
-                            child.configure(state="disabled")
-                        except Exception:
-                            pass
-                    try:
-                        w.unbind("<Button-1>")
-                    except (NotImplementedError, Exception):
-                        pass
-            else:
-                card._action_btn.configure(state="normal", fg_color=ACCENT_COLOR)
-                card.configure(cursor="hand2")
-                # Revincular eventos
-                for w in (card, card.winfo_children()[0]):
-                    for child in w.winfo_children():
-                        try:
-                            if not isinstance(child, ctk.CTkSegmentedButton):
-                                child.bind("<Button-1>", card._on_click)
-                        except (NotImplementedError, Exception):
-                            pass
-                        try:
-                            child.configure(state="normal")
-                        except Exception:
-                            pass
-                    try:
-                        w.bind("<Button-1>", card._on_click)
-                    except (NotImplementedError, Exception):
-                        pass
+        pass
 
     # ─── LÓGICA DE DATOS Y NAVEGACIÓN ───
 
-    def _cargar_usuarios(self):
-        usuarios = obtener_usuarios()
-        if usuarios:
-            self.usuarios_data = {u["nombre"]: u for u in usuarios}
-            nombres = list(self.usuarios_data.keys())
-            self.dropdown_usuario.configure(values=nombres)
-            # Autoseleccionar si hay uno solo, o dejar placeholder
-            if len(nombres) == 1:
-                self.dropdown_usuario.set(nombres[0])
-                self._on_usuario_seleccionado(nombres[0])
-            else:
-                self.dropdown_usuario.set("Elige tu perfil...")
-        else:
-            self.usuarios_data = {}
-            self.dropdown_usuario.configure(values=["Sin conexión al servidor"])
-            self.dropdown_usuario.set("Sin conexión al servidor")
-
-    def _on_usuario_seleccionado(self, nombre_elegido):
-        self.usuario_seleccionado = self.usuarios_data.get(nombre_elegido)
-        if self.usuario_seleccionado:
-            self._set_estado_tarjetas("normal")
-
     def _abrir_bitacoras(self):
         from ui.bitacoras_frame import BitacorasFrame
+        # Usamos la sesión directamente en lugar del dropdown
+        perfil = session.get_session()
         self.controlador.mostrar_frame(
             BitacorasFrame,
-            usuario=self.usuario_seleccionado,
+            usuario=perfil,
             fecha=self.fecha_bitacora
         )
 
     def _abrir_reportes(self):
         from ui.reportes_frame import ReportesFrame
+        perfil = session.get_session()
         self.controlador.mostrar_frame(
             ReportesFrame,
-            usuario=self.usuario_seleccionado
+            usuario=perfil
         )
 
     def _abrir_system_admin(self):
@@ -423,9 +334,10 @@ class SelectionFrame(ctk.CTkFrame):
 
     def _abrir_administrador(self):
         from ui.admin_frame import AdminFrame
+        perfil = session.get_session()
         self.controlador.mostrar_frame(
             AdminFrame,
-            usuario=self.usuario_seleccionado
+            usuario=perfil
         )
 
     # ─── POPUPS DE GESTIÓN RÁPIDA ───
