@@ -35,9 +35,8 @@ class MainWindow(ctk.CTk):
         self.frame_actual = None
 
         # Import diferido para evitar import circular
-        # (SelectionFrame necesita conocer a MainWindow, y viceversa)
-        from ui.selection_frame import SelectionFrame
-        self.mostrar_frame(SelectionFrame)
+        from ui.login_frame import LoginFrame
+        self.mostrar_frame(LoginFrame)
 
     def mostrar_frame(self, frame_class, **kwargs):
         """

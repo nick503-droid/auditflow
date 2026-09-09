@@ -8,5 +8,6 @@ import { UsuariosService } from './usuarios.service';
   imports: [TypeOrmModule.forFeature([Usuario])], // registra la entity en este módulo
   controllers: [UsuariosController],
   providers: [UsuariosService],
+  exports: [UsuariosService], // Permite que AuthModule lo consuma
 })
 export class UsuariosModule {}

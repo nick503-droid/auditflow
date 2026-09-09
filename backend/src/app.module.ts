@@ -10,6 +10,7 @@ import { StorageModule } from './common/storage/storage.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { MobileSyncModule } from './modules/mobile-sync/mobile-sync.module';
 import { SystemModule } from './modules/system/system.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SystemModule } from './modules/system/system.module';
     UploadsModule,
     MobileSyncModule,
     SystemModule,
+    AuthModule,
   ],
 })
 export class AppModule {}

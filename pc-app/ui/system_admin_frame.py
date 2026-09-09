@@ -169,14 +169,78 @@ class SystemAdminFrame(ctk.CTkFrame):
 
     # ─── GESTIÓN (Migrada desde selection_frame) ───
     def _popup_nuevo_usuario(self):
-        dialog = ctk.CTkInputDialog(text="Escribe el nombre del nuevo Auditor:", title="Nuevo Usuario")
-        nombre = dialog.get_input()
-        if nombre and nombre.strip():
-            res = crear_usuario({"nombre": nombre.strip()})
+        """Formulario completo para crear un auditor con credenciales y rol."""
+        win = ctk.CTkToplevel(self.controlador)
+        win.title("Registrar Nuevo Auditor")
+        win.geometry("440x420")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.grab_set()
+        win.configure(fg_color=BG_COLOR)
+
+        inner = ctk.CTkFrame(win, fg_color=CARD_COLOR, corner_radius=12)
+        inner.pack(padx=20, pady=20, fill="both", expand=True)
+
+        ctk.CTkLabel(inner, text="Nuevo Auditor", font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=TEXT_MAIN).pack(pady=(20, 20))
+
+        def campo(label, placeholder, show=""):
+            ctk.CTkLabel(inner, text=label, font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color=TEXT_SEC, anchor="w").pack(fill="x", padx=20)
+            e = ctk.CTkEntry(inner, placeholder_text=placeholder, show=show,
+                             fg_color=BG_COLOR, text_color=TEXT_MAIN, height=38,
+                             corner_radius=8, font=ctk.CTkFont(size=13))
+            e.pack(fill="x", padx=20, pady=(3, 10))
+            return e
+
+        entry_nombre = campo("Nombre completo", "Ej: Juan Pérez")
+        entry_user   = campo("Usuario (login)", "Ej: jperez")
+        entry_pass   = campo("Contraseña", "Mínimo 6 caracteres", show="•")
+
+        ctk.CTkLabel(inner, text="Rol", font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=TEXT_SEC, anchor="w").pack(fill="x", padx=20)
+        combo_rol = ctk.CTkOptionMenu(inner, values=["EMPLEADO", "ADMIN"],
+                                      fg_color=BG_COLOR, button_color=CARD_HOVER,
+                                      text_color=TEXT_MAIN, corner_radius=8)
+        combo_rol.set("EMPLEADO")
+        combo_rol.pack(fill="x", padx=20, pady=(3, 16))
+
+        lbl_err = ctk.CTkLabel(inner, text="", text_color="#ef4444",
+                               font=ctk.CTkFont(size=12))
+        lbl_err.pack()
+
+        def _crear():
+            nombre = entry_nombre.get().strip()
+            username = entry_user.get().strip()
+            password = entry_pass.get()
+            role = combo_rol.get()
+
+            if not nombre or not username or not password:
+                lbl_err.configure(text="⚠ Todos los campos son obligatorios.")
+                return
+            if len(password) < 6:
+                lbl_err.configure(text="⚠ La contraseña debe tener al menos 6 caracteres.")
+                return
+
+            btn_crear.configure(state="disabled", text="Guardando...")
+            res = crear_usuario({"nombre": nombre, "username": username,
+                                  "password": password, "role": role})
             if res:
-                messagebox.showinfo("Éxito", f"Usuario '{nombre.strip()}' creado correctamente.")
+                win.destroy()
+                messagebox.showinfo("Éxito", f"Auditor '{nombre}' registrado correctamente.\nYa puede ingresar con el usuario '{username}'.")
             else:
-                messagebox.showerror("Error", "No se pudo crear el usuario. Verifica tu conexión.")
+                btn_crear.configure(state="normal", text="Registrar")
+                lbl_err.configure(text="⚠ Error al guardar. Verifica tu conexión.")
+
+        btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 20))
+        ctk.CTkButton(btn_frame, text="Cancelar", command=win.destroy,
+                      fg_color="transparent", border_width=1,
+                      text_color=TEXT_SEC, width=100).pack(side="left", padx=(0, 10))
+        btn_crear = ctk.CTkButton(btn_frame, text="Registrar",
+                                  command=_crear, fg_color=ACCENT_COLOR,
+                                  font=ctk.CTkFont(weight="bold"), width=140)
+        btn_crear.pack(side="left")
 
     def _popup_nuevo_restaurante(self):
         dialog = ctk.CTkInputDialog(text="Escribe el nombre del nuevo Restaurante:", title="Nuevo Restaurante")

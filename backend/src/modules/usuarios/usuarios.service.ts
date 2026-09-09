@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Usuario } from './entities/usuario.entity';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class UsuariosService {
@@ -20,8 +21,24 @@ export class UsuariosService {
     return this.usuariosRepo.findOneBy({ id });
   }
 
-  create(dto: CreateUsuarioDto) {
-    const nuevo = this.usuariosRepo.create(dto);
+  findByUsername(username: string) {
+    return this.usuariosRepo.findOne({ where: { username } });
+  }
+
+  async create(dto: CreateUsuarioDto) {
+    const data: Partial<Usuario> = {
+      nombre: dto.nombre,
+      role: dto.role,
+    };
+
+    if (dto.username) {
+      data.username = dto.username;
+    }
+    if (dto.password) {
+      data.password = await bcrypt.hash(dto.password, 10);
+    }
+
+    const nuevo = this.usuariosRepo.create(data);
     return this.usuariosRepo.save(nuevo);
   }
 

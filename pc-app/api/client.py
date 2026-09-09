@@ -5,7 +5,28 @@ import json
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://192.168.1.150:3000")
 
+# ─── Autenticación ────────────────────────────────────────────────────────────
+
+def login(username: str, password: str) -> dict | None:
+    """
+    Valida credenciales contra el backend.
+    Retorna el perfil del usuario { id, nombre, role } o None si falla.
+    """
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/auth/login",
+            json={"username": username, "password": password},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error de red al intentar login: {e}")
+        return None
+
 # ─── Catálogos ────────────────────────────────────────────────────────────────
+
 
 def obtener_usuarios():
     """Trae la lista de usuarios activos desde el backend. (Sin caché)"""
