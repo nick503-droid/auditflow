@@ -142,7 +142,7 @@ def cambiar_password(user_id: str, new_password: str) -> bool:
     try:
         response = requests.patch(
             f"{API_BASE_URL}/usuarios/{user_id}/password",
-            json={"newPassword": newPassword},
+            json={"newPassword": new_password},
             timeout=10
         )
         response.raise_for_status()
