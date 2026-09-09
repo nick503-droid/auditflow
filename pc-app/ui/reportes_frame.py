@@ -1063,72 +1063,37 @@ class ReportesFrame(ctk.CTkFrame):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _abrir_selector_captura(self):
-        """
-        Abre una ventana estilo Snipping Tool: el usuario la mueve/redimensiona
-        sobre el área que quiere capturar y presiona 📷 Capturar.
-        """
+        """Abre la herramienta Snipping Tool para recortar la pantalla."""
         try:
-            from PIL import ImageGrab
+            from ui.snipping_tool import open_snipping_tool
         except ImportError:
-            messagebox.showerror("Dependencia faltante", "Instala Pillow:\n  pip install pillow")
+            messagebox.showerror("Error", "No se encontró snipping_tool.py")
             return
-
-        selector = ctk.CTkToplevel(self.controlador)
-        selector.title("📷  Seleccionar área a capturar")
-        selector.geometry("480x320+150+150")
-        selector.configure(fg_color="#0f172a")
-        selector.attributes("-topmost", True)
-        # Hace la ventana semi-transparente para que el usuario vea qué va a capturar
-        selector.attributes("-alpha", 0.4)
-        selector.resizable(True, True)
-
-        marco = ctk.CTkFrame(selector, fg_color="transparent",
-                             border_color="#4f46e5", border_width=2, corner_radius=6)
-        marco.pack(fill="both", expand=True, padx=6, pady=6)
-
-        ctk.CTkLabel(
-            marco,
-            text="Mueve y redimensiona esta ventana\nsobre el área que deseas capturar,\nluego pulsa 📷 Capturar.",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#ffffff",
-        ).pack(expand=True)
-
-        btn_bar = ctk.CTkFrame(selector, fg_color="#1e293b", height=52)
-        btn_bar.pack(fill="x", side="bottom")
-        btn_bar.pack_propagate(False)
-
-        def _ejecutar_captura():
-            selector.update_idletasks()
-            x = selector.winfo_x()
-            y = selector.winfo_y()
-            w = selector.winfo_width()
-            h = selector.winfo_height()
-            selector.withdraw()
-            selector.after(200, lambda: _finalizar(x, y, w, h, selector))
-
-        def _finalizar(x, y, w, h, win):
+            
+        def _on_capture(img, ruta_temp):
+            # En reportes, movemos el archivo a la carpeta final de evidencia
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre = f"screenshot_{ts}.jpg"
+            ruta_destino = self._ruta_destino_evidencia(nombre)
+            
             try:
-                from PIL import ImageGrab
-                img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+                import shutil
+                shutil.copy2(ruta_temp, ruta_destino)
             except Exception as e:
-                win.destroy()
-                messagebox.showerror("Error de captura", str(e))
+                messagebox.showerror("Error", f"No se pudo guardar la evidencia:\n{e}")
                 return
-            win.destroy()
-            self._guardar_screenshot(img)
+                
+            carpeta_destino = self._prefijo_nube()
+            agregar_evidencia(
+                self.borrador["id"],
+                ruta_destino,
+                bool(self.switch_audio.get()),
+                carpeta_destino=carpeta_destino,
+            )
+            self._renderizar_lista_evidencias()
+            self._marcar_modificado()
 
-        ctk.CTkButton(
-            btn_bar, text="📷  Capturar",
-            fg_color="#4f46e5", hover_color="#4338ca",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=_ejecutar_captura,
-        ).pack(side="left", padx=12, pady=10, expand=True, fill="x")
-
-        ctk.CTkButton(
-            btn_bar, text="Cancelar",
-            fg_color="transparent", border_width=1, text_color="#ffffff",
-            command=selector.destroy,
-        ).pack(side="right", padx=12, pady=10, ipadx=10)
+        open_snipping_tool(self.controlador, _on_capture)
 
     def _guardar_screenshot(self, img):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

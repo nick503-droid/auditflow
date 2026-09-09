@@ -1340,71 +1340,20 @@ class BitacorasFrame(ctk.CTkFrame):
         self._abrir_selector_captura()
 
     def _abrir_selector_captura(self):
-        """Ventana redimensionable/movible; al pulsar Capturar toma la bbox."""
         try:
-            from PIL import ImageGrab  # noqa: validate dep
+            from ui.snipping_tool import open_snipping_tool
         except ImportError:
             from tkinter import messagebox
-            messagebox.showerror("Dependencia faltante", "Instala Pillow:\n  pip install pillow")
+            messagebox.showerror("Error", "No se encontró snipping_tool.py")
             return
-
-        selector = ctk.CTkToplevel(self.controlador)
-        selector.title("📷  Seleccionar área a capturar")
-        selector.geometry("480x320+150+150")
-        selector.configure(fg_color="#0f172a")
-        selector.attributes("-topmost", True)
-        # Hace la ventana semi-transparente para que el usuario vea qué va a capturar
-        selector.attributes("-alpha", 0.4)
-        selector.resizable(True, True)
-
-        marco = ctk.CTkFrame(selector, fg_color="transparent",
-                             border_color="#4f46e5", border_width=2, corner_radius=6)
-        marco.pack(fill="both", expand=True, padx=6, pady=6)
-
-        ctk.CTkLabel(
-            marco,
-            text="Mueve y redimensiona esta ventana\nsobre el área que deseas capturar,\nluego pulsa 📷 Capturar.",
-            font=ctk.CTkFont(size=13),
-            text_color="#94a3b8",
-        ).pack(expand=True)
-
-        btn_bar = ctk.CTkFrame(selector, fg_color="#1e293b", height=52)
-        btn_bar.pack(fill="x", side="bottom")
-        btn_bar.pack_propagate(False)
-
-        def _ejecutar_captura():
-            selector.update_idletasks()
-            x = selector.winfo_x()
-            y = selector.winfo_y()
-            w = selector.winfo_width()
-            h = selector.winfo_height()
-            selector.withdraw()
-            selector.after(200, lambda: _finalizar(x, y, w, h))
-
-        def _finalizar(x, y, w, h):
-            try:
-                from PIL import ImageGrab
-                img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
-            except Exception as e:
-                selector.destroy()
-                from tkinter import messagebox
-                messagebox.showerror("Error de captura", str(e))
-                return
-            selector.destroy()
-            self._guardar_screenshot_bit(img)
-
-        ctk.CTkButton(
-            btn_bar, text="📷  Capturar",
-            fg_color="#4f46e5", hover_color="#4338ca",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=_ejecutar_captura,
-        ).pack(side="left", padx=12, pady=10, expand=True, fill="x")
-
-        ctk.CTkButton(
-            btn_bar, text="Cancelar",
-            fg_color="transparent", border_width=1,
-            command=selector.destroy,
-        ).pack(side="right", padx=12, pady=10, ipadx=10)
+            
+        def _on_capture(img, ruta_temp):
+            # Verificar que no esté ya en la lista y adjuntar
+            if ruta_temp not in self.rutas_evidencia:
+                self.rutas_evidencia.append(ruta_temp)
+                self._renderizar_lista_evidencias()
+                
+        open_snipping_tool(self.controlador, _on_capture)
 
     def _guardar_screenshot_bit(self, img):
         """Guarda la captura en temp y la adjunta como evidencia pendiente."""
