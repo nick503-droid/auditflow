@@ -34,9 +34,9 @@ async function bootstrap() {
         'capacitor://localhost',
       ];
 
-  // Añadir siempre el rango de red local (192.168.x.x) como expresión regular
-  // para que la app móvil conecte sin importar la IP específica del servidor.
-  allowedOrigins.push(/^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/);
+  // Añadir siempre los rangos de redes privadas (RFC 1918)
+  // 192.168.x.x, 10.x.x.x, 172.16.x.x - 172.31.x.x
+  allowedOrigins.push(/^https?:\/\/(192\.168|10|172\.(1[6-9]|2[0-9]|3[0-1]))\.\d{1,3}\.\d{1,3}(:\d+)?$/);
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -61,6 +61,10 @@ async function bootstrap() {
 
   // ── Validación Global ──────────────────────────────────────────────────────
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+
+  // ── Filtros Globales ───────────────────────────────────────────────────────
+  const { OptimisticLockFilter } = await import('./common/filters/optimistic-lock.filter');
+  app.useGlobalFilters(new OptimisticLockFilter());
 
   // ── Archivos Estáticos ─────────────────────────────────────────────────────
   // STORAGE_PATH puede venir con comillas dobles en Windows (.env sin parser).

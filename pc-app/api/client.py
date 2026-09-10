@@ -58,7 +58,7 @@ def obtener_usuarios():
     try:
         response = requests.get(
             f"{API_BASE_URL}/usuarios",
-            timeout=3
+            timeout=8
         )
         response.raise_for_status()
         data = response.json()
@@ -74,7 +74,7 @@ def obtener_restaurantes():
     try:
         response = requests.get(
             f"{API_BASE_URL}/restaurantes",
-            timeout=3
+            timeout=8
         )
         response.raise_for_status()
         data = response.json()
@@ -171,17 +171,20 @@ def crear_bitacora(dto):
         return None
 
 
-def actualizar_bitacora(id: str, dto: dict):
+def actualizar_bitacora(id: str, dto: dict, version: int = None):
     """Actualiza una bitácora en el backend.
     
     Retorna el objeto actualizado, o un dict {'__conflict__': True} si
     otro usuario modificó el registro al mismo tiempo (HTTP 409).
     """
     try:
+        if version is not None:
+            dto["version"] = version
+            
         response = requests.patch(
             f"{API_BASE_URL}/bitacoras/{id}",
             json=dto,
-            timeout=10
+            timeout=15
         )
         if response.status_code == 409:
             return {"__conflict__": True,
@@ -407,17 +410,21 @@ def crear_reporte(dto: dict):
         return None
 
 
-def actualizar_reporte(reporte_id: str, notas_finales: str):
+def actualizar_reporte(reporte_id: str, notas_finales: str, version: int = None):
     """
     Actualiza las notas finales de un reporte existente.
     Retorna el objeto actualizado, o {'__conflict__': True} si el backend
     responde 409 (colisión de escritura concurrente).
     """
     try:
+        payload = {"notas_finales": notas_finales}
+        if version is not None:
+            payload["version"] = version
+            
         response = requests.patch(
             f"{API_BASE_URL}/reportes/{reporte_id}",
-            json={"notas_finales": notas_finales},
-            timeout=10
+            json=payload,
+            timeout=15
         )
         if response.status_code == 409:
             return {"__conflict__": True,
@@ -429,17 +436,21 @@ def actualizar_reporte(reporte_id: str, notas_finales: str):
         return None
 
 
-def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str) -> dict | None:
+def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str, version: int = None) -> dict | None:
     """
     Cambia el título de un reporte en el backend.
     Retorna el reporte actualizado, {'__conflict__': True} en caso de 409,
     o None si hubo error de red.
     """
     try:
+        payload = {"titulo": nuevo_titulo}
+        if version is not None:
+            payload["version"] = version
+            
         response = requests.patch(
             f"{API_BASE_URL}/reportes/{reporte_id}",
-            json={"titulo": nuevo_titulo},
-            timeout=10
+            json=payload,
+            timeout=15
         )
         if response.status_code == 409:
             return {"__conflict__": True,

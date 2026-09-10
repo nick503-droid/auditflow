@@ -32,6 +32,9 @@ import { AuthModule } from './modules/auth/auth.module';
         autoLoadEntities: true,
         synchronize: config.get('DB_SYNC') === 'true' || config.get('NODE_ENV') !== 'production',
         logging: config.get('NODE_ENV') === 'development' ? ['error', 'warn'] : false,
+        extra: {
+          connectionLimit: 50,
+        },
       }),
     }),
 

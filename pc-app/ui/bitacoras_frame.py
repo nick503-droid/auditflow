@@ -699,7 +699,7 @@ class BitacorasFrame(ctk.CTkFrame):
                     marcar_bitacora_sincronizada(local_id, b_id, codigo)
                     self.after(0, self._aplicar_resultado_creacion, idx, b_id, codigo, local_id)
                 else:
-                    resultado = actualizar_bitacora(b_id, dto)
+                    resultado = actualizar_bitacora(b_id, dto, version=datos_locales.get("version"))
                     if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
                         self.after(0, lambda r=resultado: messagebox.showwarning("Conflicto", r["mensaje"]))
                         return
@@ -892,7 +892,8 @@ class BitacorasFrame(ctk.CTkFrame):
                         b_id   = resultado.get("id", "")
                         codigo = resultado.get("codigo", "")
                 else:
-                    resultado = actualizar_bitacora(b_id, dto)
+                    version = p.get("version")
+                    resultado = actualizar_bitacora(b_id, dto, version=version)
                     if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
                         self.after(0, lambda r=resultado: messagebox.showwarning("Conflicto Sincronización", r["mensaje"]))
                         continue
@@ -948,6 +949,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "urgencia":    urgencia,
                 "evidencias":  evids,
                 "evidencia":   "Sí" if (evids or b.get("evidencia_url")) else "",
+                "version":     b.get("version"),
             }
             if b_id in ids_local:
                 local_idx = ids_local[b_id]

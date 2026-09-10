@@ -801,6 +801,7 @@ class ReportesFrame(ctk.CTkFrame):
                     if res.status_code == 200:
                         data = res.json()
                         nuevas_ev = data.get("evidencias", [])
+                        self.reporte_version = data.get("version")
                         # Comparar si hay cambios en la nube
                         if hash(str(nuevas_ev)) != hash(str(getattr(self, "evidencias_nube", []))):
                             self.evidencias_nube = nuevas_ev
@@ -826,7 +827,7 @@ class ReportesFrame(ctk.CTkFrame):
         def _sync_notas():
             try:
                 if self.reporte_remoto_id:
-                    res = actualizar_reporte(self.reporte_remoto_id, texto)
+                    res = actualizar_reporte(self.reporte_remoto_id, texto, version=getattr(self, "reporte_version", None))
                     if res and isinstance(res, dict) and res.get("__conflict__"):
                         self.after(0, lambda r=res: messagebox.showwarning("Conflicto", r["mensaje"]))
                         return
@@ -1430,7 +1431,7 @@ class ReportesFrame(ctk.CTkFrame):
             # 1. Guardar notas
             notas = borrador.get("notas_finales", "")
             if notas:
-                res = actualizar_reporte(self.reporte_remoto_id, notas)
+                res = actualizar_reporte(self.reporte_remoto_id, notas, version=getattr(self, "reporte_version", None))
                 if res and isinstance(res, dict) and res.get("__conflict__"):
                     self.after(0, lambda r=res: messagebox.showwarning("Conflicto", r["mensaje"]))
                     return False

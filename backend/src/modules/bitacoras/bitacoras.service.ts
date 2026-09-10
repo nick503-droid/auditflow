@@ -89,7 +89,10 @@ export class BitacorasService {
   }
 
   async update(id: string, dto: UpdateBitacoraDto) {
-    await this.bitacorasRepo.update(id, dto);
+    const bitacora = await this.findOne(id);
+    if (!bitacora) return null;
+    Object.assign(bitacora, dto);
+    await this.bitacorasRepo.save(bitacora);
     return this.findOne(id);
   }
 

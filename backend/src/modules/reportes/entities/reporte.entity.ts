@@ -6,6 +6,7 @@ import {
   JoinColumn,
   OneToMany,
   DeleteDateColumn,
+  VersionColumn,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
 import { Restaurante } from '../../restaurantes/entities/restaurante.entity';
@@ -55,4 +56,7 @@ export class Reporte {
 
   @DeleteDateColumn()
   deleted_at: Date;
+
+  @VersionColumn()
+  version: number;
 }

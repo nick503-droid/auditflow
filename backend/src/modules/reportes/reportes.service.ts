@@ -49,7 +49,10 @@ export class ReportesService {
   }
 
   async update(id: string, dto: UpdateReporteDto) {
-    await this.reportesRepo.update(id, dto);
+    const reporte = await this.findOne(id);
+    if (!reporte) return null;
+    Object.assign(reporte, dto);
+    await this.reportesRepo.save(reporte);
     return this.findOne(id);
   }
 
