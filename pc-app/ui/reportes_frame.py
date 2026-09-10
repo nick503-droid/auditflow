@@ -1355,6 +1355,14 @@ class ReportesFrame(ctk.CTkFrame):
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
         self.indicador.configure(fg_color="#1e293b")
+        
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(self.indicador.winfo_id())
+            # 0x00000011 = WDA_EXCLUDEFROMCAPTURE
+            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        except Exception:
+            pass
         ancho, alto = 260, 90
         x = self.indicador.winfo_screenwidth() - ancho - 40
         y = 40
