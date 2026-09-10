@@ -1,3 +1,4 @@
+from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 import customtkinter as ctk
 from tkinter import messagebox, simpledialog
 from datetime import datetime
@@ -86,7 +87,7 @@ class AdminFrame(ctk.CTkFrame):
         self.lbl_titulo = ctk.CTkLabel(
             self.top_bar, 
             text="", 
-            font=ctk.CTkFont(size=24, weight="bold"),
+            font=get_font(size=24, weight="bold"),
             text_color=TEXT_MAIN
         )
         self.lbl_titulo.pack(side="left")
@@ -100,7 +101,7 @@ class AdminFrame(ctk.CTkFrame):
             border_width=1,
             border_color=CARD_COLOR,
             text_color=TEXT_SEC,
-            font=ctk.CTkFont(size=13),
+            font=get_font(size=13),
             command=self._on_back
         )
         self.btn_back.pack(side="right")
@@ -161,13 +162,13 @@ class AdminFrame(ctk.CTkFrame):
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(expand=True)
             
-            lbl_icon = ctk.CTkLabel(inner, text=icono, font=ctk.CTkFont(size=48))
+            lbl_icon = ctk.CTkLabel(inner, text=icono, font=get_font(size=48))
             lbl_icon.pack(pady=(0, 12))
             
-            lbl_tit = ctk.CTkLabel(inner, text=titulo, font=ctk.CTkFont(size=18, weight="bold"), text_color=TEXT_MAIN)
+            lbl_tit = ctk.CTkLabel(inner, text=titulo, font=get_font(size=18, weight="bold"), text_color=TEXT_MAIN)
             lbl_tit.pack(pady=(0, 6))
             
-            lbl_desc = ctk.CTkLabel(inner, text=desc, font=ctk.CTkFont(size=13), text_color=TEXT_SEC)
+            lbl_desc = ctk.CTkLabel(inner, text=desc, font=get_font(size=13), text_color=TEXT_SEC)
             lbl_desc.pack()
             
             def hover_in(e): card.configure(fg_color=CARD_HOVER)
@@ -246,7 +247,7 @@ class AdminFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             info_frame, 
             text=titulo, 
-            font=ctk.CTkFont(size=15, weight="bold"), 
+            font=get_font(size=15, weight="bold"), 
             text_color=TEXT_MAIN,
             anchor="w"
         ).pack(fill="x")
@@ -254,7 +255,7 @@ class AdminFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             info_frame, 
             text=f"{icono}   ·   Fecha: {fecha}", 
-            font=ctk.CTkFont(size=12), 
+            font=get_font(size=12), 
             text_color=TEXT_SEC, 
             anchor="w"
         ).pack(fill="x", pady=(2, 0))
@@ -266,7 +267,7 @@ class AdminFrame(ctk.CTkFrame):
         ctk.CTkButton(
             btn_frame, text="👁️ Ver", width=70, height=32,
             fg_color=SUCCESS_COLOR, hover_color=SUCCESS_HOVER,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=get_font(size=12, weight="bold"),
             command=lambda r=reporte, l=es_local: self._abrir_reporte_detalle(r, l)
         ).pack(side="left", padx=4)
         
@@ -276,7 +277,7 @@ class AdminFrame(ctk.CTkFrame):
                 btn_frame, text="✏️ Editar", width=80, height=32,
                 fg_color="transparent", hover_color=CARD_HOVER,
                 border_width=1, border_color=TEXT_SEC, text_color=TEXT_MAIN,
-                font=ctk.CTkFont(size=12),
+                font=get_font(size=12),
                 command=lambda r=reporte: self._renombrar_reporte(r)
             ).pack(side="left", padx=4)
             
@@ -285,7 +286,7 @@ class AdminFrame(ctk.CTkFrame):
             btn_frame, text="🗑️ Eliminar", width=80, height=32,
             fg_color="transparent", hover_color=DANGER_HOVER,
             border_width=1, border_color=DANGER_COLOR, text_color=DANGER_COLOR,
-            font=ctk.CTkFont(size=12),
+            font=get_font(size=12),
             command=lambda r=reporte, l=es_local: self._eliminar_reporte(r, l)
         ).pack(side="left", padx=4)
 
@@ -351,10 +352,10 @@ class AdminFrame(ctk.CTkFrame):
             card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, corner_radius=10, cursor="hand2")
             card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
             
-            lbl_icon = ctk.CTkLabel(card, text="📁", font=ctk.CTkFont(size=32))
+            lbl_icon = ctk.CTkLabel(card, text="📁", font=get_font(size=32))
             lbl_icon.pack(pady=(16, 4))
             
-            lbl_tit = ctk.CTkLabel(card, text=f, font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_MAIN)
+            lbl_tit = ctk.CTkLabel(card, text=f, font=get_font(size=14, weight="bold"), text_color=TEXT_MAIN)
             lbl_tit.pack(padx=24, pady=(0, 16))
             
             def hover_in(e, c=card): c.configure(fg_color=CARD_HOVER)
@@ -392,19 +393,19 @@ class AdminFrame(ctk.CTkFrame):
             button_color=CARD_COLOR,
             button_hover_color=CARD_HOVER,
             text_color=TEXT_MAIN,
-            font=ctk.CTkFont(size=12)
+            font=get_font(size=12)
         )
         
-        ctk.CTkLabel(filtro_frame, text="Usuario:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(filtro_frame, text="Usuario:", text_color=TEXT_SEC, font=get_font(size=12)).pack(side="left", padx=(0, 5))
         ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_usuario, values=usuarios_vals, command=self._aplicar_filtros, width=130, **om_kwargs).pack(side="left", padx=(0, 15))
         
-        ctk.CTkLabel(filtro_frame, text="Restaurante:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(filtro_frame, text="Restaurante:", text_color=TEXT_SEC, font=get_font(size=12)).pack(side="left", padx=(0, 5))
         ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_restaurante, values=rest_vals, command=self._aplicar_filtros, width=130, **om_kwargs).pack(side="left", padx=(0, 15))
         
-        ctk.CTkLabel(filtro_frame, text="Urgencia:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(filtro_frame, text="Urgencia:", text_color=TEXT_SEC, font=get_font(size=12)).pack(side="left", padx=(0, 5))
         ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_urgencia, values=["Todas", "Comentar", "Leve", "Medio", "Grave"], command=self._aplicar_filtros, width=100, **om_kwargs).pack(side="left", padx=(0, 15))
         
-        ctk.CTkLabel(filtro_frame, text="Evidencias:", text_color=TEXT_SEC, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(filtro_frame, text="Evidencias:", text_color=TEXT_SEC, font=get_font(size=12)).pack(side="left", padx=(0, 5))
         ctk.CTkOptionMenu(filtro_frame, variable=self.filtro_evidencia, values=["Evidencias", "Sí", "No"], command=self._aplicar_filtros, width=90, **om_kwargs).pack(side="left")
         
         # Área de filas
@@ -488,7 +489,7 @@ class AdminFrame(ctk.CTkFrame):
         header = ctk.CTkLabel(
             info_frame, 
             text=f"🕒 {hora}   ·   🏪 {rst}   ·   👤 {usr}", 
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=get_font(size=12, weight="bold"),
             text_color=TEXT_SEC,
             anchor="w"
         )
@@ -500,7 +501,7 @@ class AdminFrame(ctk.CTkFrame):
             justify="left", 
             anchor="w", 
             wraplength=600,
-            font=ctk.CTkFont(size=14),
+            font=get_font(size=14),
             text_color=TEXT_MAIN
         ).pack(fill="x")
         
@@ -513,7 +514,7 @@ class AdminFrame(ctk.CTkFrame):
                 btn_frame, text="👁️ Evidencias", width=100, height=32,
                 fg_color="transparent", hover_color=CARD_HOVER,
                 border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
-                font=ctk.CTkFont(size=12, weight="bold"),
+                font=get_font(size=12, weight="bold"),
                 command=lambda b=fila: self._abrir_evidencias_bitacora(b)
             ).pack(side="left", padx=8)
             
@@ -582,7 +583,7 @@ class AdminFrame(ctk.CTkFrame):
         top_bar.pack(fill="x", padx=20, pady=(16, 0))
         top_bar.pack_propagate(False)
 
-        lbl_prog = ctk.CTkLabel(top_bar, text="", font=ctk.CTkFont(size=11), text_color=TEXT_SEC)
+        lbl_prog = ctk.CTkLabel(top_bar, text="", font=get_font(size=11), text_color=TEXT_SEC)
         lbl_prog.pack(side="left", padx=14)
 
         checkboxes: list[tuple[ctk.BooleanVar, str]] = []
@@ -599,7 +600,7 @@ class AdminFrame(ctk.CTkFrame):
 
         btn_dl_todos = ctk.CTkButton(
             top_bar, text="⬇️ Descargar Selección", width=160, height=30,
-            fg_color="#0f766e", hover_color="#0d9488", font=ctk.CTkFont(size=11),
+            fg_color="#0f766e", hover_color="#0d9488", font=get_font(size=11),
             command=_descargar_todos
         )
         btn_dl_todos.pack(side="right", padx=14, pady=7)
@@ -624,7 +625,7 @@ class AdminFrame(ctk.CTkFrame):
             nombre_corto = (nombre_arch[:38] + "...") if len(nombre_arch) > 38 else nombre_arch
             ctk.CTkLabel(
                 f_ev, text=f"{nombre_fecha}/{nombre_sub} — {nombre_corto}",
-                font=ctk.CTkFont(size=12), text_color=TEXT_MAIN, anchor="w"
+                font=get_font(size=12), text_color=TEXT_MAIN, anchor="w"
             ).pack(side="left", padx=10, expand=True, fill="x")
 
             # Botón descarga individual
@@ -644,7 +645,7 @@ class AdminFrame(ctk.CTkFrame):
             ctk.CTkButton(
                 f_ev, text="Abrir", width=70, height=32,
                 fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
-                font=ctk.CTkFont(size=12, weight="bold"),
+                font=get_font(size=12, weight="bold"),
                 command=lambda u=url: webbrowser.open(u)
             ).pack(side="right", padx=(4, 8))
 
@@ -653,7 +654,7 @@ class AdminFrame(ctk.CTkFrame):
                     self._eliminar_evidencia_admin(i, w)
                 ctk.CTkButton(
                     f_ev, text="🗑️", width=36, height=32,
-                    fg_color="#ef4444", hover_color="#dc2626",
+                    fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"],
                     command=_del_ev
                 ).pack(side="right", padx=(4, 0))
             
@@ -695,7 +696,7 @@ class AdminFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             meta_frame, 
             text=f"🕒 Fecha: {fecha}   ·   🏪 Restaurante: {rst}   ·   👤 Autor: {usr}", 
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=get_font(size=13, weight="bold"),
             text_color=TEXT_SEC,
             anchor="w"
         ).pack(pady=16, padx=20, fill="x")
@@ -724,7 +725,7 @@ class AdminFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             header_ev_frame, 
             text="Evidencias Adjuntas", 
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=get_font(size=16, weight="bold"),
             text_color=TEXT_MAIN
         ).pack(side="left")
 
@@ -734,7 +735,7 @@ class AdminFrame(ctk.CTkFrame):
         # Carpeta: Documents/AuditFlow/Reportes/titulo - evidencias/
         nombre_carpeta_rep = self._sanitizar_nombre_carpeta(f"{titulo} - evidencias")
         carpeta_rep = os.path.join(os.path.expanduser("~"), "Documents", "AuditFlow", "Reportes", nombre_carpeta_rep)
-        lbl_prog_rep = ctk.CTkLabel(header_ev_frame, text="", font=ctk.CTkFont(size=11), text_color=TEXT_SEC)
+        lbl_prog_rep = ctk.CTkLabel(header_ev_frame, text="", font=get_font(size=11), text_color=TEXT_SEC)
         lbl_prog_rep.pack(side="left", padx=14)
 
         checkboxes_rep: list[tuple[ctk.BooleanVar, str]] = []
@@ -751,7 +752,7 @@ class AdminFrame(ctk.CTkFrame):
 
         btn_dl_rep = ctk.CTkButton(
             header_ev_frame, text="⬇️ Descargar Selección", width=160, height=30,
-            fg_color="#0f766e", hover_color="#0d9488", font=ctk.CTkFont(size=11),
+            fg_color="#0f766e", hover_color="#0d9488", font=get_font(size=11),
             command=_dl_todos_rep
         )
         btn_dl_rep.pack(side="right")
@@ -779,7 +780,7 @@ class AdminFrame(ctk.CTkFrame):
                 ctk.CTkLabel(
                     f_ev, 
                     text=f"{titulo[:25]} — {nombre_corto}",
-                    font=ctk.CTkFont(size=12),
+                    font=get_font(size=12),
                     text_color=TEXT_MAIN,
                     anchor="w"
                 ).pack(side="left", padx=10, expand=True, fill="x")
@@ -801,7 +802,7 @@ class AdminFrame(ctk.CTkFrame):
                 ctk.CTkButton(
                     f_ev, text="Abrir", width=70, height=30,
                     fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
-                    font=ctk.CTkFont(size=12, weight="bold"),
+                    font=get_font(size=12, weight="bold"),
                     command=lambda u=url: webbrowser.open(u)
                 ).pack(side="right", padx=(4, 8))
                 
@@ -812,7 +813,7 @@ class AdminFrame(ctk.CTkFrame):
                         self._eliminar_evidencia_admin({"id": id, "tipo": "reporte"}, w)
                     ctk.CTkButton(
                         f_ev, text="🗑️", width=36, height=30,
-                        fg_color="#ef4444", hover_color="#dc2626",
+                        fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"],
                         command=_del_rep_ev
                     ).pack(side="right", padx=(4, 0))
                 

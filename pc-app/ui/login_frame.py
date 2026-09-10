@@ -4,20 +4,16 @@ import threading
 from api.client import login
 import session
 
-# ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
-BG_COLOR    = "#0f172a"
-CARD_COLOR  = "#1e293b"
-CARD_HOVER  = "#334155"
-TEXT_MAIN   = "#f8fafc"
-TEXT_SEC    = "#94a3b8"
-ACCENT_COLOR = "#4f46e5"
-ACCENT_HOVER = "#4338ca"
-ERROR_COLOR  = "#ef4444"
+from ui.theme import (
+    APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS,
+    PRIMARY, PRIMARY_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+    RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
+)
 
 
 class LoginFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
+        super().__init__(master, fg_color=APP_BACKGROUND, **kwargs)
         self.controlador = controlador
 
         self.grid_rowconfigure(0, weight=1)
@@ -29,8 +25,8 @@ class LoginFrame(ctk.CTkFrame):
         # Tarjeta central (ancho fijo, centrada)
         card = ctk.CTkFrame(
             self,
-            fg_color=CARD_COLOR,
-            corner_radius=20,
+            fg_color=SURFACE,
+            corner_radius=RADIUS_PANEL,
             width=420
         )
         card.place(relx=0.5, rely=0.5, anchor="center")
@@ -43,52 +39,52 @@ class LoginFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             inner,
             text="🔒",
-            font=ctk.CTkFont(size=52)
+            font=get_font(size=52)
         ).pack(pady=(0, 10))
 
         ctk.CTkLabel(
             inner,
             text="AuditFlow",
-            font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=TEXT_MAIN
+            font=get_font(size=28, weight="bold"),
+            text_color=TEXT_PRIMARY
         ).pack()
 
         ctk.CTkLabel(
             inner,
             text="Inicia sesión para continuar",
-            font=ctk.CTkFont(size=13),
-            text_color=TEXT_SEC
+            font=get_font(size=13),
+            text_color=TEXT_SECONDARY
         ).pack(pady=(2, 30))
 
         # Campo usuario
-        ctk.CTkLabel(inner, text="Usuario", font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=TEXT_SEC, anchor="w").pack(fill="x")
+        ctk.CTkLabel(inner, text="Usuario", font=get_font(size=13, weight="bold"),
+                     text_color=TEXT_SECONDARY, anchor="w").pack(fill="x")
         self.entry_user = ctk.CTkEntry(
             inner,
             placeholder_text="Ingresa tu usuario",
-            fg_color=BG_COLOR,
-            border_color=CARD_HOVER,
-            text_color=TEXT_MAIN,
+            fg_color=APP_BACKGROUND,
+            border_color=BORDER,
+            text_color=TEXT_PRIMARY,
             height=42,
-            corner_radius=8,
-            font=ctk.CTkFont(size=14)
+            corner_radius=RADIUS_BUTTON,
+            font=get_font(size=14)
         )
         self.entry_user.pack(fill="x", pady=(4, 16))
         self.entry_user.bind("<Return>", lambda e: self.entry_pass.focus())
 
         # Campo contraseña
-        ctk.CTkLabel(inner, text="Contraseña", font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=TEXT_SEC, anchor="w").pack(fill="x")
+        ctk.CTkLabel(inner, text="Contraseña", font=get_font(size=13, weight="bold"),
+                     text_color=TEXT_SECONDARY, anchor="w").pack(fill="x")
         self.entry_pass = ctk.CTkEntry(
             inner,
             placeholder_text="••••••••",
             show="•",
-            fg_color=BG_COLOR,
-            border_color=CARD_HOVER,
-            text_color=TEXT_MAIN,
+            fg_color=APP_BACKGROUND,
+            border_color=BORDER,
+            text_color=TEXT_PRIMARY,
             height=42,
-            corner_radius=8,
-            font=ctk.CTkFont(size=14)
+            corner_radius=RADIUS_BUTTON,
+            font=get_font(size=14)
         )
         self.entry_pass.pack(fill="x", pady=(4, 6))
         self.entry_pass.bind("<Return>", lambda e: self._on_login())
@@ -97,8 +93,8 @@ class LoginFrame(ctk.CTkFrame):
         self.lbl_error = ctk.CTkLabel(
             inner,
             text="",
-            font=ctk.CTkFont(size=12),
-            text_color=ERROR_COLOR
+            font=get_font(size=12),
+            text_color=STATUS["error"]["text"]
         )
         self.lbl_error.pack(pady=(0, 10))
 
@@ -107,11 +103,12 @@ class LoginFrame(ctk.CTkFrame):
             inner,
             text="Ingresar →",
             command=self._on_login,
-            fg_color=ACCENT_COLOR,
-            hover_color=ACCENT_HOVER,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_HOVER,
+            font=get_font(size=14, weight="bold"),
+            text_color="#FFFFFF",
             height=46,
-            corner_radius=10
+            corner_radius=RADIUS_BUTTON
         )
         self.btn_login.pack(fill="x")
 
@@ -119,8 +116,8 @@ class LoginFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             inner,
             text="AuditFlow v1.0 — Sistema de Auditoría",
-            font=ctk.CTkFont(size=11),
-            text_color=CARD_HOVER
+            font=get_font(size=11),
+            text_color=TEXT_MUTED
         ).pack(pady=(24, 0))
 
         self.entry_user.focus()
@@ -167,6 +164,7 @@ class LoginFrame(ctk.CTkFrame):
         win.geometry("400x380")
         win.resizable(False, False)
         win.attributes("-topmost", True)
+        win.configure(fg_color=APP_BACKGROUND)
         win.grab_set()
 
         def _on_close():
@@ -177,24 +175,24 @@ class LoginFrame(ctk.CTkFrame):
         
         ctk.CTkLabel(
             win, text="Cambio Requerido", 
-            font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_MAIN
+            font=get_font(size=22, weight="bold"), text_color=TEXT_PRIMARY
         ).pack(pady=(30, 5))
         
         ctk.CTkLabel(
             win, text="Por razones de seguridad, debes cambiar tu\ncontraseña temporal para continuar.", 
-            font=ctk.CTkFont(size=12), text_color=TEXT_SEC
+            font=get_font(size=12), text_color=TEXT_SECONDARY
         ).pack(pady=(0, 20))
         
         # Nueva Contraseña
-        entry_new = ctk.CTkEntry(win, placeholder_text="Nueva contraseña", show="•", width=300, height=40)
+        entry_new = ctk.CTkEntry(win, placeholder_text="Nueva contraseña", show="•", width=300, height=40, fg_color=SURFACE, border_color=BORDER, text_color=TEXT_PRIMARY)
         entry_new.pack(pady=10)
         
         # Confirmar
-        entry_conf = ctk.CTkEntry(win, placeholder_text="Confirmar contraseña", show="•", width=300, height=40)
+        entry_conf = ctk.CTkEntry(win, placeholder_text="Confirmar contraseña", show="•", width=300, height=40, fg_color=SURFACE, border_color=BORDER, text_color=TEXT_PRIMARY)
         entry_conf.pack(pady=10)
         
         # Error Label
-        lbl_err = ctk.CTkLabel(win, text="", text_color=ERROR_COLOR, font=ctk.CTkFont(size=12))
+        lbl_err = ctk.CTkLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
         lbl_err.pack(pady=5)
         
         def _on_guardar():
@@ -227,8 +225,9 @@ class LoginFrame(ctk.CTkFrame):
             
         btn_guardar = ctk.CTkButton(
             win, text="Actualizar Contraseña", width=300, height=40,
-            fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
-            command=_on_guardar
+            fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+            text_color="#FFFFFF", font=get_font(size=14, weight="bold"),
+            corner_radius=RADIUS_BUTTON, command=_on_guardar
         )
         btn_guardar.pack(pady=(10, 0))
 

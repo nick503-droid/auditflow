@@ -1,3 +1,4 @@
+from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 """
 reportes_frame.py — Módulo de reportes de auditoría para AuditFlow PC App (v3.0).
 
@@ -126,7 +127,7 @@ class ReportesFrame(ctk.CTkFrame):
         Pantalla inicial: selección de restaurante, crear nuevo reporte o
         continuar uno existente (con buscador en tiempo real).
         """
-        self.frame_setup = ctk.CTkFrame(self, fg_color="#0f172a")
+        self.frame_setup = ctk.CTkFrame(self, fg_color=APP_BACKGROUND)
         self.frame_setup.grid(row=0, column=0, sticky="nsew")
         self.frame_setup.grid_rowconfigure(0, weight=1)
         self.frame_setup.grid_columnconfigure(0, weight=1)
@@ -146,7 +147,7 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             contenedor,
             text="📊  Módulo de Reportes",
-            font=ctk.CTkFont(size=22, weight="bold"),
+            font=get_font(size=22, weight="bold"),
             text_color="white",
         ).grid(row=row, column=0, sticky="w", pady=(0, 2))
         row += 1
@@ -154,8 +155,8 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             contenedor,
             text=f"Auditor: {self.usuario['nombre']}",
-            font=ctk.CTkFont(size=12),
-            text_color="#475569",
+            font=get_font(size=12),
+            text_color=TEXT_SECONDARY,
         ).grid(row=row, column=0, sticky="w", pady=(0, 16))
         row += 1
 
@@ -163,8 +164,8 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             contenedor,
             text="🏪  Restaurante:",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#94a3b8",
+            font=get_font(size=13, weight="bold"),
+            text_color=TEXT_MUTED,
         ).grid(row=row, column=0, sticky="w", pady=(0, 4))
         row += 1
 
@@ -172,18 +173,18 @@ class ReportesFrame(ctk.CTkFrame):
             contenedor,
             values=["Cargando..."],
             command=self._on_restaurante_seleccionado,
-            fg_color="#1e293b",
+            fg_color=SURFACE,
             button_color="#334155",
-            button_hover_color="#475569",
+            button_hover_color=TEXT_SECONDARY,
             height=38,
-            font=ctk.CTkFont(size=13),
+            font=get_font(size=13),
             dynamic_resizing=False,
         )
         self.dropdown_restaurante.grid(row=row, column=0, sticky="ew", pady=(0, 20))
         row += 1
 
         # ── Separador ────────────────────────────────────────────────────
-        ctk.CTkFrame(contenedor, height=1, fg_color="#1e293b").grid(
+        ctk.CTkFrame(contenedor, height=1, fg_color=SURFACE).grid(
             row=row, column=0, sticky="ew", pady=(0, 20)
         )
         row += 1
@@ -192,15 +193,15 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             contenedor,
             text="✏️  Nuevo reporte",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=get_font(size=14, weight="bold"),
         ).grid(row=row, column=0, sticky="w", pady=(0, 6))
         row += 1
 
         ctk.CTkLabel(
             contenedor,
             text="El título también será el nombre de la carpeta en tu equipo.",
-            font=ctk.CTkFont(size=11),
-            text_color="#475569",
+            font=get_font(size=11),
+            text_color=TEXT_SECONDARY,
             wraplength=360,
             justify="left",
         ).grid(row=row, column=0, sticky="w", pady=(0, 6))
@@ -209,7 +210,7 @@ class ReportesFrame(ctk.CTkFrame):
         self.entry_titulo = ctk.CTkEntry(
             contenedor,
             placeholder_text="Ej: Riverside (08-25-2026) caso Natalie saco dinero de caja",
-            font=ctk.CTkFont(size=13),
+            font=get_font(size=13),
             height=40,
         )
         self.entry_titulo.grid(row=row, column=0, sticky="ew", pady=(0, 8))
@@ -218,18 +219,18 @@ class ReportesFrame(ctk.CTkFrame):
         self.boton_crear_nube = ctk.CTkButton(
             contenedor,
             text="Crear Reporte y Comenzar  →",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=get_font(size=13, weight="bold"),
             height=40,
             state="disabled",
-            fg_color="#4f46e5",
-            hover_color="#4338ca",
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_HOVER,
             command=self._on_crear_reporte_inicial,
         )
         self.boton_crear_nube.grid(row=row, column=0, sticky="ew", pady=(0, 24))
         row += 1
 
         # ── Separador ────────────────────────────────────────────────────
-        ctk.CTkFrame(contenedor, height=1, fg_color="#1e293b").grid(
+        ctk.CTkFrame(contenedor, height=1, fg_color=SURFACE).grid(
             row=row, column=0, sticky="ew", pady=(0, 16)
         )
         row += 1
@@ -238,7 +239,7 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             contenedor,
             text="🔍  Continuar un reporte de la nube",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=get_font(size=14, weight="bold"),
         ).grid(row=row, column=0, sticky="w", pady=(0, 8))
         row += 1
 
@@ -246,7 +247,7 @@ class ReportesFrame(ctk.CTkFrame):
             contenedor,
             placeholder_text="Buscar por título...",
             height=36,
-            font=ctk.CTkFont(size=12),
+            font=get_font(size=12),
         )
         self.entry_buscar.grid(row=row, column=0, sticky="ew", pady=(0, 6))
         self.entry_buscar.bind("<KeyRelease>", self._on_buscar_cambiado)
@@ -255,7 +256,7 @@ class ReportesFrame(ctk.CTkFrame):
         # Lista de resultados (scrollable, altura fija)
         self.lista_reportes = ctk.CTkScrollableFrame(
             contenedor,
-            fg_color="#0f172a",
+            fg_color=APP_BACKGROUND,
             height=200,
         )
         self.lista_reportes.grid(row=row, column=0, sticky="ew", pady=(0, 4))
@@ -266,8 +267,8 @@ class ReportesFrame(ctk.CTkFrame):
         self.lbl_lista_estado = ctk.CTkLabel(
             contenedor,
             text="Buscando reportes en la nube...",
-            font=ctk.CTkFont(size=11),
-            text_color="#475569",
+            font=get_font(size=11),
+            text_color=TEXT_SECONDARY,
         )
         self.lbl_lista_estado.grid(row=row, column=0, pady=(0, 20))
         row += 1
@@ -386,8 +387,8 @@ class ReportesFrame(ctk.CTkFrame):
             ctk.CTkLabel(
                 self.lista_reportes,
                 text="No se encontraron reportes.",
-                text_color="#475569",
-                font=ctk.CTkFont(size=11),
+                text_color=TEXT_SECONDARY,
+                font=get_font(size=11),
             ).pack(pady=20)
             return
 
@@ -399,7 +400,7 @@ class ReportesFrame(ctk.CTkFrame):
         """Crea una tarjeta clicable para un reporte en la lista."""
         card = ctk.CTkFrame(
             self.lista_reportes,
-            fg_color="#1e293b",
+            fg_color=SURFACE,
             corner_radius=8,
             cursor="hand2",
         )
@@ -416,7 +417,7 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             card,
             text=f"📄  {titulo}",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=get_font(size=12, weight="bold"),
             text_color="white",
             anchor="w",
             wraplength=320,
@@ -425,14 +426,14 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             card,
             text=f"{restaurante_nombre}  ·  {fecha}",
-            font=ctk.CTkFont(size=10),
-            text_color="#475569",
+            font=get_font(size=10),
+            text_color=TEXT_SECONDARY,
             anchor="w",
         ).pack(anchor="w", padx=12, pady=(2, 8))
 
         # Hover y click
-        def _hover_in(e, c=card): c.configure(fg_color="#273549")
-        def _hover_out(e, c=card): c.configure(fg_color="#1e293b")
+        def _hover_in(e, c=card): c.configure(fg_color=SURFACE_SECONDARY)
+        def _hover_out(e, c=card): c.configure(fg_color=SURFACE)
         def _click(e, r=reporte): self._on_cargar_reporte_nube(r)
 
         for widget in [card] + card.winfo_children():
@@ -582,7 +583,7 @@ class ReportesFrame(ctk.CTkFrame):
         self.frame_editor.grid_columnconfigure(0, weight=1)
 
         # ── Topbar ────────────────────────────────────────────────────────
-        topbar = ctk.CTkFrame(self.frame_editor, fg_color="#0a101e", height=36, corner_radius=0)
+        topbar = ctk.CTkFrame(self.frame_editor, fg_color=SURFACE_SECONDARY, height=36, corner_radius=0)
         topbar.grid(row=0, column=0, sticky="ew")
         topbar.grid_propagate(False)
         topbar.grid_columnconfigure(0, weight=1)
@@ -591,7 +592,7 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             topbar,
             text=f"📄  {self.titulo_reporte}",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=get_font(size=12, weight="bold"),
             text_color="white",
             anchor="w",
         ).grid(row=0, column=0, padx=(10, 4), sticky="ew")
@@ -604,7 +605,7 @@ class ReportesFrame(ctk.CTkFrame):
             topbar,
             text=_texto_inicial,
             text_color=_color_inicial,
-            font=ctk.CTkFont(size=10, weight="bold"),
+            font=get_font(size=10, weight="bold"),
         )
         self.label_estado_guardado.grid(row=0, column=1, padx=(0, 4), sticky="e")
 
@@ -614,9 +615,9 @@ class ReportesFrame(ctk.CTkFrame):
             text="▶",
             width=30,
             height=24,
-            fg_color="#1e293b",
-            hover_color="#334155",
-            font=ctk.CTkFont(size=11),
+            fg_color=SURFACE,
+            hover_color=SURFACE_SECONDARY,
+            font=get_font(size=11),
             command=self._toggle_panel_lateral,
         )
         self.btn_toggle_panel.grid(row=0, column=2, padx=(0, 8), sticky="e")
@@ -626,7 +627,7 @@ class ReportesFrame(ctk.CTkFrame):
             self.frame_editor,
             font=("Consolas", 15),
             wrap="word",
-            fg_color="#0f172a",
+            fg_color=APP_BACKGROUND,
             text_color="#e2e8f0",
             border_width=0,
             corner_radius=0,
@@ -636,15 +637,15 @@ class ReportesFrame(ctk.CTkFrame):
         self.textbox_notas.bind("<KeyRelease>", self._on_texto_cambiado)
 
         # ── Statusbar ────────────────────────────────────────────────────
-        statusbar = ctk.CTkFrame(self.frame_editor, fg_color="#070d18", height=20, corner_radius=0)
+        statusbar = ctk.CTkFrame(self.frame_editor, fg_color=APP_BACKGROUND, height=20, corner_radius=0)
         statusbar.grid(row=2, column=0, sticky="ew")
         statusbar.grid_propagate(False)
         restaurante_nombre = self.restaurante.get("nombre", "—") if self.restaurante else "—"
         ctk.CTkLabel(
             statusbar,
             text=f"  {self.usuario['nombre']}  ·  {restaurante_nombre}",
-            font=ctk.CTkFont(size=10),
-            text_color="#334155",
+            font=get_font(size=10),
+            text_color=SURFACE_SECONDARY,
             anchor="w",
         ).pack(side="left", fill="y")
 
@@ -653,32 +654,32 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _construir_panel_lateral(self):
         """Crea el panel de herramientas derecho (oculto por defecto)."""
-        self.frame_side = ctk.CTkScrollableFrame(self, fg_color="#1e293b", width=248)
+        self.frame_side = ctk.CTkScrollableFrame(self, fg_color=SURFACE, width=248)
         self.frame_side.grid(row=0, column=1, sticky="nsew")
         self.frame_side.grid_remove()  # oculto hasta que el usuario haga clic en ▶
 
         # ── Código de vinculación ─────────────────────────────────────────
-        caja_codigo = ctk.CTkFrame(self.frame_side, fg_color="#0284c7", corner_radius=8)
+        caja_codigo = ctk.CTkFrame(self.frame_side, fg_color=PRIMARY, corner_radius=8)
         caja_codigo.pack(pady=(14, 8), padx=14, fill="x")
 
         ctk.CTkLabel(
             caja_codigo,
             text="CÓDIGO DE VINCULACIÓN",
-            font=ctk.CTkFont(size=9, weight="bold"),
+            font=get_font(size=9, weight="bold"),
             text_color="#bae6fd",
         ).pack(pady=(6, 0))
 
         self.label_codigo_reporte = ctk.CTkLabel(
             caja_codigo,
             text=self.codigo_reporte or "PENDIENTE",
-            font=ctk.CTkFont(size=28, weight="bold", family="Consolas"),
+            font=get_font(size=28, weight="bold", family="Consolas"),
             text_color="white",
         )
         self.label_codigo_reporte.pack(pady=(0, 6))
 
         # ── Grabación ─────────────────────────────────────────────────────
         self.switch_audio = ctk.CTkSwitch(
-            self.frame_side, text="Grabar con audio", font=ctk.CTkFont(size=12)
+            self.frame_side, text="Grabar con audio", font=get_font(size=12)
         )
         self.switch_audio.pack(pady=(4, 6), padx=16, anchor="w")
         self.switch_audio.deselect()
@@ -687,9 +688,9 @@ class ReportesFrame(ctk.CTkFrame):
             self.frame_side,
             text="🔴  Grabar pantalla",
             command=self._toggle_grabacion,
-            fg_color="#c0392b",
-            hover_color="#922b21",
-            font=ctk.CTkFont(size=12),
+            fg_color=STATUS["error"]["text"],
+            hover_color=STATUS["error"]["text"],
+            font=get_font(size=12),
         )
         self.boton_grabar.pack(pady=(0, 6), padx=16, fill="x")
 
@@ -697,9 +698,9 @@ class ReportesFrame(ctk.CTkFrame):
             self.frame_side,
             text="⏹️  Detener y Adjuntar",
             command=self._detener_grabacion,
-            fg_color="#4f46e5",
-            hover_color="#4338ca",
-            font=ctk.CTkFont(size=12),
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_HOVER,
+            font=get_font(size=12),
         )
         # Oculto inicialmente (solo visible grabando/pausado)
 
@@ -709,16 +710,16 @@ class ReportesFrame(ctk.CTkFrame):
             command=self._on_adjuntar,
             fg_color="transparent",
             border_width=1,
-            font=ctk.CTkFont(size=12),
+            font=get_font(size=12),
         ).pack(pady=(0, 4), padx=16, fill="x")
 
         ctk.CTkButton(
             self.frame_side,
             text="📷  Tomar Captura",
             command=self._tomar_screenshot,
-            fg_color="#0369a1",
-            hover_color="#0284c7",
-            font=ctk.CTkFont(size=12),
+            fg_color=PRIMARY_HOVER,
+            hover_color=PRIMARY,
+            font=get_font(size=12),
         ).pack(pady=(0, 12), padx=16, fill="x")
 
         # ── Lista de evidencias ───────────────────────────────────────────
@@ -728,20 +729,20 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             header_ev,
             text="Evidencias locales",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=get_font(size=12, weight="bold"),
         ).pack(side="left")
 
         # Indicador de sync de evidencias (✅ / ⚠️ / ↻)
         self.label_estado_evidencias = ctk.CTkLabel(
             header_ev,
             text="",
-            font=ctk.CTkFont(size=10),
+            font=get_font(size=10),
             text_color="#4ade80",
         )
         self.label_estado_evidencias.pack(side="right")
 
         self.frame_lista_evidencias = ctk.CTkScrollableFrame(
-            self.frame_side, fg_color="#0f172a", height=200
+            self.frame_side, fg_color=APP_BACKGROUND, height=200
         )
         self.frame_lista_evidencias.pack(pady=6, padx=12, fill="x")
 
@@ -750,10 +751,10 @@ class ReportesFrame(ctk.CTkFrame):
             self.frame_side,
             text="✅  Enviar y Cerrar Reporte",
             command=self._on_finalizar,
-            fg_color="#4f46e5",
-            hover_color="#4338ca",
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_HOVER,
             height=44,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=get_font(size=13, weight="bold"),
         )
         self.boton_finalizar.pack(pady=(16, 6), padx=16, fill="x")
 
@@ -901,8 +902,8 @@ class ReportesFrame(ctk.CTkFrame):
             ctk.CTkLabel(
                 self.frame_lista_evidencias,
                 text="Sin evidencias aún",
-                text_color="#475569",
-                font=ctk.CTkFont(size=11),
+                text_color=TEXT_SECONDARY,
+                font=get_font(size=11),
             ).pack(pady=16)
             if self.label_estado_evidencias.winfo_exists():
                 self.label_estado_evidencias.configure(text="")
@@ -963,7 +964,7 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _crear_tarjeta_evidencia(self, nombre: str, ruta_o_url: str, etiqueta: str, color_etiqueta: str, delete_command=None):
         """Tarjeta de evidencia con miniatura inline y botón de previsualización."""
-        card = ctk.CTkFrame(self.frame_lista_evidencias, fg_color="#334155", corner_radius=5)
+        card = ctk.CTkFrame(self.frame_lista_evidencias, fg_color=SURFACE_SECONDARY, corner_radius=5)
         card.pack(fill="x", pady=3, padx=2)
 
         top_row = ctk.CTkFrame(card, fg_color="transparent")
@@ -972,7 +973,7 @@ class ReportesFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             top_row,
             text=etiqueta,
-            font=ctk.CTkFont(size=10, weight="bold"),
+            font=get_font(size=10, weight="bold"),
             text_color=color_etiqueta,
         ).pack(side="left")
 
@@ -981,7 +982,7 @@ class ReportesFrame(ctk.CTkFrame):
             text="👁",
             width=26,
             height=18,
-            fg_color="#475569",
+            fg_color=TEXT_SECONDARY,
             hover_color="#64748b",
             command=lambda r=ruta_o_url: self._previsualizar_archivo(r),
         ).pack(side="right", padx=(4, 0))
@@ -992,8 +993,8 @@ class ReportesFrame(ctk.CTkFrame):
                 text="🗑️",
                 width=26,
                 height=18,
-                fg_color="#ef4444",
-                hover_color="#dc2626",
+                fg_color=STATUS["error"]["text"],
+                hover_color=STATUS["error"]["text"],
                 command=delete_command,
             ).pack(side="right")
 
@@ -1027,13 +1028,13 @@ class ReportesFrame(ctk.CTkFrame):
                     pass  # falla silenciosa si PIL no está o el archivo es inválido
             threading.Thread(target=_cargar_thumb, daemon=True).start()
         elif ext in (".mp4", ".avi", ".mov", ".mkv", ".webm"):
-            ctk.CTkLabel(body_row, text="🎥", font=ctk.CTkFont(size=20)).pack(side="left", padx=(0, 6))
+            ctk.CTkLabel(body_row, text="🎥", font=get_font(size=20)).pack(side="left", padx=(0, 6))
 
         ctk.CTkLabel(
             body_row,
             text=nombre,
-            font=ctk.CTkFont(size=10),
-            text_color="#94a3b8",
+            font=get_font(size=10),
+            text_color=TEXT_MUTED,
             wraplength=130,
             justify="left",
         ).pack(side="left", anchor="w")
@@ -1184,7 +1185,7 @@ class ReportesFrame(ctk.CTkFrame):
         def _finalizar():
             self.boton_descargar.configure(state="normal")
             if errores:
-                self.lbl_progreso_descarga.configure(text=f"⚠️ {exitos}/{total} descargados", text_color="#f59e0b")
+                self.lbl_progreso_descarga.configure(text=f"⚠️ {exitos}/{total} descargados", text_color=STATUS["warning"]["text"])
                 messagebox.showwarning(
                     "Descarga parcial",
                     f"Se descargaron {exitos} de {total}.\n\nErrores:\n" + "\n".join(errores),
@@ -1250,19 +1251,19 @@ class ReportesFrame(ctk.CTkFrame):
         if estado == "detenido":
             self.boton_grabar.configure(
                 text="🔴  Grabar pantalla", 
-                fg_color="#c0392b", hover_color="#922b21"
+                fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"]
             )
             self.boton_detener.pack_forget()
         elif estado == "grabando":
             self.boton_grabar.configure(
                 text="⏸️  Pausar", 
-                fg_color="#eab308", hover_color="#ca8a04"
+                fg_color=STATUS["warning"]["text"], hover_color=STATUS["warning"]["text"]
             )
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
         elif estado == "pausado":
             self.boton_grabar.configure(
                 text="▶️  Reanudar", 
-                fg_color="#10b981", hover_color="#059669"
+                fg_color=STATUS["success"]["text"], hover_color=PRIMARY
             )
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
 
@@ -1287,7 +1288,7 @@ class ReportesFrame(ctk.CTkFrame):
             self.lbl_dot.configure(text="⏸️", text_color="#facc15")
             self.btn_pausa_float.configure(
                 text="▶️  Reanudar",
-                fg_color="#10b981", hover_color="#059669",
+                fg_color=STATUS["success"]["text"], hover_color=PRIMARY,
                 width=85
             )
             self.lbl_hotkeys.configure(text="En Pausa — Ctrl+K+L para reanudar", text_color="#facc15")
@@ -1299,10 +1300,10 @@ class ReportesFrame(ctk.CTkFrame):
     def _reanudar_grabacion(self):
         self.grabador.reanudar()
         if getattr(self, "indicador", None):
-            self.lbl_dot.configure(text="🔴", text_color="#ef4444")
+            self.lbl_dot.configure(text="🔴", text_color=STATUS["error"]["text"])
             self.btn_pausa_float.configure(
                 text="⏸️",
-                fg_color="#eab308", hover_color="#ca8a04",
+                fg_color=STATUS["warning"]["text"], hover_color=STATUS["warning"]["text"],
                 width=35
             )
             self.lbl_hotkeys.configure(
@@ -1354,7 +1355,7 @@ class ReportesFrame(ctk.CTkFrame):
         self.indicador = ctk.CTkToplevel(self.controlador)
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
-        self.indicador.configure(fg_color="#1e293b")
+        self.indicador.configure(fg_color=SURFACE)
         
         try:
             import ctypes
@@ -1370,19 +1371,19 @@ class ReportesFrame(ctk.CTkFrame):
         
         self.indicador.grid_columnconfigure(1, weight=1)
         
-        self.lbl_dot = ctk.CTkLabel(self.indicador, text="🔴", text_color="#ef4444", font=ctk.CTkFont(size=14))
+        self.lbl_dot = ctk.CTkLabel(self.indicador, text="🔴", text_color=STATUS["error"]["text"], font=get_font(size=14))
         self.lbl_dot.grid(row=0, column=0, padx=(15, 5), pady=(15, 0))
         
-        self.lbl_crono = ctk.CTkLabel(self.indicador, text="00:00", text_color="white", font=ctk.CTkFont(size=16, weight="bold", family="Consolas"))
+        self.lbl_crono = ctk.CTkLabel(self.indicador, text="00:00", text_color="white", font=get_font(size=16, weight="bold", family="Consolas"))
         self.lbl_crono.grid(row=0, column=1, sticky="w", pady=(15, 0))
         
-        self.btn_pausa_float = ctk.CTkButton(self.indicador, text="⏸️", width=35, height=30, fg_color="#eab308", hover_color="#ca8a04", command=self._toggle_grabacion_desde_float)
+        self.btn_pausa_float = ctk.CTkButton(self.indicador, text="⏸️", width=35, height=30, fg_color=STATUS["warning"]["text"], hover_color=STATUS["warning"]["text"], command=self._toggle_grabacion_desde_float)
         self.btn_pausa_float.grid(row=0, column=2, padx=5, pady=(15, 0))
         
-        self.btn_stop_float = ctk.CTkButton(self.indicador, text="⏹️", width=35, height=30, fg_color="#ef4444", hover_color="#dc2626", command=self._detener_grabacion)
+        self.btn_stop_float = ctk.CTkButton(self.indicador, text="⏹️", width=35, height=30, fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"], command=self._detener_grabacion)
         self.btn_stop_float.grid(row=0, column=3, padx=(0, 15), pady=(15, 0))
         
-        self.lbl_hotkeys = ctk.CTkLabel(self.indicador, text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8", text_color="gray", font=ctk.CTkFont(size=11))
+        self.lbl_hotkeys = ctk.CTkLabel(self.indicador, text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8", text_color="gray", font=get_font(size=11))
         self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
         
         self._actualizar_crono()

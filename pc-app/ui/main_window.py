@@ -26,9 +26,10 @@ class MainWindow(ctk.CTk):
         pos_x = (pantalla_w - win_w) // 2
         pos_y = (pantalla_h - win_h) // 2
 
+        from ui.theme import APP_BACKGROUND
         self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
         self.minsize(800, 600)
-        self.configure(fg_color="#0f172a") # Prevenir parpadeo entre vistas
+        self.configure(fg_color=APP_BACKGROUND) # Prevenir parpadeo entre vistas
 
         # El frame actualmente visible. Empieza en None porque
         # todavía no hemos montado ninguno.

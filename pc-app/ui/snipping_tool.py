@@ -1,3 +1,4 @@
+from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 import tkinter as tk
 import customtkinter as ctk
 from PIL import ImageGrab, Image
@@ -119,7 +120,7 @@ class SnippingTool:
             
         ctk.CTkButton(
             btn_frame, text="✅ Usar Captura", command=_aceptar, 
-            fg_color="#10b981", hover_color="#059669"
+            fg_color=STATUS["success"]["text"], hover_color=PRIMARY
         ).pack(side="left", expand=True, padx=10)
         
         ctk.CTkButton(
@@ -129,7 +130,7 @@ class SnippingTool:
         
         ctk.CTkButton(
             btn_frame, text="❌ Cancelar", command=preview_win.destroy, 
-            fg_color="transparent", border_width=1, hover_color="#ef4444"
+            fg_color="transparent", border_width=1, hover_color=STATUS["error"]["text"]
         ).pack(side="left", expand=True, padx=10)
 
 def open_snipping_tool(parent, on_capture_callback):

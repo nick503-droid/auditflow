@@ -1,3 +1,4 @@
+from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 import customtkinter as ctk
 from tkinter import messagebox
 from api.client import obtener_system_info, crear_usuario, crear_restaurante
@@ -41,7 +42,7 @@ class SystemAdminFrame(ctk.CTkFrame):
             fg_color="transparent",
             hover_color=CARD_HOVER,
             text_color=TEXT_SEC,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=get_font(size=14, weight="bold"),
             width=80
         ).pack(side="left")
 
@@ -51,13 +52,13 @@ class SystemAdminFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             title_box, 
             text="Administración del Sistema", 
-            font=ctk.CTkFont(size=28, weight="bold"),
+            font=get_font(size=28, weight="bold"),
             text_color=TEXT_MAIN
         ).pack(anchor="w")
         ctk.CTkLabel(
             title_box, 
             text="Métricas del servidor Ubuntu y gestión de catálogos", 
-            font=ctk.CTkFont(size=14),
+            font=get_font(size=14),
             text_color=TEXT_SEC
         ).pack(anchor="w")
 
@@ -75,24 +76,24 @@ class SystemAdminFrame(ctk.CTkFrame):
         card_ip = ctk.CTkFrame(dash_frame, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS)
         card_ip.pack(fill="x", pady=(0, 20), ipady=20)
         
-        ctk.CTkLabel(card_ip, text="🌐 Servidor de Producción", font=ctk.CTkFont(size=16, weight="bold"), text_color=TEXT_SEC).pack(pady=(20, 5))
-        self.lbl_ip = ctk.CTkLabel(card_ip, text="Cargando...", font=ctk.CTkFont(size=24, weight="bold"), text_color=SUCCESS_COLOR)
+        ctk.CTkLabel(card_ip, text="🌐 Servidor de Producción", font=get_font(size=16, weight="bold"), text_color=TEXT_SEC).pack(pady=(20, 5))
+        self.lbl_ip = ctk.CTkLabel(card_ip, text="Cargando...", font=get_font(size=24, weight="bold"), text_color=SUCCESS_COLOR)
         self.lbl_ip.pack(pady=(0, 10))
         
         # Tarjeta: Almacenamiento
         card_storage = ctk.CTkFrame(dash_frame, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS)
         card_storage.pack(fill="x", ipady=20)
         
-        ctk.CTkLabel(card_storage, text="💾 Almacenamiento (Ubuntu)", font=ctk.CTkFont(size=16, weight="bold"), text_color=TEXT_SEC).pack(pady=(20, 10))
+        ctk.CTkLabel(card_storage, text="💾 Almacenamiento (Ubuntu)", font=get_font(size=16, weight="bold"), text_color=TEXT_SEC).pack(pady=(20, 10))
         
-        self.lbl_storage_uso = ctk.CTkLabel(card_storage, text="-- / --", font=ctk.CTkFont(size=28, weight="bold"), text_color=TEXT_MAIN)
+        self.lbl_storage_uso = ctk.CTkLabel(card_storage, text="-- / --", font=get_font(size=28, weight="bold"), text_color=TEXT_MAIN)
         self.lbl_storage_uso.pack()
         
         self.progress_storage = ctk.CTkProgressBar(card_storage, width=300, height=12, progress_color=ACCENT_COLOR, fg_color=BG_COLOR)
         self.progress_storage.pack(pady=15)
         self.progress_storage.set(0)
         
-        self.lbl_storage_detalles = ctk.CTkLabel(card_storage, text="Disponible: --", font=ctk.CTkFont(size=14), text_color=TEXT_SEC)
+        self.lbl_storage_detalles = ctk.CTkLabel(card_storage, text="Disponible: --", font=get_font(size=14), text_color=TEXT_SEC)
         self.lbl_storage_detalles.pack()
 
         # COLUMNA 2: GESTIÓN DE CATÁLOGOS
@@ -102,7 +103,7 @@ class SystemAdminFrame(ctk.CTkFrame):
         card_cat = ctk.CTkFrame(cat_frame, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS)
         card_cat.pack(fill="both", expand=True, ipadx=30, ipady=30)
         
-        ctk.CTkLabel(card_cat, text="Gestión de Catálogos", font=ctk.CTkFont(size=20, weight="bold"), text_color=TEXT_MAIN).pack(pady=(20, 30))
+        ctk.CTkLabel(card_cat, text="Gestión de Catálogos", font=get_font(size=20, weight="bold"), text_color=TEXT_MAIN).pack(pady=(20, 30))
 
         # Botón Nuevo Usuario
         ctk.CTkButton(
@@ -110,7 +111,7 @@ class SystemAdminFrame(ctk.CTkFrame):
             text="➕ Registrar Nuevo Auditor",
             command=self._popup_nuevo_usuario,
             fg_color=ACCENT_COLOR,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=get_font(size=14, weight="bold"),
             height=50,
             corner_radius=8
         ).pack(fill="x", padx=40, pady=(0, 20))
@@ -121,7 +122,7 @@ class SystemAdminFrame(ctk.CTkFrame):
             text="➕ Registrar Nuevo Restaurante",
             command=self._popup_nuevo_restaurante,
             fg_color=ACCENT_COLOR,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=get_font(size=14, weight="bold"),
             height=50,
             corner_radius=8
         ).pack(fill="x", padx=40)
@@ -149,7 +150,7 @@ class SystemAdminFrame(ctk.CTkFrame):
 
                 self.after(0, lambda: self._actualizar_dashboard(ip, usado, total, disponible, porcentaje_val))
             else:
-                self.after(0, lambda: self.lbl_ip.configure(text="Error de Conexión", text_color="#ef4444"))
+                self.after(0, lambda: self.lbl_ip.configure(text="Error de Conexión", text_color=STATUS["error"]["text"]))
         
         import threading
         threading.Thread(target=_fetch, daemon=True).start()
@@ -181,15 +182,15 @@ class SystemAdminFrame(ctk.CTkFrame):
         inner = ctk.CTkFrame(win, fg_color=CARD_COLOR, corner_radius=12)
         inner.pack(padx=20, pady=20, fill="both", expand=True)
 
-        ctk.CTkLabel(inner, text="Nuevo Auditor", font=ctk.CTkFont(size=18, weight="bold"),
+        ctk.CTkLabel(inner, text="Nuevo Auditor", font=get_font(size=18, weight="bold"),
                      text_color=TEXT_MAIN).pack(pady=(20, 20))
 
         def campo(label, placeholder, show=""):
-            ctk.CTkLabel(inner, text=label, font=ctk.CTkFont(size=12, weight="bold"),
+            ctk.CTkLabel(inner, text=label, font=get_font(size=12, weight="bold"),
                          text_color=TEXT_SEC, anchor="w").pack(fill="x", padx=20)
             e = ctk.CTkEntry(inner, placeholder_text=placeholder, show=show,
                              fg_color=BG_COLOR, text_color=TEXT_MAIN, height=38,
-                             corner_radius=8, font=ctk.CTkFont(size=13))
+                             corner_radius=8, font=get_font(size=13))
             e.pack(fill="x", padx=20, pady=(3, 10))
             return e
 
@@ -197,7 +198,7 @@ class SystemAdminFrame(ctk.CTkFrame):
         entry_user   = campo("Usuario (login)", "Ej: jperez")
         entry_pass   = campo("Contraseña", "Mínimo 6 caracteres", show="•")
 
-        ctk.CTkLabel(inner, text="Rol", font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(inner, text="Rol", font=get_font(size=12, weight="bold"),
                      text_color=TEXT_SEC, anchor="w").pack(fill="x", padx=20)
         combo_rol = ctk.CTkOptionMenu(inner, values=["EMPLEADO", "ADMIN"],
                                       fg_color=BG_COLOR, button_color=CARD_HOVER,
@@ -205,8 +206,8 @@ class SystemAdminFrame(ctk.CTkFrame):
         combo_rol.set("EMPLEADO")
         combo_rol.pack(fill="x", padx=20, pady=(3, 16))
 
-        lbl_err = ctk.CTkLabel(inner, text="", text_color="#ef4444",
-                               font=ctk.CTkFont(size=12))
+        lbl_err = ctk.CTkLabel(inner, text="", text_color=STATUS["error"]["text"],
+                               font=get_font(size=12))
         lbl_err.pack()
 
         def _crear():
@@ -239,7 +240,7 @@ class SystemAdminFrame(ctk.CTkFrame):
                       text_color=TEXT_SEC, width=100).pack(side="left", padx=(0, 10))
         btn_crear = ctk.CTkButton(btn_frame, text="Registrar",
                                   command=_crear, fg_color=ACCENT_COLOR,
-                                  font=ctk.CTkFont(weight="bold"), width=140)
+                                  font=get_font(weight="bold"), width=140)
         btn_crear.pack(side="left")
 
     def _popup_nuevo_restaurante(self):

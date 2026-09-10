@@ -16,12 +16,15 @@ const vuetify = createVuetify({
     themes: {
       light: {
         colors: {
-          primary: '#0F172A', // Slate 900 (Dark elegant)
-          secondary: '#3B82F6', // Blue 500
-          accent: '#10B981', // Emerald 500 (Success)
-          background: '#F1F5F9', // Slate 100
+          primary: '#059669',
+          secondary: '#F1F5F9',
+          accent: '#059669',
+          background: '#F8FAFC',
           surface: '#FFFFFF',
-          error: '#EF4444', // Red 500
+          error: '#B91C1C',
+          warning: '#B45309',
+          info: '#0369A1',
+          success: '#059669'
         }
       }
     }

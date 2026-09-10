@@ -5,20 +5,15 @@ from datetime import datetime, timedelta
 from api.client import obtener_usuarios
 import session
 
-# ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
-BG_COLOR = "#0f172a"
-CARD_COLOR = "#1e293b"
-CARD_HOVER = "#334155"
-TEXT_MAIN = "#f8fafc"
-TEXT_SEC = "#94a3b8"
-ACCENT_COLOR = "#4f46e5"
-ACCENT_HOVER = "#4338ca"
-SUCCESS_COLOR = "#10b981"
-CORNER_RADIUS = 15
+from ui.theme import (
+    APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS,
+    PRIMARY, PRIMARY_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+    RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
+)
 
 class SelectionFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
+        super().__init__(master, fg_color=APP_BACKGROUND, **kwargs)
         self.controlador = controlador
 
         self.fecha_bitacora = datetime.now().strftime("%Y-%m-%d")
@@ -47,14 +42,14 @@ class SelectionFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             title_box, 
             text="AuditFlow", 
-            font=ctk.CTkFont(size=32, weight="bold"),
-            text_color=TEXT_MAIN
+            font=get_font(size=32, weight="bold"),
+            text_color=TEXT_PRIMARY
         ).pack(anchor="w")
         ctk.CTkLabel(
             title_box, 
             text="Selecciona tu perfil de auditor para comenzar", 
-            font=ctk.CTkFont(size=14),
-            text_color=TEXT_SEC
+            font=get_font(size=14),
+            text_color=TEXT_SECONDARY
         ).pack(anchor="w")
 
         # Derecha: Selector de Usuario y Botones de Gestión Rápida
@@ -66,8 +61,8 @@ class SelectionFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             user_box,
             text=f"Hola, {nombre_activo}",
-            font=ctk.CTkFont(size=12),
-            text_color=TEXT_SEC
+            font=get_font(size=12),
+            text_color=TEXT_SECONDARY
         ).pack(side="left", padx=(0, 15))
 
         # Botón de Administración del Sistema (SOLO para ADMIN)
@@ -77,14 +72,14 @@ class SelectionFrame(ctk.CTkFrame):
                 text="⚙️ Administrar Sistema",
                 command=self._abrir_system_admin,
                 fg_color="transparent",
-                hover_color=CARD_HOVER,
+                hover_color=SURFACE_SECONDARY,
                 border_width=1,
-                border_color=CARD_COLOR,
-                text_color=TEXT_SEC,
-                font=ctk.CTkFont(size=12, weight="bold"),
+                border_color=BORDER,
+                text_color=TEXT_SECONDARY,
+                font=get_font(size=12, weight="bold"),
                 width=160,
                 height=32,
-                corner_radius=8
+                corner_radius=RADIUS_BUTTON
             ).pack(side="left", padx=(0, 10))
 
         # Botón Cerrar Sesión
@@ -93,14 +88,14 @@ class SelectionFrame(ctk.CTkFrame):
             text="🚪 Salir",
             command=self._cerrar_sesion,
             fg_color="transparent",
-            hover_color="#450a0a",
+            hover_color=STATUS["error"]["bg"],
             border_width=1,
-            border_color="#7f1d1d",
-            text_color="#fca5a5",
-            font=ctk.CTkFont(size=12),
+            border_color=STATUS["error"]["border"],
+            text_color=STATUS["error"]["text"],
+            font=get_font(size=12),
             width=80,
             height=32,
-            corner_radius=8
+            corner_radius=RADIUS_BUTTON
         ).pack(side="left")
 
         # ─── GRID DE MÓDULOS (Tarjetas) ───
@@ -122,12 +117,12 @@ class SelectionFrame(ctk.CTkFrame):
             self.card_bitacoras,
             values=["Hoy", "Ayer", "📅 Otra"],
             command=self._on_fecha_cambiada,
-            selected_color=ACCENT_COLOR,
-            selected_hover_color=ACCENT_HOVER,
-            unselected_color=BG_COLOR,
-            unselected_hover_color=CARD_HOVER,
-            text_color=TEXT_MAIN,
-            font=ctk.CTkFont(size=12)
+            selected_color=PRIMARY,
+            selected_hover_color=PRIMARY_HOVER,
+            unselected_color=APP_BACKGROUND,
+            unselected_hover_color=SURFACE_SECONDARY,
+            text_color=TEXT_PRIMARY,
+            font=get_font(size=12)
         )
         self.seg_fecha.set("Hoy")
         self.seg_fecha.pack(fill="x", padx=24, pady=(0, 24), side="bottom")
@@ -135,8 +130,8 @@ class SelectionFrame(ctk.CTkFrame):
         self.lbl_fecha = ctk.CTkLabel(
             self.card_bitacoras,
             text=f"Fecha de la jornada: {self.fecha_bitacora}",
-            font=ctk.CTkFont(size=11),
-            text_color=TEXT_SEC
+            font=get_font(size=11),
+            text_color=TEXT_SECONDARY
         )
         self.lbl_fecha.pack(side="bottom", anchor="center", padx=24, pady=(0, 5))
 
@@ -150,7 +145,7 @@ class SelectionFrame(ctk.CTkFrame):
             comando=self._abrir_reportes
         )
 
-        # 3. Tarjeta: Administrador
+        # 3. Tarjeta: Administración
         self.card_admin = self._crear_tarjeta_modulo(
             parent=self.cards_frame,
             col=2,
@@ -183,16 +178,16 @@ class SelectionFrame(ctk.CTkFrame):
             cal_window, 
             selectmode="day", 
             date_pattern="y-mm-dd",
-            background=BG_COLOR,
-            foreground="white",
-            headersbackground=CARD_COLOR,
-            headersforeground="white",
-            normalbackground=CARD_COLOR,
-            normalforeground="white",
-            weekendbackground=CARD_COLOR,
-            weekendforeground="white",
-            selectbackground=ACCENT_COLOR,
-            selectforeground="white"
+            background=APP_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            headersbackground=SURFACE_SECONDARY,
+            headersforeground=TEXT_PRIMARY,
+            normalbackground=SURFACE,
+            normalforeground=TEXT_PRIMARY,
+            weekendbackground=SURFACE,
+            weekendforeground=TEXT_PRIMARY,
+            selectbackground=PRIMARY,
+            selectforeground="#FFFFFF"
         )
         cal.pack(pady=15, padx=15, fill="both", expand=True)
 
@@ -216,16 +211,18 @@ class SelectionFrame(ctk.CTkFrame):
         btn_frame = ctk.CTkFrame(cal_window, fg_color="transparent")
         btn_frame.pack(pady=(0, 15))
         
-        ctk.CTkButton(btn_frame, text="Cancelar", command=_on_cancelar, width=100, fg_color="transparent", border_width=1).pack(side="left", padx=10)
-        ctk.CTkButton(btn_frame, text="Aceptar", command=_on_aceptar, width=100, fg_color=ACCENT_COLOR).pack(side="left", padx=10)
+        ctk.CTkButton(btn_frame, text="Cancelar", command=_on_cancelar, width=100, fg_color="transparent", border_width=1, text_color=TEXT_PRIMARY, corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
+        ctk.CTkButton(btn_frame, text="Aceptar", command=_on_aceptar, width=100, fg_color=PRIMARY, hover_color=PRIMARY_HOVER, text_color="#FFFFFF", corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
 
     def _crear_tarjeta_modulo(self, parent, col, icono, titulo, descripcion, comando):
         """Crea una tarjeta interactiva con hover effects."""
         card = ctk.CTkFrame(
             parent, 
-            fg_color=CARD_COLOR, 
-            corner_radius=CORNER_RADIUS,
-            cursor="hand2"
+            fg_color=SURFACE, 
+            corner_radius=RADIUS_PANEL,
+            cursor="hand2",
+            border_width=1,
+            border_color=BORDER
         )
         card.grid(row=0, column=col, sticky="nsew", padx=10)
         card.grid_columnconfigure(0, weight=1)
@@ -238,7 +235,7 @@ class SelectionFrame(ctk.CTkFrame):
         lbl_icon = ctk.CTkLabel(
             inner, 
             text=icono, 
-            font=ctk.CTkFont(size=48)
+            font=get_font(size=48)
         )
         lbl_icon.pack(pady=(0, 16))
 
@@ -246,8 +243,8 @@ class SelectionFrame(ctk.CTkFrame):
         lbl_title = ctk.CTkLabel(
             inner, 
             text=titulo, 
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=TEXT_MAIN
+            font=get_font(size=18, weight="bold"),
+            text_color=TEXT_PRIMARY
         )
         lbl_title.pack(pady=(0, 8))
 
@@ -255,8 +252,8 @@ class SelectionFrame(ctk.CTkFrame):
         lbl_desc = ctk.CTkLabel(
             inner, 
             text=descripcion, 
-            font=ctk.CTkFont(size=13),
-            text_color=TEXT_SEC,
+            font=get_font(size=13),
+            text_color=TEXT_SECONDARY,
             wraplength=220,
             justify="center"
         )
@@ -267,22 +264,23 @@ class SelectionFrame(ctk.CTkFrame):
             inner,
             text="Abrir Módulo  →",
             command=comando,
-            fg_color=ACCENT_COLOR,
-            hover_color=ACCENT_HOVER,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_HOVER,
+            text_color="#FFFFFF",
+            font=get_font(size=13, weight="bold"),
             height=40,
-            corner_radius=8
+            corner_radius=RADIUS_BUTTON
         )
         btn.pack(side="bottom", fill="x")
 
         # Efectos Hover
         def _hover_in(e):
             if self.usuario_seleccionado:
-                card.configure(fg_color=CARD_HOVER)
+                card.configure(fg_color=SURFACE_SECONDARY)
         
         def _hover_out(e):
             if self.usuario_seleccionado:
-                card.configure(fg_color=CARD_COLOR)
+                card.configure(fg_color=SURFACE)
 
         def _on_click(e):
             if self.usuario_seleccionado:
