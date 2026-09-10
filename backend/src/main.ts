@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as express from 'express';
 import * as path from 'path';
+import { OptimisticLockFilter } from './common/filters/optimistic-lock.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -63,7 +64,6 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
 
   // ── Filtros Globales ───────────────────────────────────────────────────────
-  const { OptimisticLockFilter } = await import('./common/filters/optimistic-lock.filter');
   app.useGlobalFilters(new OptimisticLockFilter());
 
   // ── Archivos Estáticos ─────────────────────────────────────────────────────
