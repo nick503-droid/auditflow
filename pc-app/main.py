@@ -1,13 +1,15 @@
 import customtkinter as ctk
 from dotenv import load_dotenv
+import os
 from ui.main_window import MainWindow
 from db.local_db import inicializar_db
 
 load_dotenv()
-inicializar_db() 
+inicializar_db()
 
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+ctk.set_appearance_mode("light")
+_theme_path = os.path.join(os.path.dirname(__file__), "ui", "auditflow_theme.json")
+ctk.set_default_color_theme(_theme_path)
 
 if __name__ == "__main__":
     app = MainWindow()

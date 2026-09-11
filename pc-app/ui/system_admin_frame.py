@@ -4,14 +4,14 @@ from tkinter import messagebox
 from api.client import obtener_system_info, crear_usuario, crear_restaurante
 
 # ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
-BG_COLOR = "#0f172a"
-CARD_COLOR = "#1e293b"
-CARD_HOVER = "#334155"
-TEXT_MAIN = "#f8fafc"
-TEXT_SEC = "#94a3b8"
-ACCENT_COLOR = "#4f46e5"
-SUCCESS_COLOR = "#10b981"
-CORNER_RADIUS = 15
+BG_COLOR = APP_BACKGROUND
+CARD_COLOR = SURFACE
+CARD_HOVER = SURFACE_SECONDARY
+TEXT_MAIN = TEXT_PRIMARY
+TEXT_SEC = TEXT_SECONDARY
+ACCENT_COLOR = PRIMARY
+SUCCESS_COLOR = STATUS["success"]["text"]
+CORNER_RADIUS = RADIUS_PANEL
 
 class SystemAdminFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, **kwargs):
@@ -234,14 +234,17 @@ class SystemAdminFrame(ctk.CTkFrame):
                 lbl_err.configure(text="⚠ Error al guardar. Verifica tu conexión.")
 
         btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=(0, 20))
+        btn_frame.pack(fill="x", padx=20, pady=(10, 20))
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
+
         ctk.CTkButton(btn_frame, text="Cancelar", command=win.destroy,
                       fg_color="transparent", border_width=1,
-                      text_color=TEXT_SEC, width=100).pack(side="left", padx=(0, 10))
+                      text_color=TEXT_SEC, width=120).grid(row=0, column=0, padx=10, sticky="e")
         btn_crear = ctk.CTkButton(btn_frame, text="Registrar",
                                   command=_crear, fg_color=ACCENT_COLOR,
-                                  font=get_font(weight="bold"), width=140)
-        btn_crear.pack(side="left")
+                                  font=get_font(size=13, weight="bold"), width=120)
+        btn_crear.grid(row=0, column=1, padx=10, sticky="w")
 
     def _popup_nuevo_restaurante(self):
         dialog = ctk.CTkInputDialog(text="Escribe el nombre del nuevo Restaurante:", title="Nuevo Restaurante")

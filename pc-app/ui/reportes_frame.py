@@ -1,4 +1,4 @@
-from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
+from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, SECONDARY, TERTIARY, TERTIARY_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 """
 reportes_frame.py — Módulo de reportes de auditoría para AuditFlow PC App (v3.0).
 
@@ -25,6 +25,8 @@ import threading
 import time
 import shutil
 import requests
+
+from ui.icons import get_icon
 
 from db.local_db import (
     obtener_o_crear_borrador,
@@ -132,10 +134,11 @@ class ReportesFrame(ctk.CTkFrame):
         self.frame_setup.grid_rowconfigure(0, weight=1)
         self.frame_setup.grid_columnconfigure(0, weight=1)
 
-        # Contenedor scrollable para que quepa en ventanas pequeñas
-        scroll = ctk.CTkScrollableFrame(self.frame_setup, fg_color="transparent")
+        # Usamos un frame normal para que la lista interna pueda expandirse
+        scroll = ctk.CTkFrame(self.frame_setup, fg_color="transparent")
         scroll.grid(row=0, column=0, sticky="nsew")
         scroll.grid_columnconfigure(0, weight=1)
+        scroll.grid_rowconfigure(0, weight=1)
 
         contenedor = ctk.CTkFrame(scroll, fg_color="transparent")
         contenedor.grid(row=0, column=0, sticky="nsew", padx=24, pady=16)
@@ -143,13 +146,30 @@ class ReportesFrame(ctk.CTkFrame):
 
         row = 0
 
-        # ── Título ────────────────────────────────────────────────────────
+        # ── Título y Botón Volver ─────────────────────────────────────────
+        header_frame = ctk.CTkFrame(contenedor, fg_color="transparent")
+        header_frame.grid(row=row, column=0, sticky="ew", pady=(0, 2))
+        header_frame.grid_columnconfigure(0, weight=1)
+        
         ctk.CTkLabel(
-            contenedor,
-            text="📊  Módulo de Reportes",
+            header_frame,
+            text="\u2261  Módulo de Reportes",
             font=get_font(size=22, weight="bold"),
+            text_color=TEXT_PRIMARY,
+        ).grid(row=0, column=0, sticky="w")
+        
+        ctk.CTkButton(
+            header_frame,
+            text="Volver",
+            image=get_icon("x", (14, 14), "white"),
+            width=80,
+            height=28,
+            fg_color=TERTIARY,
+            hover_color=TERTIARY_HOVER,
             text_color="white",
-        ).grid(row=row, column=0, sticky="w", pady=(0, 2))
+            font=get_font(size=12, weight="bold"),
+            command=self._volver_al_menu_directo,
+        ).grid(row=0, column=1, sticky="e")
         row += 1
 
         ctk.CTkLabel(
@@ -174,9 +194,10 @@ class ReportesFrame(ctk.CTkFrame):
             values=["Cargando..."],
             command=self._on_restaurante_seleccionado,
             fg_color=SURFACE,
-            button_color="#334155",
-            button_hover_color=TEXT_SECONDARY,
-            height=38,
+            text_color=TEXT_PRIMARY,
+            button_color=SURFACE_SECONDARY,
+            button_hover_color=BORDER,
+            height=42,
             font=get_font(size=13),
             dynamic_resizing=False,
         )
@@ -184,7 +205,7 @@ class ReportesFrame(ctk.CTkFrame):
         row += 1
 
         # ── Separador ────────────────────────────────────────────────────
-        ctk.CTkFrame(contenedor, height=1, fg_color=SURFACE).grid(
+        ctk.CTkFrame(contenedor, height=1, fg_color=BORDER).grid(
             row=row, column=0, sticky="ew", pady=(0, 20)
         )
         row += 1
@@ -192,8 +213,9 @@ class ReportesFrame(ctk.CTkFrame):
         # ── Crear nuevo reporte ───────────────────────────────────────────
         ctk.CTkLabel(
             contenedor,
-            text="✏️  Nuevo reporte",
+            text="\u270F  Nuevo reporte",
             font=get_font(size=14, weight="bold"),
+            text_color=TEXT_PRIMARY,
         ).grid(row=row, column=0, sticky="w", pady=(0, 6))
         row += 1
 
@@ -211,7 +233,10 @@ class ReportesFrame(ctk.CTkFrame):
             contenedor,
             placeholder_text="Ej: Riverside (08-25-2026) caso Natalie saco dinero de caja",
             font=get_font(size=13),
-            height=40,
+            fg_color=SURFACE,
+            text_color=TEXT_PRIMARY,
+            border_color=BORDER,
+            height=44,
         )
         self.entry_titulo.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         row += 1
@@ -230,7 +255,7 @@ class ReportesFrame(ctk.CTkFrame):
         row += 1
 
         # ── Separador ────────────────────────────────────────────────────
-        ctk.CTkFrame(contenedor, height=1, fg_color=SURFACE).grid(
+        ctk.CTkFrame(contenedor, height=1, fg_color=BORDER).grid(
             row=row, column=0, sticky="ew", pady=(0, 16)
         )
         row += 1
@@ -238,29 +263,35 @@ class ReportesFrame(ctk.CTkFrame):
         # ── Buscar reporte existente ──────────────────────────────────────
         ctk.CTkLabel(
             contenedor,
-            text="🔍  Continuar un reporte de la nube",
+            text="\u2315  Continuar un reporte de la nube",
             font=get_font(size=14, weight="bold"),
+            text_color=TEXT_PRIMARY,
         ).grid(row=row, column=0, sticky="w", pady=(0, 8))
         row += 1
 
         self.entry_buscar = ctk.CTkEntry(
             contenedor,
             placeholder_text="Buscar por título...",
-            height=36,
+            height=38,
             font=get_font(size=12),
+            fg_color=SURFACE,
+            text_color=TEXT_PRIMARY,
+            border_color=BORDER,
         )
         self.entry_buscar.grid(row=row, column=0, sticky="ew", pady=(0, 6))
         self.entry_buscar.bind("<KeyRelease>", self._on_buscar_cambiado)
         row += 1
 
-        # Lista de resultados (scrollable, altura fija)
+        # Lista de resultados (responsiva)
         self.lista_reportes = ctk.CTkScrollableFrame(
             contenedor,
-            fg_color=APP_BACKGROUND,
-            height=200,
+            fg_color=SURFACE,
+            border_width=1,
+            border_color=BORDER,
         )
-        self.lista_reportes.grid(row=row, column=0, sticky="ew", pady=(0, 4))
+        self.lista_reportes.grid(row=row, column=0, sticky="nsew", pady=(0, 4))
         self.lista_reportes.grid_columnconfigure(0, weight=1)
+        contenedor.grid_rowconfigure(row, weight=1) # <- Hace que se expanda
         row += 1
 
         # Label de estado para la lista
@@ -273,14 +304,7 @@ class ReportesFrame(ctk.CTkFrame):
         self.lbl_lista_estado.grid(row=row, column=0, pady=(0, 20))
         row += 1
 
-        # ── Botón volver ──────────────────────────────────────────────────
-        ctk.CTkButton(
-            contenedor,
-            text="← Volver al menú",
-            fg_color="transparent",
-            border_width=1,
-            command=self._volver_al_menu_directo,
-        ).grid(row=row, column=0, sticky="ew", pady=(0, 8))
+        # (El botón volver se movió arriba)
 
     def _cargar_datos_setup(self):
         """Carga restaurantes y reportes de la nube en background."""
@@ -403,6 +427,8 @@ class ReportesFrame(ctk.CTkFrame):
             fg_color=SURFACE,
             corner_radius=8,
             cursor="hand2",
+            border_width=1,
+            border_color=BORDER,
         )
         card.pack(fill="x", pady=3, padx=2)
         card.grid_columnconfigure(0, weight=1)
@@ -416,9 +442,9 @@ class ReportesFrame(ctk.CTkFrame):
 
         ctk.CTkLabel(
             card,
-            text=f"📄  {titulo}",
+            text=f"\u2261  {titulo}",
             font=get_font(size=12, weight="bold"),
-            text_color="white",
+            text_color=TEXT_PRIMARY,
             anchor="w",
             wraplength=320,
         ).pack(anchor="w", padx=12, pady=(8, 0))
@@ -432,8 +458,10 @@ class ReportesFrame(ctk.CTkFrame):
         ).pack(anchor="w", padx=12, pady=(2, 8))
 
         # Hover y click
-        def _hover_in(e, c=card): c.configure(fg_color=SURFACE_SECONDARY)
-        def _hover_out(e, c=card): c.configure(fg_color=SURFACE)
+        def _hover_in(e, c=card): 
+            c.configure(fg_color="#E0F2FE", border_color=SECONDARY)
+        def _hover_out(e, c=card): 
+            c.configure(fg_color=SURFACE, border_color=BORDER)
         def _click(e, r=reporte): self._on_cargar_reporte_nube(r)
 
         for widget in [card] + card.winfo_children():
@@ -591,16 +619,16 @@ class ReportesFrame(ctk.CTkFrame):
         # Col 0: título del reporte (crece y cede espacio si la ventana es estrecha)
         ctk.CTkLabel(
             topbar,
-            text=f"📄  {self.titulo_reporte}",
+            text=f"\u25A3  {self.titulo_reporte}",
             font=get_font(size=12, weight="bold"),
-            text_color="white",
+            text_color=TEXT_PRIMARY,
             anchor="w",
         ).grid(row=0, column=0, padx=(10, 4), sticky="ew")
 
         # Col 1: indicador de texto (ok / offline / syncing)
         _estado_inicial = "ok" if self.reporte_remoto_id else "offline"
-        _texto_inicial = "☁️ En la nube" if _estado_inicial == "ok" else "💾 Guardando local"
-        _color_inicial = "#4ade80" if _estado_inicial == "ok" else "#facc15"
+        _texto_inicial = "\u2713 En la nube" if _estado_inicial == "ok" else "\u21ba Guardando local"
+        _color_inicial = STATUS["success"]["text"] if _estado_inicial == "ok" else STATUS["warning"]["text"]
         self.label_estado_guardado = ctk.CTkLabel(
             topbar,
             text=_texto_inicial,
@@ -612,40 +640,55 @@ class ReportesFrame(ctk.CTkFrame):
         # Col 2: botón zen (toggle panel)
         self.btn_toggle_panel = ctk.CTkButton(
             topbar,
-            text="▶",
+            text="\u25B6",
             width=30,
-            height=24,
-            fg_color=SURFACE,
+            height=26,
+            fg_color="transparent",
             hover_color=SURFACE_SECONDARY,
-            font=get_font(size=11),
+            text_color=TEXT_PRIMARY,
+            border_width=1,
+            border_color=BORDER,
+            font=get_font(size=12, weight="bold"),
             command=self._toggle_panel_lateral,
         )
         self.btn_toggle_panel.grid(row=0, column=2, padx=(0, 8), sticky="e")
 
-        # ── Textbox (Modo Zen) ────────────────────────────────────────────
+        # ── Textbox (Modo Zen / Documento) ────────────────────────────────────────────
+        self.bg_documento = ctk.CTkFrame(self.frame_editor, fg_color=APP_BACKGROUND, corner_radius=0)
+        self.bg_documento.grid(row=1, column=0, sticky="nsew")
+        self.bg_documento.grid_rowconfigure(0, weight=1)
+        self.bg_documento.grid_columnconfigure(0, weight=1)
+        self.bg_documento.grid_columnconfigure(1, weight=0, minsize=800) # Ancho fijo de hoja
+        self.bg_documento.grid_columnconfigure(2, weight=1)
+
+        self.hoja_documento = ctk.CTkFrame(self.bg_documento, fg_color=SURFACE, corner_radius=0, border_width=1, border_color=BORDER)
+        self.hoja_documento.grid(row=0, column=1, sticky="nsew", pady=24)
+        self.hoja_documento.grid_rowconfigure(0, weight=1)
+        self.hoja_documento.grid_columnconfigure(0, weight=1)
+
         self.textbox_notas = ctk.CTkTextbox(
-            self.frame_editor,
-            font=("Consolas", 15),
+            self.hoja_documento,
+            font=get_font(family="Consolas", size=14),
             wrap="word",
-            fg_color=APP_BACKGROUND,
-            text_color="#e2e8f0",
+            fg_color="transparent",
+            text_color=TEXT_PRIMARY,
             border_width=0,
             corner_radius=0,
             activate_scrollbars=True,
         )
-        self.textbox_notas.grid(row=1, column=0, sticky="nsew")
+        self.textbox_notas.grid(row=0, column=0, sticky="nsew", padx=40, pady=40)
         self.textbox_notas.bind("<KeyRelease>", self._on_texto_cambiado)
 
         # ── Statusbar ────────────────────────────────────────────────────
-        statusbar = ctk.CTkFrame(self.frame_editor, fg_color=APP_BACKGROUND, height=20, corner_radius=0)
+        statusbar = ctk.CTkFrame(self.frame_editor, fg_color=SURFACE_SECONDARY, height=20, corner_radius=0)
         statusbar.grid(row=2, column=0, sticky="ew")
         statusbar.grid_propagate(False)
         restaurante_nombre = self.restaurante.get("nombre", "—") if self.restaurante else "—"
         ctk.CTkLabel(
             statusbar,
-            text=f"  {self.usuario['nombre']}  ·  {restaurante_nombre}",
+            text=f"  {self.usuario['nombre']}  \u00b7  {restaurante_nombre}",
             font=get_font(size=10),
-            text_color=SURFACE_SECONDARY,
+            text_color=TEXT_MUTED,
             anchor="w",
         ).pack(side="left", fill="y")
 
@@ -654,7 +697,7 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _construir_panel_lateral(self):
         """Crea el panel de herramientas derecho (oculto por defecto)."""
-        self.frame_side = ctk.CTkScrollableFrame(self, fg_color=SURFACE, width=248)
+        self.frame_side = ctk.CTkScrollableFrame(self, fg_color=SURFACE_SECONDARY, width=248)
         self.frame_side.grid(row=0, column=1, sticky="nsew")
         self.frame_side.grid_remove()  # oculto hasta que el usuario haga clic en ▶
 
@@ -686,17 +729,20 @@ class ReportesFrame(ctk.CTkFrame):
 
         self.boton_grabar = ctk.CTkButton(
             self.frame_side,
-            text="🔴  Grabar pantalla",
+            text=" Grabar pantalla",
+            image=get_icon("video", (16, 16), "white"),
             command=self._toggle_grabacion,
             fg_color=STATUS["error"]["text"],
-            hover_color=STATUS["error"]["text"],
-            font=get_font(size=12),
+            hover_color="#b91c1c",
+            text_color="#FFFFFF",
+            font=get_font(size=12, weight="bold"),
         )
         self.boton_grabar.pack(pady=(0, 6), padx=16, fill="x")
 
         self.boton_detener = ctk.CTkButton(
             self.frame_side,
-            text="⏹️  Detener y Adjuntar",
+            text=" Detener y Adjuntar",
+            image=get_icon("save", (16, 16), "white"),
             command=self._detener_grabacion,
             fg_color=PRIMARY,
             hover_color=PRIMARY_HOVER,
@@ -706,19 +752,24 @@ class ReportesFrame(ctk.CTkFrame):
 
         ctk.CTkButton(
             self.frame_side,
-            text="📎  Adjuntar archivo",
+            text=" Adjuntar archivo",
+            image=get_icon("paperclip", (16, 16), TEXT_PRIMARY),
             command=self._on_adjuntar,
             fg_color="transparent",
             border_width=1,
+            border_color=BORDER,
+            text_color=TEXT_PRIMARY,
             font=get_font(size=12),
         ).pack(pady=(0, 4), padx=16, fill="x")
 
         ctk.CTkButton(
             self.frame_side,
-            text="📷  Tomar Captura",
-            command=self._tomar_screenshot,
-            fg_color=PRIMARY_HOVER,
-            hover_color=PRIMARY,
+            text=" Tomar Captura",
+            image=get_icon("camera", (16, 16), "white"),
+            command=self._abrir_selector_captura,
+            fg_color=SECONDARY,
+            hover_color="#0c4a6e",
+            text_color="#FFFFFF",
             font=get_font(size=12),
         ).pack(pady=(0, 12), padx=16, fill="x")
 
@@ -742,14 +793,15 @@ class ReportesFrame(ctk.CTkFrame):
         self.label_estado_evidencias.pack(side="right")
 
         self.frame_lista_evidencias = ctk.CTkScrollableFrame(
-            self.frame_side, fg_color=APP_BACKGROUND, height=200
+            self.frame_side, fg_color=SURFACE_SECONDARY, height=200
         )
         self.frame_lista_evidencias.pack(pady=6, padx=12, fill="x")
 
         # ── Finalizar y volver ────────────────────────────────────────────
         self.boton_finalizar = ctk.CTkButton(
             self.frame_side,
-            text="✅  Enviar y Cerrar Reporte",
+            text=" Enviar y Cerrar",
+            image=get_icon("check", (16, 16), "white"),
             command=self._on_finalizar,
             fg_color=PRIMARY,
             hover_color=PRIMARY_HOVER,
@@ -760,9 +812,12 @@ class ReportesFrame(ctk.CTkFrame):
 
         ctk.CTkButton(
             self.frame_side,
-            text="← Volver al menú",
+            text=" Volver al menú",
+            image=get_icon("x", (16, 16), TEXT_PRIMARY),
             fg_color="transparent",
             border_width=1,
+            border_color=BORDER,
+            text_color=TEXT_PRIMARY,
             command=self._on_volver,
         ).pack(pady=(0, 20), padx=16, fill="x")
 
@@ -771,14 +826,14 @@ class ReportesFrame(ctk.CTkFrame):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _toggle_panel_lateral(self):
-        """Alterna el panel lateral (modo zen ↔ modo herramientas)."""
+        """Alterna el panel lateral (modo zen \u2194 modo herramientas)."""
         self._panel_visible = not self._panel_visible
         if self._panel_visible:
             self.frame_side.grid()
-            self.btn_toggle_panel.configure(text="◀")
+            self.btn_toggle_panel.configure(text="\u25C0")
         else:
             self.frame_side.grid_remove()
-            self.btn_toggle_panel.configure(text="▶")
+            self.btn_toggle_panel.configure(text="\u25B6")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EDITOR: TEXTO Y AUTOGUARDADO
@@ -1092,7 +1147,7 @@ class ReportesFrame(ctk.CTkFrame):
                 bool(self.switch_audio.get()),
                 carpeta_destino=carpeta_destino,
             )
-            self._renderizar_lista_evidencias()
+            self._refrescar_lista_evidencias()
             self._marcar_modificado()
 
         open_snipping_tool(self.controlador, _on_capture)

@@ -24,26 +24,26 @@ from db.local_db import (
 from core.thumbnailer import generar_miniatura
 
 # ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
-BG_COLOR = "#0f172a"
-CARD_COLOR = "#1e293b"
-CARD_HOVER = "#334155"
-TEXT_MAIN = "#f8fafc"
-TEXT_SEC = "#94a3b8"
-ACCENT_COLOR = "#4f46e5"
-ACCENT_HOVER = "#4338ca"
-SUCCESS_COLOR = "#10b981"
-SUCCESS_HOVER = "#059669"
-WARN_COLOR = "#f59e0b"
-DANGER_COLOR = "#ef4444"
+BG_COLOR = APP_BACKGROUND
+CARD_COLOR = SURFACE
+CARD_HOVER = SURFACE_SECONDARY
+TEXT_MAIN = TEXT_PRIMARY
+TEXT_SEC = TEXT_SECONDARY
+ACCENT_COLOR = PRIMARY
+ACCENT_HOVER = PRIMARY_HOVER
+SUCCESS_COLOR = STATUS["success"]["text"]
+SUCCESS_HOVER = PRIMARY
+WARN_COLOR = STATUS["warning"]["text"]
+DANGER_COLOR = STATUS["error"]["text"]
 DANGER_HOVER = "#dc2626"
-CORNER_RADIUS = 15
+CORNER_RADIUS = RADIUS_PANEL
 
 # Paleta específica para urgencias en admin
 URGENCIA_COLORS_ADMIN = {
-    "comentar": {"bg": "#1e293b", "border": "#3b82f6"}, # Slate 800, borde azul
-    "leve":     {"bg": "#1e293b", "border": "#10b981"}, # Borde verde
-    "medio":    {"bg": "#1e293b", "border": "#f59e0b"}, # Borde ámbar
-    "grave":    {"bg": "#1e293b", "border": "#ef4444"}, # Borde rojo
+    "comentar": {"bg": SURFACE, "border": "#3b82f6"}, # Slate 800, borde azul
+    "leve":     {"bg": SURFACE, "border": STATUS["success"]["text"]}, # Borde verde
+    "medio":    {"bg": SURFACE, "border": STATUS["warning"]["text"]}, # Borde ámbar
+    "grave":    {"bg": SURFACE, "border": STATUS["error"]["text"]}, # Borde rojo
 }
 URGENCIA_VALOR_A_DISPLAY = {
     "comentar": "Comentar",
@@ -589,7 +589,7 @@ class AdminFrame(ctk.CTkFrame):
         checkboxes: list[tuple[ctk.BooleanVar, str]] = []
 
         def _descargar_todos():
-            selec = [(nombre, url) for var, url in checkboxes for nombre in [url.rsplit("/", 1)[-1]] if var.get()]
+            selec = [(os.path.basename(url.replace("\\", "/")), url) for var, url in checkboxes if var.get()]
             if not selec:
                 messagebox.showwarning("Sin selección", "Marca al menos una evidencia.", parent=popup)
                 return
@@ -610,41 +610,46 @@ class AdminFrame(ctk.CTkFrame):
         
         for item in evidencias_list:
             url = item["url"]
-            f_ev = ctk.CTkFrame(scroll, fg_color=CARD_COLOR, corner_radius=10)
-            f_ev.pack(fill="x", pady=8)
+            f_ev = ctk.CTkFrame(scroll, fg_color=CARD_COLOR, corner_radius=8, border_width=1, border_color=BORDER)
+            f_ev.pack(fill="x", pady=4)
             
             # Checkbox
             var = ctk.BooleanVar(value=False)
             checkboxes.append((var, url))
-            ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=16)
+            ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=6)
 
-            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=140, height=90, fg_color=BG_COLOR, corner_radius=8)
-            lbl_img.pack(side="left", padx=8, pady=12)
+            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
+            lbl_img.pack(side="left", padx=8, pady=6)
             
-            nombre_arch = url.rsplit("/", 1)[-1]
+            nombre_arch = os.path.basename(url.replace("\\", "/"))
             nombre_corto = (nombre_arch[:38] + "...") if len(nombre_arch) > 38 else nombre_arch
+            ext = os.path.splitext(nombre_arch)[1].lower()
+            icono = "🎥" if ext in (".mp4", ".webm", ".avi", ".mkv", ".mov") else "🖼️" if ext in (".jpg", ".jpeg", ".png", ".webp") else "📄"
+            
             ctk.CTkLabel(
-                f_ev, text=f"{nombre_fecha}/{nombre_sub} — {nombre_corto}",
+                f_ev, text=f"{icono} {nombre_fecha}/{nombre_sub} — {nombre_corto}",
                 font=get_font(size=12), text_color=TEXT_MAIN, anchor="w"
             ).pack(side="left", padx=10, expand=True, fill="x")
 
             # Botón descarga individual
             def _dl_individual(u=url):
                 os.makedirs(carpeta_descarga, exist_ok=True)
-                nombre_f = u.rsplit("/", 1)[-1]
+                nombre_f = os.path.basename(u.replace("\\", "/"))
                 lbl_prog.configure(text=f"Descargando {nombre_f[:20]}…")
                 threading.Thread(target=self._descargar_lote_admin,
                                  args=([(nombre_f, u)], carpeta_descarga, lbl_prog, None, popup), daemon=True).start()
 
             ctk.CTkButton(
-                f_ev, text="⬇️", width=36, height=32,
-                fg_color="#0f766e", hover_color="#0d9488",
+                f_ev, text="⬇️", width=36, height=30,
+                fg_color="transparent", hover_color=CARD_HOVER,
+                text_color=TEXT_MAIN, border_width=1, border_color=BORDER,
                 command=_dl_individual
             ).pack(side="right", padx=4)
 
             ctk.CTkButton(
-                f_ev, text="Abrir", width=70, height=32,
-                fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
+                f_ev, text="👁️ Abrir", width=70, height=30,
+                fg_color="transparent", hover_color=ACCENT_HOVER,
+                border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                 font=get_font(size=12, weight="bold"),
                 command=lambda u=url: webbrowser.open(u)
             ).pack(side="right", padx=(4, 8))
@@ -653,23 +658,24 @@ class AdminFrame(ctk.CTkFrame):
                 def _del_ev(i=item, w=f_ev):
                     self._eliminar_evidencia_admin(i, w)
                 ctk.CTkButton(
-                    f_ev, text="🗑️", width=36, height=32,
-                    fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"],
+                    f_ev, text="🗑️", width=36, height=30,
+                    fg_color="transparent", hover_color=STATUS["error"]["bg"],
+                    text_color=STATUS["error"]["text"], border_width=1, border_color=STATUS["error"]["text"],
                     command=_del_ev
                 ).pack(side="right", padx=(4, 0))
             
             # Load thumbnail in background
             def _cargar_thumb(u=url, lbl=lbl_img):
                 try:
-                    img = generar_miniatura(u, size=(140, 90))
+                    img = generar_miniatura(u, size=(64, 48))
                     if img:
                         ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                         lbl.configure(text="", image=ctk_img)
                         lbl.image = ctk_img
                     else:
-                        lbl.configure(text="Sin vista previa", text_color=TEXT_SEC)
+                        lbl.configure(text="N/A", text_color=TEXT_SEC)
                 except Exception:
-                    lbl.configure(text="Sin vista previa", text_color=TEXT_SEC)
+                    lbl.configure(text="N/A", text_color=TEXT_SEC)
             
             threading.Thread(target=_cargar_thumb, daemon=True).start()
 
@@ -732,8 +738,9 @@ class AdminFrame(ctk.CTkFrame):
         evidencias = reporte.get("evidencias", [])
         urls_ev = [ev.get("evidencia_url") or ev.get("ruta_local") for ev in evidencias if ev.get("evidencia_url") or ev.get("ruta_local")]
 
-        # Carpeta: Documents/AuditFlow/Reportes/titulo - evidencias/
-        nombre_carpeta_rep = self._sanitizar_nombre_carpeta(f"{titulo} - evidencias")
+        # Carpeta: Documents/AuditFlow/Reportes/[CODIGO] Titulo/
+        codigo = reporte.get("codigo", "PENDIENTE")
+        nombre_carpeta_rep = self._sanitizar_nombre_carpeta(f"[{codigo}] {titulo}")
         carpeta_rep = os.path.join(os.path.expanduser("~"), "Documents", "AuditFlow", "Reportes", nombre_carpeta_rep)
         lbl_prog_rep = ctk.CTkLabel(header_ev_frame, text="", font=get_font(size=11), text_color=TEXT_SEC)
         lbl_prog_rep.pack(side="left", padx=14)
@@ -741,7 +748,7 @@ class AdminFrame(ctk.CTkFrame):
         checkboxes_rep: list[tuple[ctk.BooleanVar, str]] = []
 
         def _dl_todos_rep():
-            selec = [(url.rsplit("/", 1)[-1], url) for var, url in checkboxes_rep if var.get()]
+            selec = [(os.path.basename(url.replace("\\", "/")), url) for var, url in checkboxes_rep if var.get()]
             if not selec:
                 messagebox.showwarning("Sin selección", "Marca al menos una evidencia.")
                 return
@@ -764,22 +771,25 @@ class AdminFrame(ctk.CTkFrame):
                 url = ev.get("evidencia_url") or ev.get("ruta_local")
                 if not url: continue
                 
-                f_ev = ctk.CTkFrame(main_scroll, fg_color=CARD_COLOR, corner_radius=10)
-                f_ev.pack(fill="x", pady=6)
+                f_ev = ctk.CTkFrame(main_scroll, fg_color=CARD_COLOR, corner_radius=8, border_width=1, border_color=BORDER)
+                f_ev.pack(fill="x", pady=4)
 
                 # Checkbox
                 var = ctk.BooleanVar(value=False)
                 checkboxes_rep.append((var, url))
-                ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=12)
+                ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=6)
                 
-                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=100, height=80, fg_color=BG_COLOR, corner_radius=8)
-                lbl_img.pack(side="left", padx=8, pady=10)
+                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
+                lbl_img.pack(side="left", padx=8, pady=6)
                 
-                nombre_arch = url.rsplit("/", 1)[-1]
+                nombre_arch = os.path.basename(url.replace("\\", "/"))
                 nombre_corto = (nombre_arch[:35] + "...") if len(nombre_arch) > 35 else nombre_arch
+                ext = os.path.splitext(nombre_arch)[1].lower()
+                icono = "🎥" if ext in (".mp4", ".webm", ".avi", ".mkv", ".mov") else "🖼️" if ext in (".jpg", ".jpeg", ".png", ".webp") else "📄"
+                
                 ctk.CTkLabel(
                     f_ev, 
-                    text=f"{titulo[:25]} — {nombre_corto}",
+                    text=f"{icono} {titulo[:25]} — {nombre_corto}",
                     font=get_font(size=12),
                     text_color=TEXT_MAIN,
                     anchor="w"
@@ -788,20 +798,22 @@ class AdminFrame(ctk.CTkFrame):
                 # Botón descarga individual
                 def _dl_ind(u=url):
                     os.makedirs(carpeta_rep, exist_ok=True)
-                    nf = u.rsplit("/", 1)[-1]
+                    nf = os.path.basename(u.replace("\\", "/"))
                     lbl_prog_rep.configure(text=f"Descargando {nf[:20]}…")
                     threading.Thread(target=self._descargar_lote_admin,
                                      args=([(nf, u)], carpeta_rep, lbl_prog_rep, None, None), daemon=True).start()
 
                 ctk.CTkButton(
                     f_ev, text="⬇️", width=36, height=30,
-                    fg_color="#0f766e", hover_color="#0d9488",
+                    fg_color="transparent", hover_color=CARD_HOVER,
+                    text_color=TEXT_MAIN, border_width=1, border_color=BORDER,
                     command=_dl_ind
                 ).pack(side="right", padx=4)
 
                 ctk.CTkButton(
-                    f_ev, text="Abrir", width=70, height=30,
-                    fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
+                    f_ev, text="👁️ Abrir", width=70, height=30,
+                    fg_color="transparent", hover_color=ACCENT_HOVER,
+                    border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                     font=get_font(size=12, weight="bold"),
                     command=lambda u=url: webbrowser.open(u)
                 ).pack(side="right", padx=(4, 8))
@@ -813,21 +825,22 @@ class AdminFrame(ctk.CTkFrame):
                         self._eliminar_evidencia_admin({"id": id, "tipo": "reporte"}, w)
                     ctk.CTkButton(
                         f_ev, text="🗑️", width=36, height=30,
-                        fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"],
+                        fg_color="transparent", hover_color=STATUS["error"]["bg"],
+                        text_color=STATUS["error"]["text"], border_width=1, border_color=STATUS["error"]["text"],
                         command=_del_rep_ev
                     ).pack(side="right", padx=(4, 0))
                 
                 def _cargar_thumb_rep(u=url, lbl=lbl_img):
                     try:
-                        img = generar_miniatura(u, size=(100, 80))
+                        img = generar_miniatura(u, size=(64, 48))
                         if img:
                             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                             lbl.configure(text="", image=ctk_img)
                             lbl.image = ctk_img
                         else:
-                            lbl.configure(text="Sin previa", text_color=TEXT_SEC)
+                            lbl.configure(text="N/A", text_color=TEXT_SEC)
                     except Exception:
-                        lbl.configure(text="Sin previa", text_color=TEXT_SEC)
+                        lbl.configure(text="N/A", text_color=TEXT_SEC)
                 
                 threading.Thread(target=_cargar_thumb_rep, daemon=True).start()
 

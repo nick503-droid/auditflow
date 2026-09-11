@@ -196,10 +196,7 @@ class SelectionFrame(ctk.CTkFrame):
             self.lbl_fecha.configure(text=f"Fecha de la jornada: {self.fecha_bitacora}")
             cal_window.destroy()
             if messagebox.askyesno("Confirmar", f"¿Abrir bitácora con fecha {self.fecha_bitacora}?"):
-                if self.dropdown_usuario.get() and self.dropdown_usuario.get() != "Selecciona un usuario...":
-                    self._abrir_bitacoras()
-                else:
-                    messagebox.showerror("Error", "Por favor selecciona un usuario antes de continuar.")
+                self._abrir_bitacoras()
 
         def _on_cancelar():
             self.seg_fecha.set("Hoy")
@@ -275,16 +272,13 @@ class SelectionFrame(ctk.CTkFrame):
 
         # Efectos Hover
         def _hover_in(e):
-            if self.usuario_seleccionado:
-                card.configure(fg_color=SURFACE_SECONDARY)
+            card.configure(fg_color=SURFACE_SECONDARY)
         
         def _hover_out(e):
-            if self.usuario_seleccionado:
-                card.configure(fg_color=SURFACE)
+            card.configure(fg_color=SURFACE)
 
         def _on_click(e):
-            if self.usuario_seleccionado:
-                comando()
+            comando()
 
         for w in (card, inner, lbl_icon, lbl_title, lbl_desc):
             w.bind("<Enter>", _hover_in)
@@ -337,30 +331,4 @@ class SelectionFrame(ctk.CTkFrame):
             AdminFrame,
             usuario=perfil
         )
-
-    # ─── POPUPS DE GESTIÓN RÁPIDA ───
-
-    def _popup_nuevo_usuario(self):
-        dialog = ctk.CTkInputDialog(text="Escribe el nombre del nuevo Auditor:", title="Nuevo Usuario")
-        nombre = dialog.get_input()
-        if nombre and nombre.strip():
-            # Crear usuario en backend
-            res = crear_usuario({"nombre": nombre.strip()})
-            if res:
-                messagebox.showinfo("Éxito", f"Usuario '{nombre.strip()}' creado correctamente.")
-                self._cargar_usuarios() # Refresca UI
-                self.dropdown_usuario.set(nombre.strip())
-                self._on_usuario_seleccionado(nombre.strip())
-            else:
-                messagebox.showerror("Error", "No se pudo crear el usuario. Verifica tu conexión.")
-
-    def _popup_nuevo_restaurante(self):
-        dialog = ctk.CTkInputDialog(text="Escribe el nombre del nuevo Restaurante:", title="Nuevo Restaurante")
-        nombre = dialog.get_input()
-        if nombre and nombre.strip():
-            # Crear restaurante en backend
-            res = crear_restaurante({"nombre": nombre.strip()})
-            if res:
-                messagebox.showinfo("Éxito", f"Restaurante '{nombre.strip()}' creado correctamente.\nYa está disponible en todos los módulos.")
-            else:
-                messagebox.showerror("Error", "No se pudo crear el restaurante. Verifica tu conexión.")
+

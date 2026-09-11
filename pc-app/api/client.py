@@ -179,7 +179,7 @@ def actualizar_bitacora(id: str, dto: dict, version: int = None):
     """
     try:
         if version is not None:
-            dto["version"] = version
+            dto["version"] = int(version)
             
         response = requests.patch(
             f"{API_BASE_URL}/bitacoras/{id}",
@@ -419,7 +419,7 @@ def actualizar_reporte(reporte_id: str, notas_finales: str, version: int = None)
     try:
         payload = {"notas_finales": notas_finales}
         if version is not None:
-            payload["version"] = version
+            payload["version"] = int(version)
             
         response = requests.patch(
             f"{API_BASE_URL}/reportes/{reporte_id}",
@@ -445,7 +445,7 @@ def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str, version: int = 
     try:
         payload = {"titulo": nuevo_titulo}
         if version is not None:
-            payload["version"] = version
+            payload["version"] = int(version)
             
         response = requests.patch(
             f"{API_BASE_URL}/reportes/{reporte_id}",
