@@ -339,44 +339,65 @@ def subir_archivo_con_destino(
     ruta_local: str,
     prefijo_nube: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """
-    Sube un archivo al endpoint /uploads y le indica al backend en qué
-    subcarpeta de MinIO debe guardarlo.
+    import uuid
+    import time
 
-    Parámetros
-    ----------
-    ruta_local   : Ruta absoluta del archivo en disco local.
-    prefijo_nube : Prefijo de carpeta en MinIO, sin slash al final.
-                   Ejemplos:
-                     "bitacoras/08-25-2026"
-                     "reportes/Riverside (08-25-2026) caso Natalie"
-                   Si es None o vacío, el backend usa la raíz del bucket
-                   (comportamiento legado).
-
-    Retorna
-    -------
-    (url_publica, None)     → éxito
-    (None, mensaje_error)   → fallo
-    """
     try:
         nombre_archivo = os.path.basename(ruta_local)
         tipo_mime, _ = mimetypes.guess_type(ruta_local)
         tipo_mime = tipo_mime or "application/octet-stream"
 
-        with open(ruta_local, "rb") as f:
-            files = {"file": (nombre_archivo, f, tipo_mime)}
-            data  = {}
-            if prefijo_nube:
-                data["prefijo_nube"] = prefijo_nube
+        file_size = os.path.getsize(ruta_local)
+        CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
+        total_chunks = max(1, (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE)
+        file_id = str(uuid.uuid4())
 
-            response = requests.post(
-                f"{API_BASE_URL}/uploads",
-                files=files,
-                data=data,
-                timeout=60,
-            )
-            response.raise_for_status()
-            return response.json().get("evidencia_url"), None
+        with open(ruta_local, "rb") as f:
+            for chunk_index in range(total_chunks):
+                chunk_data = f.read(CHUNK_SIZE)
+                
+                intentos = 0
+                max_intentos = 3
+                exito = False
+                
+                while intentos < max_intentos and not exito:
+                    try:
+                        files = {"file": (f"chunk_{chunk_index}", chunk_data, "application/octet-stream")}
+                        data = {
+                            "fileId": file_id,
+                            "chunkIndex": str(chunk_index)
+                        }
+                        
+                        response = requests.post(
+                            f"{API_BASE_URL}/uploads/chunk",
+                            files=files,
+                            data=data,
+                            timeout=30,
+                        )
+                        response.raise_for_status()
+                        exito = True
+                    except requests.exceptions.RequestException as e:
+                        intentos += 1
+                        print(f"Error subiendo chunk {chunk_index} de {ruta_local} (Intento {intentos}/{max_intentos}): {e}")
+                        if intentos >= max_intentos:
+                            return None, f"Fallo al subir el fragmento {chunk_index} tras {max_intentos} intentos."
+                        time.sleep(2)
+                
+        commit_data = {
+            "fileId": file_id,
+            "originalname": nombre_archivo,
+            "totalChunks": str(total_chunks)
+        }
+        if prefijo_nube:
+            commit_data["prefijo_nube"] = prefijo_nube
+            
+        response = requests.post(
+            f"{API_BASE_URL}/uploads/commit",
+            data=commit_data,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("evidencia_url"), None
 
     except Exception as e:
         mensaje_error = f"{type(e).__name__}: {e}"

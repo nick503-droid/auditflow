@@ -39,4 +39,45 @@ export class UploadsController {
     );
     return { evidencia_url: url };
   }
+
+  /**
+   * POST /uploads/chunk
+   * Sube un fragmento de archivo.
+   */
+  @Post('chunk')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadChunk(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('fileId') fileId: string,
+    @Body('chunkIndex') chunkIndex: string,
+  ) {
+    if (!file || !fileId || chunkIndex === undefined) {
+      throw new Error('Missing chunk parameters');
+    }
+    await this.storageService.guardarChunk(fileId, parseInt(chunkIndex, 10), file.buffer);
+    return { success: true };
+  }
+
+  /**
+   * POST /uploads/commit
+   * Ensambla todos los fragmentos previamente subidos.
+   */
+  @Post('commit')
+  async commitChunks(
+    @Body('fileId') fileId: string,
+    @Body('originalname') originalname: string,
+    @Body('totalChunks') totalChunks: string,
+    @Body('prefijo_nube') prefijo_nube?: string,
+  ) {
+    if (!fileId || !originalname || !totalChunks) {
+      throw new Error('Missing commit parameters');
+    }
+    const url = await this.storageService.commitChunks(
+      fileId,
+      originalname,
+      parseInt(totalChunks, 10),
+      prefijo_nube || undefined,
+    );
+    return { evidencia_url: url };
+  }
 }

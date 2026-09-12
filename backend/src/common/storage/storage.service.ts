@@ -154,4 +154,52 @@ export class StorageService {
       this.logger.error(`Error eliminando archivo físico: ${error.message}`, error.stack);
     }
   }
+
+  /**
+   * Recibe un fragmento (chunk) y lo guarda en la carpeta temporal.
+   */
+  async guardarChunk(fileId: string, chunkIndex: number, buffer: Buffer): Promise<void> {
+    const safeId = fileId.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const chunkPath = path.join(this.storagePath, 'temp', `${safeId}_${chunkIndex}`);
+    await fs.promises.writeFile(chunkPath, buffer);
+  }
+
+  /**
+   * Une todos los chunks previamente guardados en un único archivo final y retorna la URL pública.
+   */
+  async commitChunks(fileId: string, nombreOriginal: string, totalChunks: number, prefijo?: string): Promise<string> {
+    const uuid = randomUUID();
+    const nombreLimpio = nombreOriginal.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const safeId = fileId.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const marcaTiempo = Date.now();
+    
+    const nombreFisico = `${marcaTiempo}_${uuid}_${nombreLimpio}`;
+    const relativoPath = prefijo ? path.join(prefijo, nombreFisico) : nombreFisico;
+    const absolutoPath = path.join(this.storagePath, relativoPath);
+    
+    const carpetaDestino = path.dirname(absolutoPath);
+    if (!fs.existsSync(carpetaDestino)) {
+      fs.mkdirSync(carpetaDestino, { recursive: true });
+    }
+
+    // Inicializar archivo vacío
+    await fs.promises.writeFile(absolutoPath, '');
+
+    // Concatenar todos los chunks en orden
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkPath = path.join(this.storagePath, 'temp', `${safeId}_${i}`);
+      if (!fs.existsSync(chunkPath)) {
+        throw new Error(`Falta el chunk ${i} para el archivo ${fileId}`);
+      }
+      
+      const chunkData = await fs.promises.readFile(chunkPath);
+      await fs.promises.appendFile(absolutoPath, chunkData);
+      
+      // Eliminar el chunk temporal tras concatenarlo
+      await fs.promises.unlink(chunkPath);
+    }
+
+    const publicUrlPath = relativoPath.replace(/\\/g, '/');
+    return `${this.backendUrl}/evidencias/${publicUrlPath}`;
+  }
 }
