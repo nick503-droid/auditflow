@@ -112,13 +112,29 @@ class LoginFrame(ctk.CTkFrame):
         )
         self.btn_login.pack(fill="x")
 
-        # Footer
+        # Footer Frame
+        footer_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        footer_frame.pack(fill="x", pady=(24, 0))
+        
         ctk.CTkLabel(
-            inner,
-            text="AuditFlow v1.0 — Sistema de Auditoría",
+            footer_frame,
+            text="AuditFlow v1.0",
             font=get_font(size=11),
             text_color=TEXT_MUTED
-        ).pack(pady=(24, 0))
+        ).pack(side="left")
+        
+        btn_config = ctk.CTkButton(
+            footer_frame,
+            text="⚙ Configurar Servidor",
+            width=20,
+            height=20,
+            fg_color="transparent",
+            text_color=TEXT_MUTED,
+            hover_color=SURFACE_SECONDARY,
+            font=get_font(size=11),
+            command=self._abrir_configuracion_servidor
+        )
+        btn_config.pack(side="right")
 
         self.entry_user.focus()
 
@@ -233,3 +249,69 @@ class LoginFrame(ctk.CTkFrame):
 
     def _mostrar_error(self, mensaje: str):
         self.lbl_error.configure(text=f"⚠ {mensaje}")
+
+    def _abrir_configuracion_servidor(self):
+        import api.client as client
+        import requests
+        
+        win = ctk.CTkToplevel(self.controlador)
+        win.title("Configuración de Servidor")
+        win.geometry("450x260")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.configure(fg_color=APP_BACKGROUND)
+        win.grab_set()
+        
+        ctk.CTkLabel(
+            win, text="⚙ Dirección del Servidor", 
+            font=get_font(size=18, weight="bold"), text_color=TEXT_PRIMARY
+        ).pack(pady=(20, 5))
+        
+        ctk.CTkLabel(
+            win, text="Asegúrate de incluir http:// o https://", 
+            font=get_font(size=12), text_color=TEXT_SECONDARY
+        ).pack(pady=(0, 15))
+        
+        entry_url = ctk.CTkEntry(win, width=350, height=40, fg_color=SURFACE, border_color=BORDER, text_color=TEXT_PRIMARY)
+        entry_url.pack(pady=5)
+        entry_url.insert(0, client.API_BASE_URL)
+        
+        lbl_err = ctk.CTkLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
+        lbl_err.pack(pady=2)
+        
+        def _on_guardar():
+            url = entry_url.get().strip()
+            
+            if not url.startswith("http://") and not url.startswith("https://"):
+                lbl_err.configure(text="La URL debe empezar con http:// o https://")
+                return
+            
+            if url.endswith("/"):
+                url = url[:-1]
+                
+            btn_guardar.configure(state="disabled", text="Conectando...")
+            lbl_err.configure(text="")
+            
+            def _test_connection():
+                try:
+                    response = requests.get(f"{url}/system/info", timeout=3)
+                    response.raise_for_status()
+                    client.set_api_base_url(url)
+                    def _on_success():
+                        win.destroy()
+                    self.after(0, _on_success)
+                except Exception as e:
+                    def _on_error():
+                        btn_guardar.configure(state="normal", text="Guardar Cambios")
+                        lbl_err.configure(text="Error: No se pudo conectar al servidor.")
+                    self.after(0, _on_error)
+            
+            threading.Thread(target=_test_connection, daemon=True).start()
+            
+        btn_guardar = ctk.CTkButton(
+            win, text="Guardar Cambios", width=350, height=40,
+            fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+            text_color="#FFFFFF", font=get_font(size=14, weight="bold"),
+            corner_radius=RADIUS_BUTTON, command=_on_guardar
+        )
+        btn_guardar.pack(pady=(5, 0))

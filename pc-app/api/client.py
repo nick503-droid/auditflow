@@ -3,9 +3,43 @@ import os
 import mimetypes
 import json
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://192.168.1.150:3000")
+CONFIG_PATH = os.path.join(os.getenv('APPDATA'), 'AuditFlow', 'config.json') if os.name == 'nt' else os.path.join(os.path.expanduser("~"), ".config", "AuditFlow", "config.json")
 CACHE_PATH = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp", "cache.json")
 
+def _get_initial_api_url():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                url = config.get("API_BASE_URL")
+                if url:
+                    return url
+        except Exception as e:
+            print(f"Error leyendo config.json: {e}")
+            
+    return os.getenv("API_BASE_URL", "http://192.168.1.150:3000")
+
+API_BASE_URL = _get_initial_api_url()
+
+def set_api_base_url(new_url: str):
+    global API_BASE_URL
+    API_BASE_URL = new_url
+    
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        config = {}
+        if os.path.exists(CONFIG_PATH):
+            try:
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            except Exception:
+                pass
+                
+        config["API_BASE_URL"] = new_url
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"Error guardando config.json: {e}")
 def _guardar_cache(llave, datos):
     try:
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
