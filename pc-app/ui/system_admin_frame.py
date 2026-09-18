@@ -135,7 +135,8 @@ class SystemAdminFrame(ctk.CTkFrame):
         def _fetch():
             data = obtener_system_info()
             if data:
-                ip = data.get("ip", "Desconocida")
+                from api.client import API_BASE_URL
+                ip = API_BASE_URL
                 storage = data.get("storage", {})
                 
                 usado = storage.get("usado", "N/A")

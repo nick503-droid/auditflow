@@ -284,9 +284,9 @@ class AdminFrame(ctk.CTkFrame):
         # Botón Eliminar
         ctk.CTkButton(
             btn_frame, text="🗑️ Eliminar", width=80, height=32,
-            fg_color="transparent", hover_color=DANGER_HOVER,
-            border_width=1, border_color=DANGER_COLOR, text_color=DANGER_COLOR,
-            font=get_font(size=12),
+            fg_color=STATUS["error"]["bg"], hover_color=STATUS["error"]["border"],
+            border_width=0, text_color=STATUS["error"]["text"],
+            font=get_font(size=12, weight="bold"),
             command=lambda r=reporte, l=es_local: self._eliminar_reporte(r, l)
         ).pack(side="left", padx=4)
 
@@ -313,7 +313,8 @@ class AdminFrame(ctk.CTkFrame):
             messagebox.showinfo("Éxito", "Borrador local eliminado.")
             self._abrir_vista_reportes()
         else:
-            if eliminar_reporte_remoto(reporte["id"]):
+            from api.client import eliminar_registro
+            if eliminar_registro(f"reportes/{reporte['id']}"):
                 messagebox.showinfo("Éxito", "Reporte eliminado de la nube.")
                 self._abrir_vista_reportes()
             else:
@@ -621,8 +622,10 @@ class AdminFrame(ctk.CTkFrame):
             lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
             lbl_img.pack(side="left", padx=8, pady=6)
             
+            import re
             nombre_arch = os.path.basename(url.replace("\\", "/"))
-            nombre_corto = (nombre_arch[:38] + "...") if len(nombre_arch) > 38 else nombre_arch
+            nombre_limpio = re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_?', '', nombre_arch)
+            nombre_corto = (nombre_limpio[:38] + "...") if len(nombre_limpio) > 38 else nombre_limpio
             ext = os.path.splitext(nombre_arch)[1].lower()
             icono = "🎥" if ext in (".mp4", ".webm", ".avi", ".mkv", ".mov") else "🖼️" if ext in (".jpg", ".jpeg", ".png", ".webp") else "📄"
             
@@ -651,7 +654,7 @@ class AdminFrame(ctk.CTkFrame):
                 fg_color="transparent", hover_color=ACCENT_HOVER,
                 border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                 font=get_font(size=12, weight="bold"),
-                command=lambda u=url: webbrowser.open(u)
+                command=lambda u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u))
             ).pack(side="right", padx=(4, 8))
 
             if item["id"]:
@@ -782,8 +785,10 @@ class AdminFrame(ctk.CTkFrame):
                 lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
                 lbl_img.pack(side="left", padx=8, pady=6)
                 
+                import re
                 nombre_arch = os.path.basename(url.replace("\\", "/"))
-                nombre_corto = (nombre_arch[:35] + "...") if len(nombre_arch) > 35 else nombre_arch
+                nombre_limpio = re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_?', '', nombre_arch)
+                nombre_corto = (nombre_limpio[:35] + "...") if len(nombre_limpio) > 35 else nombre_limpio
                 ext = os.path.splitext(nombre_arch)[1].lower()
                 icono = "🎥" if ext in (".mp4", ".webm", ".avi", ".mkv", ".mov") else "🖼️" if ext in (".jpg", ".jpeg", ".png", ".webp") else "📄"
                 
@@ -815,7 +820,7 @@ class AdminFrame(ctk.CTkFrame):
                     fg_color="transparent", hover_color=ACCENT_HOVER,
                     border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                     font=get_font(size=12, weight="bold"),
-                    command=lambda u=url: webbrowser.open(u)
+                    command=lambda u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u))
                 ).pack(side="right", padx=(4, 8))
                 
                 ev_id = ev.get("id")
@@ -879,7 +884,9 @@ class AdminFrame(ctk.CTkFrame):
                     exitos += 1  # contar como éxito si ya está descargado
                     continue
 
-                with requests.get(url, stream=True, timeout=60) as r:
+                from api.client import normalizar_url
+                url_norm = normalizar_url(url)
+                with requests.get(url_norm, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(ruta_salida, "wb") as f:
                         for chunk in r.iter_content(chunk_size=65536):

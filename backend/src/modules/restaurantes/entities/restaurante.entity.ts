@@ -8,6 +8,6 @@ export class Restaurante {
   @Column({ type: 'varchar' })
   nombre: string;
 
-  @DeleteDateColumn()
+  @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
 }

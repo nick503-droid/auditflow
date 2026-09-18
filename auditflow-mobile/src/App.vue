@@ -81,17 +81,30 @@
                 <span class="text-overline font-weight-bold text-primary">CÓDIGO DE VINCULACIÓN</span>
               </div>
 
-              <!-- Input OTP 6 dígitos -->
-              <v-otp-input
-                v-model="codigo"
-                length="6"
-                type="text"
-                class="mb-8 custom-otp"
-                variant="solo-filled"
-                bg-color="white"
-                :disabled="subiendo"
-                style="text-transform: uppercase;"
-              ></v-otp-input>
+              <!-- Input OTP 6 dígitos Custom (Hidden Input) -->
+              <div class="custom-otp-container mb-8" @click="focusInput">
+                <input
+                  ref="hiddenInput"
+                  v-model="codigo"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
+                  maxlength="6"
+                  class="hidden-input"
+                  :disabled="subiendo"
+                  autocomplete="one-time-code"
+                />
+                <div class="otp-boxes">
+                  <div
+                    v-for="i in 6"
+                    :key="i"
+                    class="otp-box"
+                    :class="{ 'active': codigo.length === i - 1 }"
+                  >
+                    {{ codigo[i - 1] || '' }}
+                  </div>
+                </div>
+              </div>
 
               <v-btn
                 color="primary"
@@ -339,6 +352,12 @@ onMounted(() => {
 // ------------------------------------
 
 const codigo = ref('');
+const hiddenInput = ref(null);
+const focusInput = () => {
+  if (hiddenInput.value) {
+    hiddenInput.value.focus();
+  }
+};
 const subiendo = ref(false);
 const msjOverlay = ref('Procesando...');
 
@@ -627,5 +646,46 @@ body {
 @keyframes pulseOpacity {
   from { opacity: 0.8; }
   to { opacity: 1; }
+}
+/* Custom OTP Hidden Input Pattern */
+.custom-otp-container {
+  position: relative;
+  width: 100%;
+  cursor: text;
+}
+.hidden-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  z-index: 10;
+  font-size: 16px; /* Evitar zoom en iOS */
+}
+.otp-boxes {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.otp-box {
+  flex: 1;
+  height: 64px;
+  background-color: white;
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 28px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #1E293B;
+  border: 2px solid transparent;
+  box-shadow: 0px 3px 1px -2px rgba(0, 0, 0, 0.2), 0px 2px 2px 0px rgba(0, 0, 0, 0.14), 0px 1px 5px 0px rgba(0, 0, 0, 0.12);
+  transition: all 0.2s ease;
+}
+.otp-box.active {
+  border-color: #3b82f6;
+  background-color: #F8FAFC;
 }
 </style>

@@ -345,16 +345,14 @@ class BitacorasFrame(ctk.CTkFrame):
         hora_entry.bind("<KeyRelease>", lambda e=None, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
         hora_entry.bind("<FocusIn>",  lambda e=None, i=idx: self._marcar_editando(i, True))
         hora_entry.bind("<FocusOut>", lambda e=None, i=idx: self._marcar_editando(i, False))
+        hora_entry.bind("<Return>", lambda event: desc_box.focus_set())
 
         # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
 
         desc_box = ctk.CTkTextbox(
-            card,
-            height=ALTURA_DESC,
-            font=get_font(size=11),
-            wrap="word",
-            activate_scrollbars=False,
+            card, height=ALTURA_DESC, font=get_font(size=13),
+            fg_color=BG_COLOR, border_width=1, border_color=BORDER, wrap="word"
         )
         if desc_val:
             desc_box.insert("1.0", desc_val)
@@ -433,6 +431,15 @@ class BitacorasFrame(ctk.CTkFrame):
         urg_menu.set(urg_display)
         urg_menu.grid(row=0, column=5, padx=(2, 6), pady=3)
 
+        # ── Col 6 — Eliminar ──────────────────────────────────────────────────
+        btn_eliminar = ctk.CTkButton(
+            card, text="🗑️", width=32, height=28,
+            fg_color="transparent", hover_color=STATUS["error"]["bg"],
+            text_color=STATUS["error"]["text"], font=get_font(size=14),
+            command=lambda i=idx: self._on_eliminar_bitacora(i)
+        )
+        btn_eliminar.grid(row=0, column=6, padx=(0, 6), pady=3)
+
         fila["_widgets"] = {
             "restaurante": om_rest,
             "hora":        hora_entry,
@@ -447,7 +454,34 @@ class BitacorasFrame(ctk.CTkFrame):
 
     # ─── Helpers de descripción responsiva ───────────────────────────────────
 
-    def _ajustar_altura_textbox(self, widget: ctk.CTkTextbox):
+    def _on_eliminar_bitacora(self, idx: int):
+        from tkinter import messagebox
+        if not messagebox.askyesno("Confirmar", "¿Seguro que deseas eliminar este registro?"):
+            return
+            
+        fila = self.filas[idx]
+        b_id = fila.get("b_id")
+        
+        # Eliminar del backend
+        if b_id:
+            from api.client import eliminar_registro
+            res = eliminar_registro(f"bitacoras/{b_id}")
+            if not res:
+                messagebox.showerror("Error", "No se pudo eliminar el registro del servidor.")
+                return
+                
+        # Eliminar localmente
+        import db.local_db as local_db
+        try:
+            local_db.eliminar_bitacora(b_id or fila.get("local_id"))
+        except Exception:
+            pass
+        
+        # Remover de la lista en memoria y actualizar vista
+        self.filas.pop(idx)
+        self.cargar_cuadricula()
+
+    def _ajustar_altura_textbox(self, textbox: ctk.CTkTextbox):
         """Ajusta la altura del CTkTextbox al número de líneas VISUALES.
 
         Estrategia principal: dlineinfo("end-1c") — lee la posición Y del
@@ -1256,59 +1290,68 @@ class BitacorasFrame(ctk.CTkFrame):
         es_imagen = ext in ("jpg", "jpeg", "png", "webp")
         es_video  = ext in ("mp4", "avi", "mov", "mkv", "webm")
 
-        img_ctk = None
+        # Configurar UI Inicial (Cargando)
+        ico = ctk.CTkLabel(chip, text="⏳", font=get_font(size=18), cursor="hand2")
+        ico.pack(side="left", padx=8)
+        ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
 
-        if es_imagen:
-            # Intentar cargar miniatura desde URL (bucket MinIO de lectura pública)
-            try:
-                import urllib.request
-                with urllib.request.urlopen(url, timeout=3) as resp:
-                    datos = resp.read()
-                img_pil = Image.open(io.BytesIO(datos)).convert("RGB")
-                img_pil.thumbnail((60, 40))
-                img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-            except Exception as exc:
-                print(f"[evidencia] Error cargando miniatura '{url}': {exc}")
-
-        elif es_video:
-            # Intentar capturar el primer frame del video usando OpenCV
-            try:
-                import cv2
-                # cv2.VideoCapture puede transmitir directamente desde HTTP/HTTPS
-                cap = cv2.VideoCapture(url)
-                ret, frame = cap.read()
-                if ret:
-                    # Convertir de formato BGR (OpenCV) a RGB (Pillow)
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    img_pil = Image.fromarray(frame_rgb)
-                    img_pil.thumbnail((60, 40))
-                    img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-                cap.release()
-            except ImportError:
-                print("[evidencia] opencv-python no instalado. Mostrando ícono por defecto.")
-            except Exception as exc:
-                print(f"[evidencia] Error capturando miniatura de video '{url}': {exc}")
-
-        # Renderizar la miniatura (si se logró obtener) o el ícono fallback
-        if img_ctk:
-            lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
-            lbl.pack(side="left", padx=6, pady=4)
-            lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
-        else:
-            # Fallback a ícono según el tipo si la extracción falló
-            icono_txt = "🖼" if es_imagen else "🎬"
-            ico = ctk.CTkLabel(chip, text=icono_txt, font=get_font(size=18), cursor="hand2")
-            ico.pack(side="left", padx=8)
-            ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
-
-        nombre = url.rsplit("/", 1)[-1] if "/" in url else url
-        nombre_corto = (nombre[:24] + "…") if len(nombre) > 24 else nombre
+        import re
+        nombre_crudo = url.rsplit("/", 1)[-1] if "/" in url else url
+        nombre_limpio = re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_?', '', nombre_crudo)
+        nombre_corto = (nombre_limpio[:24] + "…") if len(nombre_limpio) > 24 else nombre_limpio
         lbl_nombre = ctk.CTkLabel(
             chip, text=nombre_corto,
             text_color="gray80", font=get_font(size=10), cursor="hand2",
         )
         lbl_nombre.pack(side="left", padx=4)
-        lbl_nombre.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+        lbl_nombre.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
+
+        def _cargar_miniatura_bg():
+            img_ctk = None
+            if es_imagen:
+                try:
+                    import urllib.request
+                    from api.client import normalizar_url
+                    url_norm = normalizar_url(url)
+                    with urllib.request.urlopen(url_norm, timeout=3) as resp:
+                        datos = resp.read()
+                    img_pil = Image.open(io.BytesIO(datos)).convert("RGB")
+                    img_pil.thumbnail((60, 40))
+                    img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
+                except Exception as exc:
+                    pass # Silenciar errores de red
+            elif es_video:
+                try:
+                    import cv2
+                    from api.client import normalizar_url
+                    url_norm = normalizar_url(url)
+                    cap = cv2.VideoCapture(url_norm)
+                    ret, frame = cap.read()
+                    if ret:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        img_pil = Image.fromarray(frame_rgb)
+                        img_pil.thumbnail((60, 40))
+                        img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
+                    cap.release()
+                except Exception as exc:
+                    pass
+
+            def _actualizar_ui():
+                if not chip.winfo_exists(): return
+                if img_ctk:
+                    ico.destroy()
+                    lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
+                    lbl.pack(side="left", padx=6, pady=4, before=lbl_nombre)
+                    lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
+                else:
+                    icono_txt = "🖼" if es_imagen else "🎬"
+                    ico.configure(text=icono_txt)
+
+            if chip.winfo_exists():
+                self.after(0, _actualizar_ui)
+
+        import threading
+        threading.Thread(target=_cargar_miniatura_bg, daemon=True).start()
 
         fecha_creada = ev.get("creado_en", "")
         if fecha_creada:
@@ -1377,10 +1420,9 @@ class BitacorasFrame(ctk.CTkFrame):
             return
             
         def _on_capture(img, ruta_temp):
-            # Verificar que no esté ya en la lista y adjuntar
             if ruta_temp not in self.rutas_evidencia:
                 self.rutas_evidencia.append(ruta_temp)
-                self._renderizar_lista_evidencias()
+                self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
                 self.after(0, self._on_subir_evidencia)
                 
         open_snipping_tool(self.controlador, _on_capture)
@@ -1444,7 +1486,9 @@ class BitacorasFrame(ctk.CTkFrame):
                     base, ext = os.path.splitext(nombre)
                     ruta_salida = os.path.join(carpeta, f"{base}_{idx}{ext}")
 
-                with requests.get(url, stream=True, timeout=60) as r:
+                from api.client import normalizar_url
+                url_norm = normalizar_url(url)
+                with requests.get(url_norm, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(ruta_salida, "wb") as f:
                         for chunk in r.iter_content(chunk_size=65536):

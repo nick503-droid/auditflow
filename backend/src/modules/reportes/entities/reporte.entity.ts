@@ -54,7 +54,7 @@ export class Reporte {
   @OneToMany(() => EvidenciaReporte, (evidencia) => evidencia.reporte)
   evidencias: EvidenciaReporte[];
 
-  @DeleteDateColumn()
+  @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
 
   @VersionColumn()

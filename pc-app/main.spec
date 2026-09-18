@@ -1,11 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
-binaries = []
+datas = [('.env', '.')]
+binaries = [('ffmpeg.exe', '.')]
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+binaries += [('ffmpeg.exe', '.')]
 
 
 a = Analysis(

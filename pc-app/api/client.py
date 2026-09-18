@@ -21,6 +21,34 @@ def _get_initial_api_url():
 
 API_BASE_URL = _get_initial_api_url()
 
+import urllib.parse
+
+def normalizar_url(url: str) -> str:
+    """
+    Reemplaza la IP estática vieja de una evidencia con la IP configurada actualmente,
+    preservando el puerto original de la evidencia (ej: 9000 para MinIO).
+    """
+    if not url:
+        return url
+    try:
+        api_parsed = urllib.parse.urlparse(API_BASE_URL)
+        evidencia_parsed = urllib.parse.urlparse(url)
+        
+        if not api_parsed.hostname or not evidencia_parsed.hostname:
+            return url
+            
+        # Reconstruir netloc usando el nuevo hostname pero el puerto de la evidencia
+        nuevo_netloc = f"{api_parsed.hostname}"
+        if evidencia_parsed.port:
+            nuevo_netloc = f"{nuevo_netloc}:{evidencia_parsed.port}"
+            
+        fixed = evidencia_parsed._replace(scheme=api_parsed.scheme, netloc=nuevo_netloc)
+        fixed_url = urllib.parse.urlunparse(fixed)
+        print(f"[DEBUG normalizar_url] Original: {url} -> Fix: {fixed_url}")
+        return fixed_url
+    except Exception as e:
+        print(f"Error normalizando url '{url}': {e}")
+        return url
 def set_api_base_url(new_url: str):
     global API_BASE_URL
     API_BASE_URL = new_url
@@ -63,6 +91,23 @@ def _leer_cache(llave):
     except Exception:
         pass
     return []
+
+def eliminar_registro(endpoint: str) -> bool:
+    """
+    Realiza una petición DELETE al endpoint indicado, 
+    manejando posibles errores de red.
+    """
+    try:
+        url = f"{API_BASE_URL}/{endpoint.lstrip('/')}"
+        response = requests.delete(url, timeout=10)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"[eliminar_registro] Error DELETE en {endpoint}: {e}")
+        if getattr(e, "response", None) is not None:
+            print(f"Respuesta del servidor: {e.response.text}")
+        return False
+
 
 
 # ─── Autenticación ────────────────────────────────────────────────────────────

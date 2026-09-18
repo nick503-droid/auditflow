@@ -21,6 +21,13 @@ class SnippingTool:
         self._start_snipping()
 
     def _start_snipping(self):
+        if hasattr(self.parent, "winfo_toplevel"):
+            self.parent.winfo_toplevel().iconify()
+            self.parent.update()
+        
+        import time
+        time.sleep(0.5)
+
         self.snip_surface = ctk.CTkToplevel(self.parent)
         # Quitar los bordes y hacer fullscreen para la experiencia "Snipping Tool"
         self.snip_surface.overrideredirect(True)
@@ -40,7 +47,12 @@ class SnippingTool:
         self.canvas.bind("<ButtonRelease-1>", self._on_button_release)
         
         # ESC para cancelar
-        self.snip_surface.bind("<Escape>", lambda e: self.snip_surface.destroy())
+        self.snip_surface.bind("<Escape>", lambda e: self._cancelar_snipping())
+        
+    def _cancelar_snipping(self):
+        self.snip_surface.destroy()
+        if hasattr(self.parent, "winfo_toplevel"):
+            self.parent.winfo_toplevel().deiconify()
         
     def _on_button_press(self, event):
         self.start_x = event.x
@@ -66,6 +78,8 @@ class SnippingTool:
         
         if x2 - x1 < 10 or y2 - y1 < 10:
             # Seleccionó un área muy pequeña, ignorar
+            if hasattr(self.parent, "winfo_toplevel"):
+                self.parent.winfo_toplevel().deiconify()
             return
             
         # Darle 300ms a la interfaz para que el Canvas oscuro desaparezca completamente de la pantalla
@@ -76,7 +90,12 @@ class SnippingTool:
             img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo tomar la captura: {e}")
+            if hasattr(self.parent, "winfo_toplevel"):
+                self.parent.winfo_toplevel().deiconify()
             return
+            
+        if hasattr(self.parent, "winfo_toplevel"):
+            self.parent.winfo_toplevel().deiconify()
             
         self._show_preview(img)
         

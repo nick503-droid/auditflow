@@ -28,6 +28,6 @@ export class Usuario {
   @Column({ type: 'boolean', default: true })
   require_password_change: boolean;
 
-  @DeleteDateColumn()
+  @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
 }

@@ -1065,7 +1065,9 @@ class ReportesFrame(ctk.CTkFrame):
                 try:
                     from PIL import Image
                     if r.startswith("http"):
-                        img = Image.open(requests.get(r, stream=True).raw).convert("RGB")
+                        from api.client import normalizar_url
+                        r_norm = normalizar_url(r)
+                        img = Image.open(requests.get(r_norm, stream=True).raw).convert("RGB")
                     else:
                         img = Image.open(r).convert("RGB")
                     img.thumbnail((54, 38))
@@ -1099,7 +1101,7 @@ class ReportesFrame(ctk.CTkFrame):
     def _previsualizar_archivo(self, ruta: str):
         if ruta.startswith("http"):
             import webbrowser
-            webbrowser.open(ruta)
+            webbrowser.open(__import__("api.client").client.normalizar_url(ruta))
             return
 
         if not os.path.exists(ruta):
@@ -1148,7 +1150,8 @@ class ReportesFrame(ctk.CTkFrame):
                 carpeta_destino=carpeta_destino,
             )
             self._refrescar_lista_evidencias()
-            self._marcar_modificado()
+            if self.label_estado_evidencias.winfo_exists():
+                actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
 
         open_snipping_tool(self.controlador, _on_capture)
 
@@ -1226,7 +1229,9 @@ class ReportesFrame(ctk.CTkFrame):
                     base, ext = os.path.splitext(nombre)
                     ruta_salida = os.path.join(carpeta, f"{base}_{idx}{ext}")
 
-                with requests.get(url, stream=True, timeout=60) as r:
+                from api.client import normalizar_url
+                url_norm = normalizar_url(url)
+                with requests.get(url_norm, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(ruta_salida, "wb") as f:
                         for chunk in r.iter_content(chunk_size=65536):

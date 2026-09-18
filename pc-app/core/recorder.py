@@ -4,6 +4,20 @@ import signal
 import time
 from datetime import datetime
 from core.audio_recorder import GrabadorAudio
+import sys
+
+def obtener_ruta_ffmpeg() -> str:
+    """Retorna la ruta segura a ffmpeg, ya sea empaquetado por PyInstaller o local."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, 'ffmpeg.exe')
+    
+    # Fallback desarrollo: Raíz del proyecto o PATH
+    ruta_raiz = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ffmpeg.exe')
+    if os.path.exists(ruta_raiz):
+        return ruta_raiz
+        
+    return 'ffmpeg'
+
 
 CARPETA_TEMPORAL = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp")
 os.makedirs(CARPETA_TEMPORAL, exist_ok=True)
@@ -36,7 +50,7 @@ class GrabadorPantalla:
         ruta_log = os.path.join(CARPETA_LOGS, f"ffmpeg_{self._identificador_base}_part{idx}.log")
         
         comando = [
-            "ffmpeg", "-y",
+            obtener_ruta_ffmpeg(), "-y",
             "-f", "gdigrab",
             "-framerate", "15",
             # Usa el reloj de pared real para timestamps de cada frame.
@@ -146,7 +160,7 @@ class GrabadorPantalla:
             
             video_unificado = os.path.join(CARPETA_TEMPORAL, f"video_unido_{self._identificador_base}.mp4")
             comando_concat = [
-                "ffmpeg", "-y",
+                obtener_ruta_ffmpeg(), "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", ruta_concat,
@@ -205,7 +219,7 @@ class GrabadorPantalla:
 
         if diferencia_segundos >= 0:
             comando = [
-                "ffmpeg", "-y",
+                obtener_ruta_ffmpeg(), "-y",
                 "-i", ruta_video,
                 "-itsoffset", f"{abs_diff:.6f}",
                 "-i", self.ruta_audio_temp,
@@ -216,7 +230,7 @@ class GrabadorPantalla:
             ]
         else:
             comando = [
-                "ffmpeg", "-y",
+                obtener_ruta_ffmpeg(), "-y",
                 "-itsoffset", f"{abs_diff:.6f}",
                 "-i", ruta_video,
                 "-i", self.ruta_audio_temp,

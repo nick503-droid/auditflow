@@ -23,6 +23,8 @@ temp_selection.py
 *.sqlite
 *.sqlite3
 *.db
+build/
+*.exe
 
 # ─── Node.js (Backend NestJS y Mobile App Vue 3) ──────────────────────────
 node_modules/

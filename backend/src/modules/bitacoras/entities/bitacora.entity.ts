@@ -81,7 +81,7 @@ export class Bitacora {
   @OneToMany(() => EvidenciaBitacora, (e) => e.bitacora, { eager: false })
   evidencias: EvidenciaBitacora[];
 
-  @DeleteDateColumn()
+  @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
 
   @VersionColumn()

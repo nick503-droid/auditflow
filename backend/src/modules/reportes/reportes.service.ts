@@ -69,46 +69,13 @@ export class ReportesService {
    * pero la operación continúa para no bloquear la eliminación del
    * registro en base de datos.
    */
-  async remove(id: string): Promise<{ eliminado: boolean; evidencias_borradas: number }> {
-    const reporte = await this.reportesRepo.findOne({
-      where: { id },
-      relations: ['evidencias'],
-      withDeleted: true, // por si ya estaba soft-deleted
-    });
-
+  async remove(id: string) {
+    const reporte = await this.reportesRepo.findOne({ where: { id } });
     if (!reporte) {
       throw new NotFoundException(`Reporte con id "${id}" no encontrado.`);
     }
-
-    const evidencias = reporte.evidencias ?? [];
-    let evidencias_borradas = 0;
-
-    // ── Limpiar archivos en almacenamiento local ──────────────────────────────
-    for (const ev of evidencias) {
-      if (ev.evidencia_url) {
-        await this.storageService.eliminarArchivo(ev.evidencia_url);
-        evidencias_borradas++;
-      }
-    }
-
-    // ── Eliminar evidencias de la base de datos (hard delete) ─────────────────
-    if (evidencias.length > 0) {
-      const ids = evidencias.map((e) => e.id);
-      await this.evidenciasRepo
-        .createQueryBuilder()
-        .delete()
-        .whereInIds(ids)
-        .execute();
-    }
-
-    // ── Eliminar el reporte (hard delete) ─────────────────────────────────────
-    await this.reportesRepo
-      .createQueryBuilder()
-      .delete()
-      .where('id = :id', { id })
-      .execute();
-
-    return { eliminado: true, evidencias_borradas };
+    await this.reportesRepo.softDelete(id);
+    return { eliminado: true };
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
