@@ -6,6 +6,7 @@ import {
   OneToMany,
   JoinColumn,
   DeleteDateColumn,
+  UpdateDateColumn,
   VersionColumn,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
@@ -83,6 +84,13 @@ export class Bitacora {
 
   @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
+
+  /**
+   * Se actualiza automáticamente por TypeORM cada vez que se hace save().
+   * Usado por el endpoint /since/:timestamp para devolver sólo los deltas.
+   */
+  @UpdateDateColumn({ name: 'updated_at' })
+  updated_at: Date;
 
   @VersionColumn()
   version: number;

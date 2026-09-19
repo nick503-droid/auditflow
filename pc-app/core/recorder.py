@@ -33,12 +33,10 @@ class GrabadorPantalla:
         self.con_audio = False
 
         self.rutas_video_temp = []
-        self.ruta_audio_temp: str | None = None
         self.ruta_final: str | None = None
 
         self.archivo_log = None
-        # Timestamp tomado inmediatamente después de lanzar el proceso FFmpeg principal
-        self.timestamp_video_inicio: float | None = None
+        self.timestamps_video_inicio = []
         
         self.estado = "detenido" # detenido, grabando, pausado
         self._identificador_base = ""
@@ -71,6 +69,7 @@ class GrabadorPantalla:
             stderr=self.archivo_log,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
         )
+        self.timestamps_video_inicio.append(time.time())
         self.rutas_video_temp.append(ruta_fragmento)
         return ruta_fragmento
 
@@ -103,18 +102,17 @@ class GrabadorPantalla:
         self.con_audio = con_audio
         self._identificador_base = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.rutas_video_temp = []
+        self.timestamps_video_inicio = []
         
         self.ruta_final = os.path.join(CARPETA_TEMPORAL, f"bitacora_{self._identificador_base}.mp4")
 
         # Iniciar video
         self._lanzar_ffmpeg()
-        self.timestamp_video_inicio = time.time()
         
         # Iniciar audio
         if con_audio:
-            self.ruta_audio_temp = os.path.join(CARPETA_TEMPORAL, f"audio_{self._identificador_base}.wav")
             self.grabador_audio = GrabadorAudio()
-            self.grabador_audio.iniciar(self.ruta_audio_temp)
+            self.grabador_audio.iniciar(self._identificador_base)
 
         self.estado = "grabando"
         return self.ruta_final
@@ -145,27 +143,68 @@ class GrabadorPantalla:
         if self.con_audio and self.grabador_audio:
             self.grabador_audio.detener()
 
-        # 3. Concatenar los fragmentos de video
-        video_unificado = None
-        if len(self.rutas_video_temp) == 1:
-            video_unificado = self.rutas_video_temp[0]
-        elif len(self.rutas_video_temp) > 1:
+        # 3. Muxing por fragmento
+        rutas_para_concat = []
+        if self.con_audio and self.grabador_audio:
+            for i, ruta_vid in enumerate(self.rutas_video_temp):
+                if i < len(self.grabador_audio.rutas_audio_temp):
+                    ruta_aud = self.grabador_audio.rutas_audio_temp[i]
+                    ts_vid = self.timestamps_video_inicio[i] if i < len(self.timestamps_video_inicio) else 0
+                    ts_aud = self.grabador_audio.timestamps_inicio_fragmentos[i] if i < len(self.grabador_audio.timestamps_inicio_fragmentos) else 0
+                    
+                    diff = ts_aud - ts_vid
+                    abs_diff = abs(diff)
+                    ruta_mux = os.path.join(CARPETA_TEMPORAL, f"mux_{self._identificador_base}_part{i}.mp4")
+                    
+                    if diff >= 0:
+                        comando = [
+                            obtener_ruta_ffmpeg(), "-y",
+                            "-i", ruta_vid,
+                            "-itsoffset", f"{abs_diff:.6f}",
+                            "-i", ruta_aud,
+                            "-c:v", "copy",
+                            "-c:a", "aac",
+                            "-shortest",
+                            ruta_mux,
+                        ]
+                    else:
+                        comando = [
+                            obtener_ruta_ffmpeg(), "-y",
+                            "-itsoffset", f"{abs_diff:.6f}",
+                            "-i", ruta_vid,
+                            "-i", ruta_aud,
+                            "-c:v", "copy",
+                            "-c:a", "aac",
+                            "-shortest",
+                            ruta_mux,
+                        ]
+                    
+                    subprocess.run(comando, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+                    rutas_para_concat.append(ruta_mux)
+                else:
+                    rutas_para_concat.append(ruta_vid)
+        else:
+            rutas_para_concat = self.rutas_video_temp
+
+        # 4. Concatenar los fragmentos de video
+        if len(rutas_para_concat) == 1:
+            os.replace(rutas_para_concat[0], self.ruta_final)
+        elif len(rutas_para_concat) > 1:
             # Escribir el archivo concat
             ruta_concat = os.path.join(CARPETA_TEMPORAL, f"concat_{self._identificador_base}.txt")
             with open(ruta_concat, "w", encoding="utf-8") as f:
-                for ruta in self.rutas_video_temp:
+                for ruta in rutas_para_concat:
                     # ffmpeg concat requiere barras normales o rutas seguras
                     ruta_segura = ruta.replace("\\", "/")
                     f.write(f"file '{ruta_segura}'\n")
             
-            video_unificado = os.path.join(CARPETA_TEMPORAL, f"video_unido_{self._identificador_base}.mp4")
             comando_concat = [
                 obtener_ruta_ffmpeg(), "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", ruta_concat,
                 "-c", "copy",
-                video_unificado
+                self.ruta_final
             ]
             subprocess.run(
                 comando_concat, 
@@ -178,22 +217,18 @@ class GrabadorPantalla:
             if os.path.exists(ruta_concat):
                 os.remove(ruta_concat)
 
-        if not video_unificado or not os.path.exists(video_unificado):
-            self.estado = "detenido"
-            return None
-
-        # 4. Unir video + audio en el archivo final
-        if self.con_audio and self.ruta_audio_temp and os.path.exists(self.ruta_audio_temp):
-            self._unir_video_y_audio(video_unificado)
-        else:
-            os.replace(video_unificado, self.ruta_final)
-
         # 5. Limpieza general
         for fragmento in self.rutas_video_temp:
-            if fragmento != video_unificado and os.path.exists(fragmento):
+            if fragmento != self.ruta_final and os.path.exists(fragmento):
                 os.remove(fragmento)
-        if video_unificado != self.ruta_final and os.path.exists(video_unificado):
-            os.remove(video_unificado)
+                
+        if self.con_audio and self.grabador_audio:
+            for fragmento_aud in self.grabador_audio.rutas_audio_temp:
+                if os.path.exists(fragmento_aud):
+                    os.remove(fragmento_aud)
+            for mux_vid in rutas_para_concat:
+                if mux_vid != self.ruta_final and os.path.exists(mux_vid):
+                    os.remove(mux_vid)
 
         self.proceso_video = None
         self.grabador_audio = None
@@ -201,54 +236,6 @@ class GrabadorPantalla:
         self.rutas_video_temp = []
         
         return self.ruta_final
-
-    def _unir_video_y_audio(self, ruta_video: str):
-        """
-        Combina el .mp4 (solo video) y el .wav (solo audio) en un único
-        archivo final.
-        """
-        ts_video = self.timestamp_video_inicio or 0.0
-        ts_audio = (
-            self.grabador_audio.timestamp_inicio_real
-            if self.grabador_audio and self.grabador_audio.timestamp_inicio_real is not None
-            else 0.0
-        )
-
-        diferencia_segundos = ts_audio - ts_video
-        abs_diff = abs(diferencia_segundos)
-
-        if diferencia_segundos >= 0:
-            comando = [
-                obtener_ruta_ffmpeg(), "-y",
-                "-i", ruta_video,
-                "-itsoffset", f"{abs_diff:.6f}",
-                "-i", self.ruta_audio_temp,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-shortest",
-                self.ruta_final,
-            ]
-        else:
-            comando = [
-                obtener_ruta_ffmpeg(), "-y",
-                "-itsoffset", f"{abs_diff:.6f}",
-                "-i", ruta_video,
-                "-i", self.ruta_audio_temp,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-shortest",
-                self.ruta_final,
-            ]
-
-        subprocess.run(
-            comando,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        if os.path.exists(self.ruta_audio_temp):
-            os.remove(self.ruta_audio_temp)
 
 def es_archivo_grabado(ruta: str) -> bool:
     """

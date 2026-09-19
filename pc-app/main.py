@@ -18,5 +18,10 @@ else:
     ctk.set_default_color_theme("green")
 
 if __name__ == "__main__":
+    from api.client import iniciar_limpiador_cache
+    # Iniciamos el limpiador de caché al arrancar la app
+    # Eliminará archivos que lleven más de 24 horas sin abrirse.
+    iniciar_limpiador_cache(horas_vida=24.0)
+    
     app = MainWindow()
     app.mainloop()

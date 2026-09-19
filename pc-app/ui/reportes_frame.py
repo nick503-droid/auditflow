@@ -1100,8 +1100,7 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _previsualizar_archivo(self, ruta: str):
         if ruta.startswith("http"):
-            import webbrowser
-            webbrowser.open(__import__("api.client").client.normalizar_url(ruta))
+            __import__("api.client").client.descargar_y_abrir_evidencia(ruta)
             return
 
         if not os.path.exists(ruta):

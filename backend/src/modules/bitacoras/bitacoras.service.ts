@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import { IsNull, MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
 import { Bitacora } from './entities/bitacora.entity';
 import { EvidenciaBitacora } from './entities/evidencia-bitacora.entity';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
@@ -40,6 +40,21 @@ export class BitacorasService {
     return this.bitacorasRepo.find({
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       where: { fecha: fecha as any },
+      relations: { usuario: true, restaurante: true, evidencias: true },
+      order: { hora: 'ASC' },
+    });
+  }
+
+  /**
+   * Devuelve SÓLO las bitácoras de una fecha que hayan sido creadas,
+   * modificadas o eliminadas (soft-delete) después de `desde`.
+   * Se incluyen los registros con deleted_at != NULL para que el cliente
+   * pueda retirarlos de la UI sin necesidad de un full-fetch.
+   */
+  findDesde(fecha: string, desde: Date) {
+    return this.bitacorasRepo.find({
+      withDeleted: true,          // incluir soft-deletes para que el cliente los retire
+      where: { fecha: fecha as any, updated_at: MoreThan(desde) },
       relations: { usuario: true, restaurante: true, evidencias: true },
       order: { hora: 'ASC' },
     });

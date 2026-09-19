@@ -30,6 +30,7 @@ import uuid
 
 from api.client import (
     obtener_bitacoras_por_fecha,
+    obtener_bitacoras_delta,
     adjuntar_evidencia_por_codigo,
     obtener_evidencias_bitacora,
     subir_archivo_con_destino,
@@ -127,6 +128,10 @@ class BitacorasFrame(ctk.CTkFrame):
         self.stop_event = threading.Event()
         self._hilo_polling: threading.Thread | None = None
         self.ultimo_hash_bd = None
+        # Timestamp Unix (ms) del último full-fetch exitoso.
+        # El polling lo usa como cursor para pedir solo los deltas.
+        # None = aún no se hizo ningún fetch exitoso.
+        self.timestamp_ultimo_sync: int | None = None
 
         # Evidencia
         self.rutas_evidencia = []
@@ -477,10 +482,16 @@ class BitacorasFrame(ctk.CTkFrame):
         except Exception:
             pass
         
-        # Remover de la lista en memoria y actualizar vista
+        # Eliminar visualmente y actualizar lista
+        old_card = fila.get("_card_frame")
+        if old_card:
+            old_card.destroy()
+            
         self.filas.pop(idx)
-        self.cargar_cuadricula()
-
+        
+        # Reconstruir las filas siguientes para actualizar sus índices
+        for i in range(idx, len(self.filas)):
+            self._reconstruir_tarjeta(i)
     def _ajustar_altura_textbox(self, textbox: ctk.CTkTextbox):
         """Ajusta la altura del CTkTextbox al número de líneas VISUALES.
 
@@ -873,14 +884,17 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Carga inicial ────────────────────────────────────────────────────────
 
     def _carga_inicial(self):
-        """Lanza una carga inmediata en hilo daemon antes del primer ciclo de polling."""
+        """Full-fetch al arrancar. Establece el cursor de timestamp para los deltas posteriores."""
         def _worker():
+            import time
             try:
+                # Restar 1 segundo al timestamp para cubrir cualquier desfase de reloj del servidor
+                ts_antes = int(time.time() * 1000) - 1000
                 bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
                 if bitacoras is not None:
+                    self.timestamp_ultimo_sync = ts_antes
                     self.after(0, self._reconciliar_con_datos, bitacoras)
                 else:
-                    # Sin conexión al arrancar — agregar fila vacía para empezar
                     self.after(0, self._agregar_fila_vacia)
             except Exception as e:
                 print(f"[carga_inicial] Error: {e}")
@@ -898,6 +912,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self._hilo_polling.start()
 
     def _polling_worker(self):
+        import time
         while not self.stop_event.is_set():
             # Intentar sincronizar pendientes offline antes de consultar
             try:
@@ -906,18 +921,37 @@ class BitacorasFrame(ctk.CTkFrame):
                 print(f"[sync_pendientes] Error: {e}")
 
             try:
-                bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
-                if bitacoras is not None:
-                    self.after(0, self._reconciliar_con_datos, bitacoras)
-                    self.after(0, self._actualizar_indicador_sync, "ok")
+                ts_cursor = self.timestamp_ultimo_sync
+                if ts_cursor is None:
+                    # Sin full-fetch previo, hacemos uno completo ahora
+                    ts_antes = int(time.time() * 1000) - 1000
+                    bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
+                    if bitacoras is not None:
+                        self.timestamp_ultimo_sync = ts_antes
+                        self.after(0, self._reconciliar_con_datos, bitacoras)
+                        self.after(0, self._actualizar_indicador_sync, "ok")
+                    else:
+                        self.after(0, self._actualizar_indicador_sync, "offline")
                 else:
-                    self.after(0, self._actualizar_indicador_sync, "offline")
+                    # Delta-fetch: solo pedir lo que cambio desde el cursor
+                    ts_antes = int(time.time() * 1000) - 1000
+                    deltas = obtener_bitacoras_delta(self.fecha_actual, ts_cursor)
+                    if deltas is None:
+                        # Error de red
+                        self.after(0, self._actualizar_indicador_sync, "offline")
+                    elif len(deltas) > 0:
+                        # Hay cambios: aplicarlos in-place y avanzar cursor
+                        self.timestamp_ultimo_sync = ts_antes
+                        self.after(0, self._aplicar_deltas, deltas)
+                        self.after(0, self._actualizar_indicador_sync, "ok")
+                    else:
+                        # Sin cambios: solo avanzar cursor y actualizar indicador
+                        self.timestamp_ultimo_sync = ts_antes
+                        self.after(0, self._actualizar_indicador_sync, "ok")
             except Exception as e:
                 print(f"[polling] Error: {e}")
                 self.after(0, self._actualizar_indicador_sync, "offline")
 
-            # wait() duerme hasta que transcurran 5 s O stop_event.set() despierte
-            # al hilo anticipadamente — evita los 5 s de latencia al destruir el frame.
             self.stop_event.wait(5)
 
     def _sincronizar_pendientes(self):
@@ -968,6 +1002,89 @@ class BitacorasFrame(ctk.CTkFrame):
                 f["codigo"] = codigo
                 self._reconstruir_tarjeta(i)
                 break
+
+    def _aplicar_deltas(self, deltas: list):
+        """
+        Actualiza la UI in-place con los registros cambiados recibidos del servidor.
+        Reglas:
+          - Si el delta trae deleted_at != None → retirar la tarjeta de la UI.
+          - Si el b_id ya está en self.filas → actualizar datos y reconstruir tarjeta.
+          - Si es nuevo → construir la tarjeta y añadirla.
+        Nunca limpia la lista completa; la limpieza sólo ocurre al cambiar de fecha.
+        """
+        ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
+
+        for b in deltas:
+            b_id       = b.get("id")
+            eliminado  = b.get("deleted_at") is not None
+
+            if eliminado:
+                if b_id in ids_local:
+                    idx = ids_local[b_id]
+                    card = self.filas[idx].get("_card_frame")
+                    if card and card.winfo_exists():
+                        card.destroy()
+                    self.filas.pop(idx)
+                    # Reconstruir índices para tarjetas por debajo
+                    for j in range(idx, len(self.filas)):
+                        self._reconstruir_tarjeta(j)
+                    # Actualizar mapa local después de pop
+                    ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
+                continue
+
+            rest  = b.get("restaurante", {}).get("nombre", "") if isinstance(b.get("restaurante"), dict) else ""
+            vig   = b.get("usuario", {}).get("nombre", "") if isinstance(b.get("usuario"), dict) else ""
+            evids = b.get("evidencias", [])
+            urgencia_raw = b.get("urgencia", "leve")
+            urgencia = URGENCIA_LEGACY.get(urgencia_raw, urgencia_raw)
+
+            datos_nuevos = {
+                "b_id":        b_id,
+                "codigo":      b.get("codigo", ""),
+                "hora":        b.get("hora", ""),
+                "restaurante": rest,
+                "vigilante":   vig,
+                "descripcion": b.get("descripcion", ""),
+                "urgencia":    urgencia,
+                "evidencias":  evids,
+                "evidencia":   "Sí" if (evids or b.get("evidencia_url")) else "",
+                "version":     b.get("version"),
+            }
+
+            if b_id in ids_local:
+                idx = ids_local[b_id]
+                with self.lock:
+                    esta_editando = idx in self.filas_editando
+
+                self.filas[idx].update(datos_nuevos)
+
+                if esta_editando:
+                    ev_btn = self.filas[idx].get("_widgets", {}).get("evidencia")
+                    if ev_btn and ev_btn.winfo_exists():
+                        evs = datos_nuevos.get("evidencias", [])
+                        tiene_ev = len(evs) > 0 or datos_nuevos.get("evidencia") == "Sí"
+                        if tiene_ev:
+                            n = len(evs) if evs else 1
+                            ev_btn.configure(
+                                text=f"✅ {n} ev.",
+                                fg_color=COLOR_BOTON_EV_OK,
+                                hover_color=PRIMARY_HOVER
+                            )
+                else:
+                    self._reconstruir_tarjeta(idx)
+
+                if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
+                    self._mostrar_panel_evidencia(datos_nuevos["codigo"], evids)
+            else:
+                datos_nuevos["local_id"]     = None
+                datos_nuevos["_debounce_id"] = None
+                self.filas.append(datos_nuevos)
+                nuevo_idx = len(self.filas) - 1
+                self._construir_tarjeta(nuevo_idx)
+                ids_local[b_id] = nuevo_idx
+
+        if not self.filas:
+            self._agregar_fila_vacia()
 
     def _reconciliar_con_datos(self, bitacoras: list):
         """
@@ -1190,7 +1307,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _ocultar_panel_evidencia(self):
         self.frame_evidencia.grid_remove()
-        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(1, minsize=0, weight=0)
         self._codigo_panel_activo = ""
 
     def _mostrar_panel_evidencia(self, codigo: str, evidencias: list):
@@ -1293,7 +1410,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # Configurar UI Inicial (Cargando)
         ico = ctk.CTkLabel(chip, text="⏳", font=get_font(size=18), cursor="hand2")
         ico.pack(side="left", padx=8)
-        ico.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
+        ico.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
 
         import re
         nombre_crudo = url.rsplit("/", 1)[-1] if "/" in url else url
@@ -1304,7 +1421,7 @@ class BitacorasFrame(ctk.CTkFrame):
             text_color="gray80", font=get_font(size=10), cursor="hand2",
         )
         lbl_nombre.pack(side="left", padx=4)
-        lbl_nombre.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
+        lbl_nombre.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
 
         def _cargar_miniatura_bg():
             img_ctk = None
@@ -1342,7 +1459,7 @@ class BitacorasFrame(ctk.CTkFrame):
                     ico.destroy()
                     lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
                     lbl.pack(side="left", padx=6, pady=4, before=lbl_nombre)
-                    lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u)))
+                    lbl.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
                 else:
                     icono_txt = "🖼" if es_imagen else "🎬"
                     ico.configure(text=icono_txt)

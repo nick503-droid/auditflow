@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, NotFoundException, BadRequestException } from '@nestjs/common';
 import { BitacorasService } from './bitacoras.service';
 import { CreateBitacoraDto } from './dto/create-bitacora.dto';
 import { UpdateBitacoraDto } from './dto/update-bitacora.dto';
@@ -25,6 +25,23 @@ export class BitacorasController {
   @Get('fecha/:fecha')
   findPorFecha(@Param('fecha') fecha: string) {
     return this.bitacorasService.findPorFecha(fecha);
+  }
+
+  /**
+   * Devuelve únicamente los registros modificados/creados/eliminados
+   * después del Unix timestamp (ms) indicado en :since.
+   * El cliente guarda el timestamp del último fetch exitoso y lo envía aquí
+   * para recibir sólo los deltas — evitando bajar toda la lista en cada polling.
+   */
+  @Get('fecha/:fecha/since/:since')
+  findDesde(
+    @Param('fecha') fecha: string,
+    @Param('since') since: string,
+  ) {
+    const tsMs = parseInt(since, 10);
+    if (isNaN(tsMs)) throw new BadRequestException('since debe ser un Unix timestamp en ms');
+    const desde = new Date(tsMs);
+    return this.bitacorasService.findDesde(fecha, desde);
   }
 
   /**

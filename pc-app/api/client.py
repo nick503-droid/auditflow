@@ -342,7 +342,7 @@ def cerrar_bitacora_dia(fecha: str) -> dict | None:
 def obtener_bitacoras_por_fecha(fecha: str):
     """
     Trae todas las bitácoras de una fecha específica (formato YYYY-MM-DD).
-    Utilizado para actualizar la cuadrícula general.
+    Usado para la carga inicial o cuando el usuario cambia de fecha.
     """
     try:
         response = requests.get(
@@ -354,6 +354,24 @@ def obtener_bitacoras_por_fecha(fecha: str):
     except requests.exceptions.RequestException as e:
         print(f"Error al obtener bitácoras para la fecha {fecha}: {e}")
         return []
+
+
+def obtener_bitacoras_delta(fecha: str, desde_ts_ms: int):
+    """
+    Solicita únicamente las bitácoras creadas, modificadas o eliminadas
+    (soft-delete) después del timestamp Unix en milisegundos `desde_ts_ms`.
+    Devuelve una lista (puede estar vacía si no hubo cambios) o None si hay error de red.
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/bitacoras/fecha/{fecha}/since/{desde_ts_ms}",
+            timeout=8
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"[delta] Error al obtener deltas para {fecha} desde {desde_ts_ms}: {e}")
+        return None
 
 
 def obtener_bitacoras_todas():
@@ -615,3 +633,86 @@ def obtener_system_info():
     except requests.exceptions.RequestException as e:
         print(f"Error de red al obtener info del sistema: {e}")
         return None
+
+def descargar_y_abrir_evidencia(url: str):
+    """
+    Descarga una evidencia remota a un archivo temporal y la abre
+    con el reproductor nativo. Evita descargar si ya existe en caché,
+    y actualiza la fecha de último acceso.
+    """
+    def _worker():
+        try:
+            import requests
+            import tempfile
+            import os
+            import sys
+            import subprocess
+            import time
+            
+            url_real = normalizar_url(url)
+            nombre = url_real.split("/")[-1].split("?")[0]
+            if not nombre:
+                nombre = "evidencia_temp"
+            
+            temp_dir = os.path.join(tempfile.gettempdir(), "AuditFlow_Cache")
+            os.makedirs(temp_dir, exist_ok=True)
+            ruta_temp = os.path.join(temp_dir, nombre)
+            
+            # Si el archivo NO existe, o pesa 0 bytes, lo descargamos
+            if not os.path.exists(ruta_temp) or os.path.getsize(ruta_temp) == 0:
+                resp = requests.get(url_real, stream=True, timeout=15)
+                resp.raise_for_status()
+                with open(ruta_temp, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            else:
+                # Si ya existe, actualizamos su fecha de modificación para que el limpiador sepa
+                # que ha sido accedido recientemente y "reinicie" su contador de vida útil.
+                os.utime(ruta_temp, None)
+                    
+            if sys.platform == "win32":
+                os.startfile(ruta_temp)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", ruta_temp])
+            else:
+                subprocess.call(["xdg-open", ruta_temp])
+                
+        except Exception as e:
+            print(f"[ERROR] No se pudo descargar para abrir {url}: {e}")
+            
+    import threading
+    threading.Thread(target=_worker, daemon=True).start()
+
+def iniciar_limpiador_cache(horas_vida: float = 24.0):
+    """
+    Inicia un hilo en segundo plano que revisa la carpeta caché y elimina
+    los archivos que no se han abierto en las últimas 'horas_vida' horas.
+    """
+    def _limpiar():
+        try:
+            import tempfile
+            import os
+            import time
+            
+            temp_dir = os.path.join(tempfile.gettempdir(), "AuditFlow_Cache")
+            if not os.path.exists(temp_dir):
+                return
+                
+            tiempo_actual = time.time()
+            limite_segundos = horas_vida * 3600
+            
+            for archivo in os.listdir(temp_dir):
+                ruta = os.path.join(temp_dir, archivo)
+                if os.path.isfile(ruta):
+                    tiempo_modificacion = os.path.getmtime(ruta)
+                    if (tiempo_actual - tiempo_modificacion) > limite_segundos:
+                        try:
+                            os.remove(ruta)
+                            print(f"[CACHE] Archivo viejo eliminado: {archivo}")
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"[CACHE] Error al limpiar: {e}")
+
+    import threading
+    threading.Thread(target=_limpiar, daemon=True).start()

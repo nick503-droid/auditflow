@@ -654,7 +654,7 @@ class AdminFrame(ctk.CTkFrame):
                 fg_color="transparent", hover_color=ACCENT_HOVER,
                 border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                 font=get_font(size=12, weight="bold"),
-                command=lambda u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u))
+                command=lambda u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u)
             ).pack(side="right", padx=(4, 8))
 
             if item["id"]:
@@ -820,7 +820,7 @@ class AdminFrame(ctk.CTkFrame):
                     fg_color="transparent", hover_color=ACCENT_HOVER,
                     border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                     font=get_font(size=12, weight="bold"),
-                    command=lambda u=url: webbrowser.open(__import__("api.client").client.normalizar_url(u))
+                    command=lambda u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u)
                 ).pack(side="right", padx=(4, 8))
                 
                 ev_id = ev.get("id")
