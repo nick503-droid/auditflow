@@ -554,6 +554,17 @@ def actualizar_reporte(reporte_id: str, notas_finales: str, version: int = None)
         return None
 
 
+def obtener_reporte(reporte_id: str):
+    """Obtiene el estado más reciente de un reporte colaborativo."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/reportes/{reporte_id}", timeout=8)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error al obtener reporte {reporte_id}: {e}")
+        return None
+
+
 def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str, version: int = None) -> dict | None:
     """
     Cambia el título de un reporte en el backend.

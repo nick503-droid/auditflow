@@ -6,6 +6,7 @@ import {
   JoinColumn,
   OneToMany,
   DeleteDateColumn,
+  UpdateDateColumn,
   VersionColumn,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
@@ -56,6 +57,10 @@ export class Reporte {
 
   @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
+
+  /** Cursor de cambios para clientes que están editando el mismo reporte. */
+  @UpdateDateColumn({ name: 'updated_at' })
+  updated_at: Date;
 
   @VersionColumn()
   version: number;

@@ -51,6 +51,7 @@ from api.client import (
     obtener_reportes,
     obtener_restaurantes,
     actualizar_reporte,
+    obtener_reporte,
     API_BASE_URL,
 )
 from core.recorder import GrabadorPantalla, es_archivo_grabado
@@ -84,6 +85,11 @@ class ReportesFrame(ctk.CTkFrame):
         self._viene_de_nube = False
         self._texto_pendiente = False
         self._finalizar_pendiente = False
+        self.reporte_version = None
+        self._texto_base_remoto = ""
+        self._texto_sucio = False
+        self._guardando_texto = False
+        self._cambio_remoto_pendiente = None
 
         # Búsqueda de reportes en nube
         self.reportes_data = {}   # titulo_clave → dict reporte
@@ -472,6 +478,7 @@ class ReportesFrame(ctk.CTkFrame):
     def _on_cargar_reporte_nube(self, reporte: dict):
         """Carga un reporte existente (de la nube o local) y abre el editor."""
         self.reporte_remoto_id = reporte.get("id")
+        self.reporte_version = reporte.get("version")
         self.codigo_reporte = reporte.get("codigo", "SINCOD")
         self.titulo_reporte = reporte.get("titulo", "Reporte sin título")
 
@@ -571,6 +578,7 @@ class ReportesFrame(ctk.CTkFrame):
                 remote_id = resultado["id"]
                 codigo = resultado.get("codigo", "SINCOD")
                 self.reporte_remoto_id = remote_id
+                self.reporte_version = resultado.get("version")
                 self._actualizar_codigo_ui(codigo)
                 marcar_reporte_sincronizado(self.borrador["id"], remote_id)
                 self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "ok"))
@@ -842,6 +850,7 @@ class ReportesFrame(ctk.CTkFrame):
     def _cargar_estado_previo(self):
         if self.borrador and self.borrador.get("notas_finales"):
             self.textbox_notas.insert("1.0", self.borrador["notas_finales"])
+        self._texto_base_remoto = self.textbox_notas.get("1.0", "end-1c")
         self._refrescar_lista_evidencias()
         self.stop_event.clear()  # Limpiar por si el frame se re-usa
         self._hilo_polling = threading.Thread(
@@ -851,23 +860,49 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _polling_evidencias_worker(self):
         while not self.stop_event.is_set():
-            if self.reporte_remoto_id and self._panel_visible:
-                try:
-                    res = requests.get(f"{API_BASE_URL}/reportes/{self.reporte_remoto_id}", timeout=5)
-                    if res.status_code == 200:
-                        data = res.json()
-                        nuevas_ev = data.get("evidencias", [])
-                        self.reporte_version = data.get("version")
-                        # Comparar si hay cambios en la nube
-                        if hash(str(nuevas_ev)) != hash(str(getattr(self, "evidencias_nube", []))):
-                            self.evidencias_nube = nuevas_ev
-                            self.after(0, self._refrescar_lista_evidencias)
-                except Exception:
-                    pass
+            if self.reporte_remoto_id:
+                data = obtener_reporte(self.reporte_remoto_id)
+                if data:
+                    self.after(0, self._aplicar_estado_remoto, data)
             # wait() se interrumpe de inmediato cuando stop_event.set() se llama
-            self.stop_event.wait(5)
+            self.stop_event.wait(2)
+
+    def _aplicar_estado_remoto(self, remoto: dict):
+        """Aplica cambios de otros auditores sin borrar una edición local pendiente."""
+        if not hasattr(self, "textbox_notas") or not self.textbox_notas.winfo_exists():
+            return
+
+        texto_remoto = remoto.get("notas_finales", "")
+        evidencias_remotas = remoto.get("evidencias", [])
+        cambio_texto = texto_remoto != self._texto_base_remoto
+        cambio_evidencias = hash(str(evidencias_remotas)) != hash(str(getattr(self, "evidencias_nube", [])))
+
+        if cambio_evidencias:
+            self.evidencias_nube = evidencias_remotas
+            self._refrescar_lista_evidencias()
+
+        if not cambio_texto:
+            return
+
+        # Nunca pisar letras todavía no confirmadas por el servidor. El guardado
+        # usará la versión base y el backend rechazará una colisión en vez de
+        # perder el trabajo de cualquiera de los dos auditores.
+        if self._texto_sucio or self._guardando_texto:
+            self._cambio_remoto_pendiente = remoto
+            self.label_estado_guardado.configure(
+                text="⚠ Cambios remotos pendientes", text_color=STATUS["warning"]["text"]
+            )
+            return
+
+        self.textbox_notas.delete("1.0", "end")
+        self.textbox_notas.insert("1.0", texto_remoto)
+        self._texto_base_remoto = texto_remoto
+        self.reporte_version = remoto.get("version")
+        actualizar_notas(self.borrador["id"], texto_remoto)
+        actualizar_indicador_reporte(self.label_estado_guardado, "ok")
 
     def _on_texto_cambiado(self, event=None):
+        self._texto_sucio = True
         if self._debounce_id is not None:
             self.after_cancel(self._debounce_id)
         actualizar_indicador_reporte(self.label_estado_guardado, "writing")
@@ -878,14 +913,17 @@ class ReportesFrame(ctk.CTkFrame):
         API-First:
         Intenta guardar en el backend. Si falla, guarda en SQLite como Fail-safe.
         """
-        texto = self.textbox_notas.get("1.0", "end").strip()
+        texto = self.textbox_notas.get("1.0", "end-1c")
+        version_base = self.reporte_version
+        self._guardando_texto = True
 
         def _sync_notas():
             try:
                 if self.reporte_remoto_id:
-                    res = actualizar_reporte(self.reporte_remoto_id, texto, version=getattr(self, "reporte_version", None))
+                    res = actualizar_reporte(self.reporte_remoto_id, texto, version=version_base)
                     if res and isinstance(res, dict) and res.get("__conflict__"):
-                        self.after(0, lambda r=res: messagebox.showwarning("Conflicto", r["mensaje"]))
+                        remoto = obtener_reporte(self.reporte_remoto_id)
+                        self.after(0, self._resolver_conflicto_texto, remoto, texto)
                         return
                     if not res:
                         raise Exception("Fallo update")
@@ -903,16 +941,46 @@ class ReportesFrame(ctk.CTkFrame):
                     self.reporte_remoto_id = res["id"]
                     self._actualizar_codigo_ui(res.get("codigo", "SINCOD"))
 
-                actualizar_notas(self.borrador["id"], texto)
-                marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
-                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "ok"))
+                self.after(0, self._confirmar_guardado_texto, res, texto)
             except Exception:
                 actualizar_notas(self.borrador["id"], texto)
                 marcar_notas_pendientes(self.borrador["id"])
-                self.after(0, lambda: actualizar_indicador_reporte(self.label_estado_guardado, "offline"))
+                self.after(0, self._marcar_guardado_offline)
 
         threading.Thread(target=_sync_notas, daemon=True).start()
         self._debounce_id = None
+
+    def _confirmar_guardado_texto(self, remoto: dict, texto_enviado: str):
+        """Confirma el guardado sólo cuando el servidor devolvió su nueva versión."""
+        self._guardando_texto = False
+        self.reporte_version = remoto.get("version")
+        self._texto_base_remoto = remoto.get("notas_finales", texto_enviado)
+        actualizar_notas(self.borrador["id"], self._texto_base_remoto)
+        marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
+
+        texto_actual = self.textbox_notas.get("1.0", "end-1c")
+        self._texto_sucio = texto_actual != self._texto_base_remoto
+        if self._texto_sucio:
+            self._debounce_id = self.after(150, self._guardar_notas_ahora)
+        else:
+            actualizar_indicador_reporte(self.label_estado_guardado, "ok")
+
+    def _marcar_guardado_offline(self):
+        self._guardando_texto = False
+        actualizar_indicador_reporte(self.label_estado_guardado, "offline")
+
+    def _resolver_conflicto_texto(self, remoto: dict | None, texto_local: str):
+        """Evita pérdida silenciosa: conserva local y muestra la versión remota."""
+        self._guardando_texto = False
+        self._texto_sucio = True
+        if remoto:
+            self._cambio_remoto_pendiente = remoto
+        actualizar_notas(self.borrador["id"], texto_local, marcar_pendiente=True)
+        messagebox.showwarning(
+            "Cambios simultáneos detectados",
+            "Otro auditor guardó cambios antes que esta PC. Tu texto se conservó localmente "
+            "y no se sobrescribió el trabajo remoto. Revisa e integra ambos textos antes de guardar de nuevo.",
+        )
 
     # ═══════════════════════════════════════════════════════════════════════════
     # POLLING WORKER — SINCRONIZACIÓN SILENCIOSA

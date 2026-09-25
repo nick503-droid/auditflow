@@ -457,6 +457,50 @@ class BitacorasFrame(ctk.CTkFrame):
     def _reconstruir_tarjeta(self, idx: int):
         self._construir_tarjeta(idx)
 
+    def _actualizar_boton_evidencia(self, idx: int):
+        """Refresca únicamente el chip de evidencias, sin perder el foco de la fila."""
+        if idx < 0 or idx >= len(self.filas):
+            return
+
+        fila = self.filas[idx]
+        ev_btn = fila.get("_widgets", {}).get("evidencia")
+        if not ev_btn or not ev_btn.winfo_exists():
+            return
+
+        evidencias = fila.get("evidencias", [])
+        tiene_ev = bool(evidencias) or fila.get("evidencia") == "Sí"
+        if tiene_ev:
+            cantidad = len(evidencias) if evidencias else 1
+            ev_btn.configure(
+                text=f" {cantidad} ev.",
+                image=get_icon("check", size=(16, 16), color=STATUS["success"]["text"]),
+                fg_color=STATUS["success"]["bg"],
+                hover_color=STATUS["success"]["border"],
+                text_color=STATUS["success"]["text"],
+            )
+        else:
+            ev_btn.configure(
+                text=" Adjuntar",
+                image=get_icon("paperclip", size=(16, 16), color=STATUS["info"]["text"]),
+                fg_color=STATUS["info"]["bg"],
+                hover_color=STATUS["info"]["border"],
+                text_color=STATUS["info"]["text"],
+            )
+
+    def _actualizar_evidencias_fila(self, codigo: str, evidencias: list):
+        """Inyecta las evidencias recibidas del servidor y actualiza su chip in-place."""
+        for idx, fila in enumerate(self.filas):
+            if fila.get("codigo") != codigo:
+                continue
+
+            fila["evidencias"] = evidencias or []
+            fila["evidencia"] = "Sí" if fila["evidencias"] else ""
+            self._actualizar_boton_evidencia(idx)
+
+            if self._codigo_panel_activo == codigo:
+                self._mostrar_panel_evidencia(codigo, fila["evidencias"])
+            return
+
     # ─── Helpers de descripción responsiva ───────────────────────────────────
 
     def _on_eliminar_bitacora(self, idx: int):
@@ -1059,17 +1103,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 self.filas[idx].update(datos_nuevos)
 
                 if esta_editando:
-                    ev_btn = self.filas[idx].get("_widgets", {}).get("evidencia")
-                    if ev_btn and ev_btn.winfo_exists():
-                        evs = datos_nuevos.get("evidencias", [])
-                        tiene_ev = len(evs) > 0 or datos_nuevos.get("evidencia") == "Sí"
-                        if tiene_ev:
-                            n = len(evs) if evs else 1
-                            ev_btn.configure(
-                                text=f"✅ {n} ev.",
-                                fg_color=COLOR_BOTON_EV_OK,
-                                hover_color=PRIMARY_HOVER
-                            )
+                    self._actualizar_boton_evidencia(idx)
                 else:
                     self._reconstruir_tarjeta(idx)
 
@@ -1143,19 +1177,8 @@ class BitacorasFrame(ctk.CTkFrame):
                     self.filas[local_idx].update(datos_nuevos)
                     
                     if esta_editando:
-                        # Si está editando, solo actualizamos el botón de evidencia directamente 
-                        # para no destruir el Textbox y hacerle perder el cursor.
-                        ev_btn = self.filas[local_idx].get("_widgets", {}).get("evidencia")
-                        if ev_btn and ev_btn.winfo_exists():
-                            evs = datos_nuevos.get("evidencias", [])
-                            tiene_ev = len(evs) > 0 or datos_nuevos.get("evidencia") == "Sí"
-                            if tiene_ev:
-                                n = len(evs) if evs else 1
-                                ev_btn.configure(
-                                    text=f"✅ {n} ev.",
-                                    fg_color=COLOR_BOTON_EV_OK,
-                                    hover_color=PRIMARY_HOVER
-                                )
+                        # Si está editando, actualizar sólo el chip conserva el cursor.
+                        self._actualizar_boton_evidencia(local_idx)
                     else:
                         # Si no está editando, podemos reconstruir la fila completa
                         self._reconstruir_tarjeta(local_idx)
@@ -1873,6 +1896,7 @@ class BitacorasFrame(ctk.CTkFrame):
         
         def _subir_worker():
             exitos = 0
+            ultima_bitacora_actualizada = None
             for ruta in rutas_a_subir:
                 evidencia_url, error_upload = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
                 if evidencia_url is None:
@@ -1885,21 +1909,21 @@ class BitacorasFrame(ctk.CTkFrame):
                     self.after(0, lambda r=ruta, e=error_link: messagebox.showerror("Error", f"No se pudo vincular {r}: {e}"))
                 else:
                     exitos += 1
+                    # El backend devuelve la bitácora con todas sus evidencias.
+                    # Conservamos el último estado para actualizar la UI de PC
+                    # inmediatamente, sin depender del próximo polling.
+                    if isinstance(data, dict):
+                        ultima_bitacora_actualizada = data
                     # remover la ruta de forma segura en el main thread
                     self.after(0, lambda r=ruta: self._remover_ruta_y_archivo(r))
             
             def _on_finish():
                 if exitos > 0:
                     self.switch_audio.deselect()
-                    try:
-                        evidencias_frescas = obtener_evidencias_bitacora(codigo)
-                        if getattr(self, "_codigo_panel_activo", None) == codigo:
-                            self._mostrar_panel_evidencia(codigo, evidencias_frescas)
-                        self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
-                        self.ultimo_hash_bd = None
-                        self._polling_bitacoras_job()  # Forzar actualización en cuadricula
-                    except Exception:
-                        pass
+                    evidencias = (ultima_bitacora_actualizada or {}).get("evidencias", [])
+                    self._actualizar_evidencias_fila(codigo, evidencias)
+                    self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
+                    self.ultimo_hash_bd = None
                 
                 if self.rutas_evidencia:
                     self.label_archivo.configure(text=f"Quedan {len(self.rutas_evidencia)} archivos por subir")

@@ -51,8 +51,9 @@ class GrabadorPantalla:
             obtener_ruta_ffmpeg(), "-y",
             "-f", "gdigrab",
             "-framerate", "15",
-            # Usa el reloj de pared real para timestamps de cada frame.
-            "-use_wallclock_as_timestamps", "1",
+            # Cada segmento debe iniciar en PTS 0. Usar el reloj de pared aquí
+            # deja timestamps absolutos distintos en cada pausa y rompe el
+            # concat de audio/video en algunos equipos.
             "-i", "desktop",
             "-pix_fmt", "yuv420p",
             "-c:v", "libx265",
@@ -119,16 +120,20 @@ class GrabadorPantalla:
 
     def pausar(self):
         if self.estado == "grabando":
-            self._detener_ffmpeg_actual()
+            # Cortar primero el audio evita que siga agregando muestras mientras
+            # FFmpeg termina de cerrar el video actual.
             if self.con_audio and self.grabador_audio:
                 self.grabador_audio.pausar()
+            self._detener_ffmpeg_actual()
             self.estado = "pausado"
 
     def reanudar(self):
         if self.estado == "pausado":
-            self._lanzar_ffmpeg()
+            # Reiniciar primero el capturador de audio conserva el orden de los
+            # fragmentos; los timestamps reales corrigen la latencia de arranque.
             if self.con_audio and self.grabador_audio:
                 self.grabador_audio.reanudar()
+            self._lanzar_ffmpeg()
             self.estado = "grabando"
 
     def detener(self) -> str | None:
@@ -156,31 +161,54 @@ class GrabadorPantalla:
                     abs_diff = abs(diff)
                     ruta_mux = os.path.join(CARPETA_TEMPORAL, f"mux_{self._identificador_base}_part{i}.mp4")
                     
+                    # Reiniciar PTS de ambas pistas es crítico: al pausar se
+                    # crean procesos nuevos y sus timestamps no son compatibles
+                    # para copiar/concatenar directamente. El desfase medido se
+                    # aplica como silencio/frames negros, nunca con itsoffset.
                     if diff >= 0:
-                        comando = [
-                            obtener_ruta_ffmpeg(), "-y",
-                            "-i", ruta_vid,
-                            "-itsoffset", f"{abs_diff:.6f}",
-                            "-i", ruta_aud,
-                            "-c:v", "copy",
-                            "-c:a", "aac",
-                            "-shortest",
-                            ruta_mux,
-                        ]
+                        filtro = (
+                            "[0:v]setpts=PTS-STARTPTS[v];"
+                            f"[1:a]asetpts=PTS-STARTPTS,adelay={round(abs_diff * 1000)}:all=1[a]"
+                        )
                     else:
-                        comando = [
-                            obtener_ruta_ffmpeg(), "-y",
-                            "-itsoffset", f"{abs_diff:.6f}",
-                            "-i", ruta_vid,
-                            "-i", ruta_aud,
-                            "-c:v", "copy",
-                            "-c:a", "aac",
-                            "-shortest",
-                            ruta_mux,
-                        ]
-                    
-                    subprocess.run(comando, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-                    rutas_para_concat.append(ruta_mux)
+                        filtro = (
+                            f"[0:v]setpts=PTS-STARTPTS,"
+                            f"tpad=start_duration={abs_diff:.6f}:start_mode=add[v];"
+                            "[1:a]asetpts=PTS-STARTPTS[a]"
+                        )
+
+                    comando = [
+                        obtener_ruta_ffmpeg(), "-y",
+                        "-i", ruta_vid,
+                        "-i", ruta_aud,
+                        "-filter_complex", filtro,
+                        "-map", "[v]",
+                        "-map", "[a]",
+                        # Re-encode por fragmento deja PTS 0 y codecs idénticos;
+                        # stream copy conservaba los timestamps inválidos.
+                        "-c:v", "libx265",
+                        "-preset", "fast",
+                        "-crf", "28",
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac",
+                        "-shortest",
+                        "-movflags", "+faststart",
+                        ruta_mux,
+                    ]
+
+                    ruta_log_mux = os.path.join(
+                        CARPETA_LOGS, f"mux_{self._identificador_base}_part{i}.log"
+                    )
+                    with open(ruta_log_mux, "w", encoding="utf-8") as log_mux:
+                        resultado = subprocess.run(
+                            comando,
+                            stdout=log_mux,
+                            stderr=log_mux,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                    # Si un codec/dispositivo concreto falla, conservar el video
+                    # en lugar de generar una grabación final corrupta.
+                    rutas_para_concat.append(ruta_mux if resultado.returncode == 0 and os.path.exists(ruta_mux) else ruta_vid)
                 else:
                     rutas_para_concat.append(ruta_vid)
         else:
@@ -202,8 +230,10 @@ class GrabadorPantalla:
                 obtener_ruta_ffmpeg(), "-y",
                 "-f", "concat",
                 "-safe", "0",
+                "-fflags", "+genpts",
                 "-i", ruta_concat,
                 "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
                 self.ruta_final
             ]
             subprocess.run(

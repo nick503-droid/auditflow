@@ -619,7 +619,7 @@ class AdminFrame(ctk.CTkFrame):
             checkboxes.append((var, url))
             ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=6)
 
-            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
+            lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=128, height=72, fg_color=BG_COLOR, corner_radius=6)
             lbl_img.pack(side="left", padx=8, pady=6)
             
             import re
@@ -654,7 +654,7 @@ class AdminFrame(ctk.CTkFrame):
                 fg_color="transparent", hover_color=ACCENT_HOVER,
                 border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                 font=get_font(size=12, weight="bold"),
-                command=lambda u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u)
+                command=lambda u=url, p=popup: self._abrir_evidencia_y_cerrar_popup(p, u)
             ).pack(side="right", padx=(4, 8))
 
             if item["id"]:
@@ -667,20 +667,7 @@ class AdminFrame(ctk.CTkFrame):
                     command=_del_ev
                 ).pack(side="right", padx=(4, 0))
             
-            # Load thumbnail in background
-            def _cargar_thumb(u=url, lbl=lbl_img):
-                try:
-                    img = generar_miniatura(u, size=(64, 48))
-                    if img:
-                        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                        lbl.configure(text="", image=ctk_img)
-                        lbl.image = ctk_img
-                    else:
-                        lbl.configure(text="N/A", text_color=TEXT_SEC)
-                except Exception:
-                    lbl.configure(text="N/A", text_color=TEXT_SEC)
-            
-            threading.Thread(target=_cargar_thumb, daemon=True).start()
+            self._cargar_previsualizacion_async(url, lbl_img)
 
     # ─── VISTA REPORTE DETALLE ───────────────────────────────────────────────
 
@@ -782,7 +769,7 @@ class AdminFrame(ctk.CTkFrame):
                 checkboxes_rep.append((var, url))
                 ctk.CTkCheckBox(f_ev, text="", variable=var, width=24).pack(side="left", padx=(14, 4), pady=6)
                 
-                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=64, height=48, fg_color=BG_COLOR, corner_radius=6)
+                lbl_img = ctk.CTkLabel(f_ev, text="Cargando...", width=128, height=72, fg_color=BG_COLOR, corner_radius=6)
                 lbl_img.pack(side="left", padx=8, pady=6)
                 
                 import re
@@ -835,19 +822,35 @@ class AdminFrame(ctk.CTkFrame):
                         command=_del_rep_ev
                     ).pack(side="right", padx=(4, 0))
                 
-                def _cargar_thumb_rep(u=url, lbl=lbl_img):
-                    try:
-                        img = generar_miniatura(u, size=(64, 48))
-                        if img:
-                            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                            lbl.configure(text="", image=ctk_img)
-                            lbl.image = ctk_img
-                        else:
-                            lbl.configure(text="N/A", text_color=TEXT_SEC)
-                    except Exception:
-                        lbl.configure(text="N/A", text_color=TEXT_SEC)
-                
-                threading.Thread(target=_cargar_thumb_rep, daemon=True).start()
+                self._cargar_previsualizacion_async(url, lbl_img)
+
+    def _abrir_evidencia_y_cerrar_popup(self, popup, url: str):
+        """Cierra el visor de evidencias antes de abrir el archivo externo."""
+        if popup.winfo_exists():
+            popup.destroy()
+        __import__("api.client").client.descargar_y_abrir_evidencia(url)
+
+    def _cargar_previsualizacion_async(self, url: str, etiqueta):
+        """Genera miniaturas fuera del hilo UI y actualiza CustomTkinter de forma segura."""
+        def _worker():
+            try:
+                imagen = generar_miniatura(url, size=(128, 72))
+            except Exception:
+                imagen = None
+
+            def _aplicar():
+                if not etiqueta.winfo_exists():
+                    return
+                if imagen:
+                    ctk_img = ctk.CTkImage(light_image=imagen, dark_image=imagen, size=imagen.size)
+                    etiqueta.configure(text="", image=ctk_img)
+                    etiqueta.image = ctk_img  # Mantener referencia viva para Tk.
+                else:
+                    etiqueta.configure(text="No disponible", text_color=TEXT_SEC)
+
+            self.after(0, _aplicar)
+
+        threading.Thread(target=_worker, daemon=True, name="AuditFlowThumbnail").start()
 
     # ─── Utilidades de descarga ──────────────────────────────────────────────────────
 

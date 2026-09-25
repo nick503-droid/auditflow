@@ -153,6 +153,11 @@ export class BitacorasService {
     });
     await this.evidenciasRepo.save(nueva);
 
+    // La evidencia vive en una tabla hija, por lo que su inserción no modifica
+    // automáticamente la fecha de la bitácora. Forzamos el touch para que el
+    // endpoint delta (/since/:timestamp) la devuelva a los clientes PC.
+    await this.tocarBitacora(bitacora.id);
+
     return this.findOne(bitacora.id);
   }
 
@@ -172,7 +177,20 @@ export class BitacorasService {
     }
 
     // 2. Eliminar registro de la DB (Hard Delete)
-    return this.evidenciasRepo.delete(id);
+    const resultado = await this.evidenciasRepo.delete(id);
+
+    // Igual que al crearla, la eliminación de una hija debe invalidar el
+    // cursor delta de la bitácora padre.
+    if (resultado.affected) {
+      await this.tocarBitacora(evidencia.bitacora_id);
+    }
+
+    return resultado;
+  }
+
+  /** Actualiza explícitamente el cursor de sincronización de la bitácora. */
+  private async tocarBitacora(bitacoraId: string): Promise<void> {
+    await this.bitacorasRepo.update(bitacoraId, { updated_at: new Date() });
   }
 
   /**

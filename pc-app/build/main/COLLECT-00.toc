@@ -1,7 +1,4 @@
-([('.env',
-   'C:\\Users\\Nick\\Documents\\Projects\\auditflow\\pc-app\\.env',
-   'DATA'),
-  ('PIL\\_avif.cp310-win_amd64.pyd',
+([('PIL\\_avif.cp310-win_amd64.pyd',
    'C:\\Users\\Nick\\Documents\\Projects\\auditflow\\pc-app\\venv\\lib\\site-packages\\PIL\\_avif.cp310-win_amd64.pyd',
    'EXTENSION'),
   ('PIL\\_imaging.cp310-win_amd64.pyd',

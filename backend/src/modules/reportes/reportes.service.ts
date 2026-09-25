@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThanOrEqual, Repository } from 'typeorm';
 import { Reporte } from './entities/reporte.entity';
@@ -49,10 +49,31 @@ export class ReportesService {
   }
 
   async update(id: string, dto: UpdateReporteDto) {
+    const { version, ...cambios } = dto;
     const reporte = await this.findOne(id);
     if (!reporte) return null;
-    Object.assign(reporte, dto);
-    await this.reportesRepo.save(reporte);
+
+    // La comprobación debe formar parte del UPDATE. Consultar y luego save()
+    // permite que dos PCs pasen la comprobación y una pise a la otra.
+    if (version === undefined || version === null) {
+      throw new ConflictException('El cliente debe actualizar el reporte antes de guardar.');
+    }
+
+    const resultado = await this.reportesRepo
+      .createQueryBuilder()
+      .update(Reporte)
+      .set({
+        ...cambios,
+        updated_at: new Date(),
+        version: () => 'version + 1',
+      })
+      .where('id = :id AND version = :version', { id, version })
+      .execute();
+
+    if (!resultado.affected) {
+      throw new ConflictException('El reporte fue modificado por otro auditor.');
+    }
+
     return this.findOne(id);
   }
 

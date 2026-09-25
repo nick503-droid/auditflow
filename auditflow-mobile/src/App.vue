@@ -85,13 +85,18 @@
               <div class="custom-otp-container mb-8" @click="focusInput">
                 <input
                   ref="hiddenInput"
-                  v-model="codigo"
+                  :value="codigo"
                   type="text"
                   autocapitalize="characters"
+                  autocomplete="off"
+                  autocorrect="off"
+                  spellcheck="false"
                   maxlength="6"
                   class="hidden-input"
                   :disabled="subiendo"
-                  autocomplete="one-time-code"
+                  @input="sincronizarCodigo"
+                  @compositionupdate="sincronizarCodigo"
+                  @compositionend="sincronizarCodigo"
                 />
                 <div class="otp-boxes">
                   <div
@@ -352,6 +357,28 @@ onMounted(() => {
 
 const codigo = ref('');
 const hiddenInput = ref(null);
+
+/**
+ * Sincroniza el valor nativo en cada evento, incluso cuando el IME de Android
+ * todavía mantiene una composición activa. No usamos v-model porque su
+ * protección de composición espera a compositionend en algunos teclados.
+ */
+const sincronizarCodigo = (event) => {
+  const input = event.target;
+  const valorNormalizado = input.value
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 6);
+
+  codigo.value = valorNormalizado;
+
+  // Mantiene el buffer nativo y el estado reactivo exactamente alineados.
+  // Es importante para IMEs Samsung que emiten compositionupdate antes de input.
+  if (input.value !== valorNormalizado) {
+    input.value = valorNormalizado;
+  }
+};
+
 const focusInput = () => {
   if (hiddenInput.value) {
     hiddenInput.value.focus();
