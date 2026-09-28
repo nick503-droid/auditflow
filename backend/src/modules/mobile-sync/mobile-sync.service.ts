@@ -155,6 +155,11 @@ export class MobileSyncService {
           con_audio: conAudio,
         });
         await this.evidenciasBitacoraRepo.save(nueva);
+
+        // La app Android entra por mobile-sync y crea la evidencia directamente
+        // en la tabla hija. Sin este touch, updated_at de la bitácora no cambia
+        // y el delta polling de las PC nunca recibe el nuevo conteo.
+        await this.bitacorasRepo.update(info.id, { updated_at: new Date() });
       } else {
         const nueva = this.evidenciasReporteRepo.create({
           reporte_id: info.id,

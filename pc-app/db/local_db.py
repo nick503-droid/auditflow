@@ -1,6 +1,10 @@
 import sqlite3
 import os
 import re
+import base64
+import hashlib
+import hmac
+import time
 from datetime import datetime
 import contextlib
 
@@ -198,6 +202,19 @@ def inicializar_db():
                 actualizado_en TEXT NOT NULL
             )
         """)
+        conexion.execute("""
+            CREATE TABLE IF NOT EXISTS acceso_offline (
+                username TEXT PRIMARY KEY,
+                usuario_id TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                role TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                verifier TEXT NOT NULL,
+                iterations INTEGER NOT NULL,
+                require_password_change INTEGER NOT NULL DEFAULT 0,
+                sincronizado_en INTEGER NOT NULL
+            )
+        """)
         conexion.commit()
 
         # ─── Migraciones idempotentes ─────────────────────────────────────────
@@ -258,9 +275,15 @@ def limpiar_borradores_fantasma():
         )
         conexion.commit()
 
-def obtener_o_crear_borrador(usuario_id: str, restaurante_id: str) -> dict:
+def obtener_o_crear_borrador(
+    usuario_id: str,
+    restaurante_id: str,
+    reporte_remoto_id: str | None = None,
+) -> dict:
     """
     Busca si ya existe un borrador de HOY para este usuario+restaurante.
+    Cuando se proporciona ``reporte_remoto_id``, sólo reutiliza el borrador de
+    ese reporte exacto; dos reportes del mismo restaurante y día no se mezclan.
     Si existe, lo regresa. Si no, crea uno vacío y lo regresa.
     Esto es lo que permite cerrar la app a medio reporte y que al volver
     a abrir, continúe donde quedó.
@@ -268,19 +291,27 @@ def obtener_o_crear_borrador(usuario_id: str, restaurante_id: str) -> dict:
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     with db_session() as conexion:
 
-        fila = conexion.execute(
-            """SELECT * FROM reporte_borrador
-               WHERE usuario_id = ? AND restaurante_id = ? AND fecha_jornada = ?""",
-            (usuario_id, restaurante_id, fecha_hoy),
-        ).fetchone()
+        if reporte_remoto_id:
+            fila = conexion.execute(
+                "SELECT * FROM reporte_borrador WHERE reporte_remoto_id = ?",
+                (reporte_remoto_id,),
+            ).fetchone()
+        else:
+            fila = conexion.execute(
+                """SELECT * FROM reporte_borrador
+                   WHERE usuario_id = ? AND restaurante_id = ? AND fecha_jornada = ?
+                     AND (reporte_remoto_id IS NULL OR reporte_remoto_id = '')""",
+                (usuario_id, restaurante_id, fecha_hoy),
+            ).fetchone()
 
         if fila:
             return dict(fila)
 
         cursor = conexion.execute(
-            """INSERT INTO reporte_borrador (usuario_id, restaurante_id, notas_finales, fecha_jornada, actualizado_en)
-               VALUES (?, ?, '', ?, ?)""",
-            (usuario_id, restaurante_id, fecha_hoy, datetime.now().isoformat()),
+            """INSERT INTO reporte_borrador
+               (usuario_id, restaurante_id, notas_finales, fecha_jornada, reporte_remoto_id, actualizado_en)
+               VALUES (?, ?, '', ?, ?, ?)""",
+            (usuario_id, restaurante_id, fecha_hoy, reporte_remoto_id or '', datetime.now().isoformat()),
         )
         conexion.commit()
 
@@ -292,6 +323,7 @@ def obtener_o_crear_borrador(usuario_id: str, restaurante_id: str) -> dict:
             "restaurante_id": restaurante_id,
             "notas_finales": "",
             "fecha_jornada": fecha_hoy,
+            "reporte_remoto_id": reporte_remoto_id or '',
             "actualizado_en": datetime.now().isoformat(),
         }
 
@@ -343,13 +375,90 @@ def agregar_evidencia(
             (borrador_id,),
         ).fetchone()["total"]
 
-        conexion.execute(
+        cursor = conexion.execute(
             """INSERT INTO evidencia_borrador
                (reporte_borrador_id, ruta_local, con_audio, orden_reproduccion, carpeta_destino)
                VALUES (?, ?, ?, ?, ?)""",
             (borrador_id, ruta_local, int(con_audio), cantidad + 1, carpeta_destino),
         )
         conexion.commit()
+        return cursor.lastrowid
+
+
+# ─── Acceso offline de PC ────────────────────────────────────────────────────
+
+VIGENCIA_ACCESO_OFFLINE_SEGUNDOS = 7 * 24 * 60 * 60
+
+
+def actualizar_directorio_offline(usuarios: list[dict]) -> None:
+    """Reemplaza el directorio de verificadores recibido desde el servidor."""
+    ahora = int(time.time())
+    with db_session() as conexion:
+        usernames = []
+        for usuario in usuarios:
+            username = (usuario.get("username") or "").strip().lower()
+            if not username or not usuario.get("salt") or not usuario.get("verifier"):
+                continue
+            usernames.append(username)
+            conexion.execute(
+                """INSERT INTO acceso_offline
+                   (username, usuario_id, nombre, role, salt, verifier, iterations,
+                    require_password_change, sincronizado_en)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(username) DO UPDATE SET
+                     usuario_id=excluded.usuario_id, nombre=excluded.nombre,
+                     role=excluded.role, salt=excluded.salt, verifier=excluded.verifier,
+                     iterations=excluded.iterations,
+                     require_password_change=excluded.require_password_change,
+                     sincronizado_en=excluded.sincronizado_en""",
+                (
+                    username, usuario["id"], usuario["nombre"], usuario["role"],
+                    usuario["salt"], usuario["verifier"], int(usuario.get("iterations", 210000)),
+                    int(bool(usuario.get("require_password_change"))), ahora,
+                ),
+            )
+        if usernames:
+            placeholders = ", ".join("?" for _ in usernames)
+            conexion.execute(f"DELETE FROM acceso_offline WHERE username NOT IN ({placeholders})", usernames)
+        else:
+            conexion.execute("DELETE FROM acceso_offline")
+
+
+def validar_acceso_offline(username: str, password: str) -> tuple[dict | None, str | None]:
+    """Valida una contraseña localmente sin guardar jamás su texto plano."""
+    username_normalizado = username.strip().lower()
+    with db_session() as conexion:
+        fila = conexion.execute(
+            "SELECT * FROM acceso_offline WHERE username = ?", (username_normalizado,)
+        ).fetchone()
+    if not fila:
+        return None, "Esta cuenta aún no está disponible sin conexión en esta PC."
+
+    usuario = dict(fila)
+    if int(time.time()) - usuario["sincronizado_en"] > VIGENCIA_ACCESO_OFFLINE_SEGUNDOS:
+        return None, "El acceso offline venció. Conéctate al servidor para actualizarlo."
+    if usuario["require_password_change"]:
+        return None, "Debes conectarte para cambiar tu contraseña temporal."
+
+    try:
+        esperado = base64.b64decode(usuario["verifier"])
+        calculado = hashlib.pbkdf2_hmac(
+            "sha512", password.encode("utf-8"), base64.b64decode(usuario["salt"]),
+            int(usuario["iterations"]), dklen=len(esperado),
+        )
+    except (ValueError, TypeError):
+        return None, "No se pudo leer el acceso offline almacenado."
+
+    if not hmac.compare_digest(calculado, esperado):
+        return None, "Usuario o contraseña incorrectos."
+    return {
+        "id": usuario["usuario_id"],
+        "nombre": usuario["nombre"],
+        "username": usuario["username"],
+        "role": usuario["role"],
+        "require_password_change": False,
+        "offline_mode": True,
+    }, None
 
 
 def obtener_evidencias(borrador_id: int) -> list[dict]:
@@ -359,6 +468,13 @@ def obtener_evidencias(borrador_id: int) -> list[dict]:
             (borrador_id,),
         ).fetchall()
         return [dict(f) for f in filas]
+
+
+def eliminar_evidencia_borrador(evidencia_id: int) -> None:
+    """Quita de la cola únicamente una evidencia que ya llegó al servidor."""
+    with db_session() as conexion:
+        conexion.execute("DELETE FROM evidencia_borrador WHERE id = ?", (evidencia_id,))
+        conexion.commit()
 
 
 def eliminar_borrador_completo(borrador_id: int):

@@ -2,6 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 import threading
 from api.client import login
+from db.local_db import inicializar_db
 import session
 
 from ui.theme import (
@@ -15,6 +16,7 @@ class LoginFrame(ctk.CTkFrame):
     def __init__(self, master, controlador, **kwargs):
         super().__init__(master, fg_color=APP_BACKGROUND, **kwargs)
         self.controlador = controlador
+        inicializar_db()
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -158,10 +160,20 @@ class LoginFrame(ctk.CTkFrame):
 
     def _procesar_resultado(self, perfil: dict | None):
         self.btn_login.configure(state="normal", text="Ingresar →")
+        if perfil and perfil.get("__offline_login_error__"):
+            self._mostrar_error(perfil["__offline_login_error__"])
+            self.entry_pass.delete(0, "end")
+            self.entry_pass.focus()
+            return
         if perfil:
             if perfil.get("require_password_change"):
                 self._popup_cambiar_password(perfil)
             else:
+                if perfil.get("offline_mode"):
+                    self.lbl_error.configure(
+                        text="✓ Modo sin conexión: sesión local validada.",
+                        text_color=STATUS["warning"]["text"],
+                    )
                 self._finalizar_login(perfil)
         else:
             self._mostrar_error("Usuario o contraseña incorrectos.")

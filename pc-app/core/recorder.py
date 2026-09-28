@@ -56,9 +56,15 @@ class GrabadorPantalla:
             # concat de audio/video en algunos equipos.
             "-i", "desktop",
             "-pix_fmt", "yuv420p",
-            "-c:v", "libx265",
+            # H.264 tiene soporte nativo en Windows y reproductores comunes.
+            # HEVC/H.265 requería extensiones adicionales en varias PC cliente,
+            # por lo que un MP4 válido podía descargarse pero no reproducirse.
+            "-c:v", "libx264",
             "-preset", "fast",
             "-crf", "28",
+            # Escribir el índice al inicio permite abrirlo al terminar de bajar
+            # y evita incompatibilidades con visores de red más simples.
+            "-movflags", "+faststart",
             ruta_fragmento,
         ]
 
@@ -186,7 +192,7 @@ class GrabadorPantalla:
                         "-map", "[a]",
                         # Re-encode por fragmento deja PTS 0 y codecs idénticos;
                         # stream copy conservaba los timestamps inválidos.
-                        "-c:v", "libx265",
+                        "-c:v", "libx264",
                         "-preset", "fast",
                         "-crf", "28",
                         "-pix_fmt", "yuv420p",
@@ -234,6 +240,7 @@ class GrabadorPantalla:
                 "-i", ruta_concat,
                 "-c", "copy",
                 "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
                 self.ruta_final
             ]
             subprocess.run(

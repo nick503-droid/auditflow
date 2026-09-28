@@ -33,6 +33,7 @@ from db.local_db import (
     actualizar_notas,
     agregar_evidencia,
     obtener_evidencias,
+    eliminar_evidencia_borrador,
     eliminar_borrador_completo,
     marcar_reporte_pendiente,
     marcar_reporte_sincronizado,
@@ -90,6 +91,9 @@ class ReportesFrame(ctk.CTkFrame):
         self._texto_sucio = False
         self._guardando_texto = False
         self._cambio_remoto_pendiente = None
+        # Sólo una subida de evidencias por reporte a la vez: evita que el
+        # polling y un clic del usuario publiquen la misma cola dos veces.
+        self._lock_sync_evidencias = threading.Lock()
 
         # Búsqueda de reportes en nube
         self.reportes_data = {}   # titulo_clave → dict reporte
@@ -111,6 +115,9 @@ class ReportesFrame(ctk.CTkFrame):
         # que el time.sleep(5) expire) al cambiar de pantalla o cerrar la app.
         self.stop_event = threading.Event()
         self._hilo_polling: threading.Thread | None = None
+        self._stop_event_directorio = threading.Event()
+        self._hilo_directorio: threading.Thread | None = None
+        self._firma_directorio = None
 
         # Borrador SQLite (se inicializa cuando se conoce el restaurante)
         self.borrador = None
@@ -123,6 +130,12 @@ class ReportesFrame(ctk.CTkFrame):
         self._construir_ui_setup()
         # Cargar catálogos en background
         threading.Thread(target=self._cargar_datos_setup, daemon=True).start()
+        self._hilo_directorio = threading.Thread(
+            target=self._polling_directorio_worker,
+            daemon=True,
+            name="ReportesDirectoryPolling",
+        )
+        self._hilo_directorio.start()
 
         self.bind("<Destroy>", self._al_destruir)
 
@@ -323,6 +336,18 @@ class ReportesFrame(ctk.CTkFrame):
         borradores = listar_borradores_activos()
         self.after(0, lambda: self._actualizar_lista_reportes(reportes, borradores))
 
+    def _polling_directorio_worker(self):
+        """Mantiene el directorio al día aunque otro auditor cree un reporte."""
+        while not self._stop_event_directorio.is_set():
+            reportes = obtener_reportes()
+            borradores = listar_borradores_activos()
+            # obtener_reportes() devuelve [] tanto si no hay registros como si
+            # hubo un error de red. Tras una carga válida, no vaciamos una lista
+            # visible sólo por un fallo transitorio.
+            if reportes or self._firma_directorio is None:
+                self.after(0, self._actualizar_lista_reportes, reportes, borradores)
+            self._stop_event_directorio.wait(2)
+
     def _actualizar_restaurantes(self, restaurantes: list):
         if not self.winfo_exists() or not hasattr(self, "dropdown_restaurante"):
             return
@@ -335,8 +360,32 @@ class ReportesFrame(ctk.CTkFrame):
             self.dropdown_restaurante.set("Sin conexión — escribe el título igual")
 
     def _actualizar_lista_reportes(self, reportes: list, borradores: list = None):
-        if not self.winfo_exists() or not hasattr(self, "lista_reportes"):
+        if (
+            not self.winfo_exists()
+            or not hasattr(self, "lista_reportes")
+            or not self.lista_reportes.winfo_exists()
+        ):
             return
+
+        # No redibujar cada dos segundos si nada cambió: mantiene el foco del
+        # buscador y evita parpadeo innecesario en el directorio.
+        firma = (
+            tuple(
+                sorted(
+                    (str(r.get("id", "")), str(r.get("updated_at", "")), str(r.get("version", "")), str(r.get("titulo", "")))
+                    for r in (reportes or [])
+                )
+            ),
+            tuple(
+                sorted(
+                    (str(b.get("id", "")), str(b.get("reporte_remoto_id", "")), str(b.get("actualizado_en", "")), str(b.get("titulo", "")))
+                    for b in (borradores or [])
+                )
+            ),
+        )
+        if firma == self._firma_directorio:
+            return
+        self._firma_directorio = firma
 
         self.reportes_data = {}
         
@@ -387,7 +436,7 @@ class ReportesFrame(ctk.CTkFrame):
                 text="Sin conexión o sin reportes previos."
             )
 
-        self._renderizar_tarjetas_reportes(list(self.reportes_data.keys()))
+        self._on_buscar_cambiado()
 
     def _on_restaurante_seleccionado(self, nombre: str):
         self.restaurante_seleccionado = self.restaurantes_data.get(nombre)
@@ -477,6 +526,7 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _on_cargar_reporte_nube(self, reporte: dict):
         """Carga un reporte existente (de la nube o local) y abre el editor."""
+        self._stop_event_directorio.set()
         self.reporte_remoto_id = reporte.get("id")
         self.reporte_version = reporte.get("version")
         self.codigo_reporte = reporte.get("codigo", "SINCOD")
@@ -501,7 +551,7 @@ class ReportesFrame(ctk.CTkFrame):
                 marcar_reporte_sincronizado(self.borrador["id"], self.reporte_remoto_id)
         else:
             self.borrador = obtener_o_crear_borrador(
-                self.usuario["id"], self.restaurante["id"]
+                self.usuario["id"], self.restaurante["id"], self.reporte_remoto_id
             )
             # Guardamos el título real para que no quede como "Sin título" si sale sin sincronizar
             marcar_reporte_pendiente(
@@ -591,6 +641,7 @@ class ReportesFrame(ctk.CTkFrame):
     def _volver_al_menu_directo(self):
         # Detener el hilo de polling de forma limpia antes de navegar.
         self.stop_event.set()
+        self._stop_event_directorio.set()
         if self._hilo_polling and self._hilo_polling.is_alive():
             self._hilo_polling.join(timeout=1)
         try:
@@ -864,6 +915,9 @@ class ReportesFrame(ctk.CTkFrame):
                 data = obtener_reporte(self.reporte_remoto_id)
                 if data:
                     self.after(0, self._aplicar_estado_remoto, data)
+                # Igual que el texto: cualquier evidencia que quedó en cola
+                # local se reintenta en segundo plano hasta llegar a la nube.
+                self._solicitar_sincronizacion_evidencias()
             # wait() se interrumpe de inmediato cuando stop_event.set() se llama
             self.stop_event.wait(2)
 
@@ -1209,16 +1263,9 @@ class ReportesFrame(ctk.CTkFrame):
                 messagebox.showerror("Error", f"No se pudo guardar la evidencia:\n{e}")
                 return
                 
-            carpeta_destino = self._prefijo_nube()
-            agregar_evidencia(
-                self.borrador["id"],
-                ruta_destino,
-                bool(self.switch_audio.get()),
-                carpeta_destino=carpeta_destino,
+            self._registrar_evidencia_para_sincronizar(
+                ruta_destino, bool(self.switch_audio.get()), self._prefijo_nube()
             )
-            self._refrescar_lista_evidencias()
-            if self.label_estado_evidencias.winfo_exists():
-                actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
 
         open_snipping_tool(self.controlador, _on_capture)
 
@@ -1233,16 +1280,9 @@ class ReportesFrame(ctk.CTkFrame):
             messagebox.showerror("Error al guardar", f"No se pudo guardar la captura:\n{e}")
             return
 
-        carpeta_destino = self._prefijo_nube()
-        agregar_evidencia(
-            self.borrador["id"],
-            ruta_destino,
-            bool(self.switch_audio.get()),
-            carpeta_destino=carpeta_destino,
+        self._registrar_evidencia_para_sincronizar(
+            ruta_destino, bool(self.switch_audio.get()), self._prefijo_nube()
         )
-        self._refrescar_lista_evidencias()
-        if self.label_estado_evidencias.winfo_exists():
-            actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
 
     def _tomar_screenshot(self):
         """Abre el selector visual de captura."""
@@ -1349,18 +1389,9 @@ class ReportesFrame(ctk.CTkFrame):
                 messagebox.showerror("Error al copiar", str(e))
                 return
 
-        carpeta_destino = self._prefijo_nube()
-        agregar_evidencia(
-            self.borrador["id"],
-            ruta_destino,
-            con_audio,
-            carpeta_destino=carpeta_destino,
+        self._registrar_evidencia_para_sincronizar(
+            ruta_destino, con_audio, self._prefijo_nube()
         )
-        self._refrescar_lista_evidencias()
-
-        # Indicar que hay evidencias sin subir
-        if self.label_estado_evidencias.winfo_exists():
-            actualizar_indicador_reporte(self.label_estado_evidencias, "offline")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # GRABACIÓN DE PANTALLA
@@ -1369,6 +1400,7 @@ class ReportesFrame(ctk.CTkFrame):
     def _al_destruir(self, event):
         # Detener el hilo de polling de forma limpia e inmediata.
         self.stop_event.set()
+        self._stop_event_directorio.set()
         if self._hilo_polling and self._hilo_polling.is_alive():
             self._hilo_polling.join(timeout=1)
         self._ocultar_indicador_rec()
@@ -1378,20 +1410,22 @@ class ReportesFrame(ctk.CTkFrame):
         if estado == "detenido":
             self.boton_grabar.configure(
                 text="🔴  Grabar pantalla", 
-                fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"]
+                fg_color=STATUS["error"]["text"], hover_color=STATUS["error"]["text"], state="normal"
             )
             self.boton_detener.pack_forget()
         elif estado == "grabando":
             self.boton_grabar.configure(
                 text="⏸️  Pausar", 
-                fg_color=STATUS["warning"]["text"], hover_color=STATUS["warning"]["text"]
+                fg_color=STATUS["warning"]["text"], hover_color=STATUS["warning"]["text"], state="normal"
             )
+            self.boton_detener.configure(state="normal")
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
         elif estado == "pausado":
             self.boton_grabar.configure(
                 text="▶️  Reanudar", 
-                fg_color=STATUS["success"]["text"], hover_color=PRIMARY
+                fg_color=STATUS["success"]["text"], hover_color=PRIMARY, state="normal"
             )
+            self.boton_detener.configure(state="normal")
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
 
     def _toggle_grabacion(self):
@@ -1444,22 +1478,20 @@ class ReportesFrame(ctk.CTkFrame):
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
-        self._actualizar_botones_grabacion()
+        self.boton_grabar.configure(state="disabled", text="Procesando video…")
+        self.boton_detener.configure(state="disabled")
 
         def procesar_video():
             ruta_final = self.grabador.detener()
             if ruta_final and os.path.exists(ruta_final):
                 con_audio = bool(self.switch_audio.get())
-                carpeta_destino = self._prefijo_nube()
-                agregar_evidencia(
-                    self.borrador["id"],
-                    ruta_final,
-                    con_audio=con_audio,
-                    carpeta_destino=carpeta_destino,
+                self.after(
+                    0,
+                    lambda: self._registrar_evidencia_para_sincronizar(
+                        ruta_final, con_audio, self._prefijo_nube()
+                    ),
                 )
-                
-                self.after(0, self._refrescar_lista_evidencias)
-                self.after(0, lambda: self._actualizar_estado_lbl("offline"))
+            self.after(0, self._actualizar_botones_grabacion)
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()
@@ -1467,6 +1499,87 @@ class ReportesFrame(ctk.CTkFrame):
     def _actualizar_estado_lbl(self, estado):
         if self.label_estado_evidencias.winfo_exists():
             actualizar_indicador_reporte(self.label_estado_evidencias, estado)
+
+    def _registrar_evidencia_para_sincronizar(
+        self, ruta_local: str, con_audio: bool, carpeta_destino: str
+    ) -> None:
+        """Guarda primero en cola y la publica de inmediato si hay conexión."""
+        agregar_evidencia(
+            self.borrador["id"],
+            ruta_local,
+            con_audio,
+            carpeta_destino=carpeta_destino,
+        )
+        self._refrescar_lista_evidencias()
+        self._actualizar_estado_lbl("syncing" if self.reporte_remoto_id else "offline")
+        self._solicitar_sincronizacion_evidencias()
+
+    def _solicitar_sincronizacion_evidencias(self) -> None:
+        """Inicia un único intento de envío; los fallos permanecen en SQLite."""
+        if not self.reporte_remoto_id or not self._lock_sync_evidencias.acquire(blocking=False):
+            return
+
+        def _worker():
+            try:
+                exito = self._subir_evidencias_pendientes()
+                self.after(0, self._terminar_sincronizacion_evidencias, exito)
+            finally:
+                self._lock_sync_evidencias.release()
+
+        threading.Thread(target=_worker, daemon=True, name="ReportesEvidenciasSync").start()
+
+    def _subir_evidencias_pendientes(self) -> bool:
+        """Sube la cola local y sólo la borra después de crear su registro remoto."""
+        if not self.reporte_remoto_id:
+            return False
+
+        for evidencia in obtener_evidencias(self.borrador["id"]):
+            ruta = evidencia.get("ruta_local", "")
+            if not ruta or not os.path.isfile(ruta):
+                print(f"[reportes] Evidencia local no encontrada: {ruta}")
+                return False
+
+            prefijo = evidencia.get("carpeta_destino") or self._prefijo_nube()
+            url_subida, error = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
+            if not url_subida:
+                print(f"[reportes] No se pudo subir evidencia: {error}")
+                return False
+
+            creada = crear_evidencia_reporte({
+                "reporte_id": self.reporte_remoto_id,
+                "evidencia_url": url_subida,
+                "con_audio": bool(evidencia.get("con_audio")),
+                "orden_reproduccion": evidencia.get("orden_reproduccion", 0),
+            })
+            if not creada:
+                print("[reportes] El archivo subió, pero no se pudo vincular la evidencia.")
+                return False
+
+            eliminar_evidencia_borrador(evidencia["id"])
+            if es_archivo_grabado(ruta):
+                try:
+                    os.remove(ruta)
+                except OSError:
+                    pass
+            self.after(0, self._agregar_evidencia_remota, creada)
+
+        return True
+
+    def _agregar_evidencia_remota(self, evidencia: dict) -> None:
+        """Refleja el éxito local de inmediato; el polling confirma a las demás PC."""
+        existentes = getattr(self, "evidencias_nube", [])
+        evidencia_id = evidencia.get("id")
+        if evidencia_id and any(ev.get("id") == evidencia_id for ev in existentes):
+            return
+        self.evidencias_nube = [*existentes, evidencia]
+        self._refrescar_lista_evidencias()
+
+    def _terminar_sincronizacion_evidencias(self, exito: bool) -> None:
+        if not hasattr(self, "label_estado_evidencias") or not self.label_estado_evidencias.winfo_exists():
+            return
+        pendientes = obtener_evidencias(self.borrador["id"])
+        actualizar_indicador_reporte(self.label_estado_evidencias, "ok" if exito and not pendientes else "offline")
+        self._refrescar_lista_evidencias()
 
     def _mostrar_indicador_rec(self):
         self._segundos_grabacion = 0
@@ -1574,7 +1687,8 @@ class ReportesFrame(ctk.CTkFrame):
                 if not res:
                     return False
 
-            # 2. Subir evidencias
+            # 2. Terminar la misma cola inmediata usada por capturas, videos y
+            # adjuntos. No se duplican subidas si el polling ya está trabajando.
             evidencias = obtener_evidencias(self.borrador["id"])
 
             def _set_ev_estado(estado):
@@ -1585,28 +1699,15 @@ class ReportesFrame(ctk.CTkFrame):
 
             if evidencias:
                 _set_ev_estado("syncing")
-
-            for ev in evidencias:
-                prefijo = ev.get("carpeta_destino") or self._prefijo_nube()
-                url_subida, _ = subir_archivo_con_destino(ev["ruta_local"], prefijo_nube=prefijo)
-                if url_subida is None:
+                if not self._lock_sync_evidencias.acquire(blocking=False):
                     _set_ev_estado("offline")
                     return False
-
-                crear_evidencia_reporte({
-                    "reporte_id": self.reporte_remoto_id,
-                    "evidencia_url": url_subida,
-                    "con_audio": bool(ev["con_audio"]),
-                    "orden_reproduccion": ev["orden_reproduccion"],
-                })
-
-                # Borrar TODAS las evidencias locales subidas
-                # (todas son copias hechas por _on_adjuntar o grabaciones de AuditFlow_Temp)
                 try:
-                    if os.path.exists(ev["ruta_local"]):
-                        os.remove(ev["ruta_local"])
-                except OSError:
-                    pass
+                    if not self._subir_evidencias_pendientes():
+                        _set_ev_estado("offline")
+                        return False
+                finally:
+                    self._lock_sync_evidencias.release()
 
             _set_ev_estado("ok")
             eliminar_borrador_completo(self.borrador["id"])

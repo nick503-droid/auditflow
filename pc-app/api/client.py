@@ -124,11 +124,32 @@ def login(username: str, password: str) -> dict | None:
             timeout=5
         )
         if response.status_code == 200:
-            return response.json()
+            perfil = response.json()
+            # Tras un login online, actualizar en segundo plano el directorio
+            # que permitirá los siguientes accesos sin red en esta PC.
+            sincronizar_directorio_offline()
+            return perfil
         return None
     except requests.exceptions.RequestException as e:
-        print(f"Error de red al intentar login: {e}")
-        return None
+        print(f"Servidor inaccesible; intentando acceso offline: {e}")
+        from db.local_db import validar_acceso_offline
+        perfil, motivo = validar_acceso_offline(username, password)
+        if perfil:
+            return perfil
+        return {"__offline_login_error__": motivo}
+
+
+def sincronizar_directorio_offline() -> bool:
+    """Descarga verificadores de acceso offline para la app de PC."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/auth/offline-directory", timeout=8)
+        response.raise_for_status()
+        from db.local_db import actualizar_directorio_offline
+        actualizar_directorio_offline(response.json())
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"[offline-auth] No se pudo actualizar el directorio: {e}")
+        return False
 
 # ─── Catálogos ────────────────────────────────────────────────────────────────
 
@@ -141,11 +162,18 @@ def obtener_usuarios():
         )
         response.raise_for_status()
         data = response.json()
-        _guardar_cache("usuarios", data)
-        return data
+        # El catálogo de la UI no debe dejar hashes de contraseña en cache.json.
+        data_publica = [{k: v for k, v in usuario.items() if k != "password"} for usuario in data]
+        _guardar_cache("usuarios", data_publica)
+        return data_publica
     except requests.exceptions.RequestException as e:
         print(f"Servidor inaccesible, cargando usuarios desde caché local.")
-        return _leer_cache("usuarios")
+        cache = _leer_cache("usuarios")
+        # Limpia cachés generadas por versiones anteriores que incluían hashes.
+        cache_publica = [{k: v for k, v in usuario.items() if k != "password"} for usuario in cache]
+        if cache_publica != cache:
+            _guardar_cache("usuarios", cache_publica)
+        return cache_publica
 
 
 def obtener_restaurantes():
@@ -183,7 +211,9 @@ def crear_usuario(dto: dict) -> dict | None:
             timeout=10
         )
         response.raise_for_status()
-        return response.json()
+        resultado = response.json()
+        sincronizar_directorio_offline()
+        return resultado
     except requests.exceptions.RequestException as e:
         print(f"Error al crear usuario: {e}")
         if getattr(e, "response", None) is not None:
@@ -225,6 +255,7 @@ def cambiar_password(user_id: str, new_password: str) -> bool:
             timeout=10
         )
         response.raise_for_status()
+        sincronizar_directorio_offline()
         return True
     except requests.exceptions.RequestException as e:
         print(f"Error al cambiar contraseña: {e}")
@@ -658,24 +689,44 @@ def descargar_y_abrir_evidencia(url: str):
             import os
             import sys
             import subprocess
-            import time
+            import hashlib
+            from urllib.parse import urlparse
             
             url_real = normalizar_url(url)
-            nombre = url_real.split("/")[-1].split("?")[0]
-            if not nombre:
-                nombre = "evidencia_temp"
+            nombre = os.path.basename(urlparse(url_real).path)
+            _, extension = os.path.splitext(nombre)
+            # La caché anterior se indexaba solamente por nombre. Si una evidencia
+            # se reemplazaba o se consultaba otro servidor con el mismo nombre,
+            # podía abrirse un MP4 viejo/incompleto. La URL completa identifica el
+            # contenido de manera inequívoca y conserva la extensión para Windows.
+            clave = hashlib.sha256(url_real.encode("utf-8")).hexdigest()[:24]
+            nombre_cache = f"{clave}{extension or '.bin'}"
             
             temp_dir = os.path.join(tempfile.gettempdir(), "AuditFlow_Cache")
             os.makedirs(temp_dir, exist_ok=True)
-            ruta_temp = os.path.join(temp_dir, nombre)
+            ruta_temp = os.path.join(temp_dir, nombre_cache)
             
             # Si el archivo NO existe, o pesa 0 bytes, lo descargamos
             if not os.path.exists(ruta_temp) or os.path.getsize(ruta_temp) == 0:
-                resp = requests.get(url_real, stream=True, timeout=15)
-                resp.raise_for_status()
-                with open(ruta_temp, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                ruta_parcial = f"{ruta_temp}.part"
+                try:
+                    with requests.get(url_real, stream=True, timeout=(10, 60)) as resp:
+                        resp.raise_for_status()
+                        esperado = int(resp.headers.get("Content-Length", "0"))
+                        descargados = 0
+                        with open(ruta_parcial, "wb") as f:
+                            for chunk in resp.iter_content(chunk_size=65536):
+                                if chunk:
+                                    f.write(chunk)
+                                    descargados += len(chunk)
+                    if esperado and descargados != esperado:
+                        raise IOError(
+                            f"Descarga incompleta: {descargados} de {esperado} bytes"
+                        )
+                    os.replace(ruta_parcial, ruta_temp)
+                finally:
+                    if os.path.exists(ruta_parcial):
+                        os.remove(ruta_parcial)
             else:
                 # Si ya existe, actualizamos su fecha de modificación para que el limpiador sepa
                 # que ha sido accedido recientemente y "reinicie" su contador de vida útil.

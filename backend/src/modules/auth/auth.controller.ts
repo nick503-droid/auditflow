@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
   UnauthorizedException,
@@ -33,5 +34,11 @@ export class AuthController {
       // para no dar pistas de enumeración de usuarios
       throw new UnauthorizedException('Usuario o contraseña incorrectos');
     }
+  }
+
+  /** Directorio mínimo que las PC guardan para validar accesos sin red. */
+  @Get('offline-directory')
+  offlineDirectory() {
+    return this.authService.directorioOffline();
   }
 }

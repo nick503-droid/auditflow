@@ -19,6 +19,13 @@ export class Usuario {
   @Column({ type: 'varchar', nullable: true })
   password: string | null;
 
+  /** Verificador PBKDF2 para acceso offline de las PC, nunca la contraseña. */
+  @Column({ type: 'varchar', nullable: true })
+  offline_salt: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  offline_verifier: string | null;
+
   @Column({ type: 'enum', enum: RolUsuario, default: RolUsuario.EMPLEADO })
   role: RolUsuario;
 

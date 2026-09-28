@@ -1676,22 +1676,24 @@ class BitacorasFrame(ctk.CTkFrame):
             self.boton_grabar.configure(
                 text="\u25CF  Grabar pantalla  (Ctrl+K+L)",
                 fg_color=STATUS["error"]["text"], hover_color="#b91c1c",
-                text_color="#FFFFFF"
+                text_color="#FFFFFF", state="normal"
             )
             self.boton_detener.pack_forget()
         elif estado == "grabando":
             self.boton_grabar.configure(
                 text="\u23F8  Pausar",
                 fg_color=STATUS["warning"]["text"], hover_color="#b45309",
-                text_color="#FFFFFF"
+                text_color="#FFFFFF", state="normal"
             )
+            self.boton_detener.configure(state="normal")
             self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
         elif estado == "pausado":
             self.boton_grabar.configure(
                 text="\u25B6  Reanudar",
                 fg_color=STATUS["success"]["text"], hover_color=PRIMARY_HOVER,
-                text_color="#FFFFFF"
+                text_color="#FFFFFF", state="normal"
             )
+            self.boton_detener.configure(state="normal")
             self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
 
     def _toggle_grabacion(self):
@@ -1750,22 +1752,30 @@ class BitacorasFrame(ctk.CTkFrame):
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
-        self._actualizar_botones_grabacion()
+        self.boton_grabar.configure(state="disabled", text="Procesando video…")
+        self.boton_detener.configure(state="disabled")
 
         # Ejecutar FFmpeg (unión de video/audio) en un hilo para no congelar la UI
         def procesar_video():
             ruta_final = self.grabador.detener()
             if ruta_final and os.path.exists(ruta_final):
-                self.rutas_evidencia.append(ruta_final)
-            
-            # Actualizar la UI desde el hilo principal
-            self.after(0, self._refrescar_lista_evidencias)
-            self.after(0, lambda: self.label_archivo.configure(
-                text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta"
-            ))
+                self.after(0, self._adjuntar_video_grabado, ruta_final)
+            else:
+                self.after(0, self._actualizar_botones_grabacion)
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()
+
+    def _adjuntar_video_grabado(self, ruta_final: str):
+        """Añade y vincula automáticamente el video recién finalizado."""
+        if ruta_final not in self.rutas_evidencia:
+            self.rutas_evidencia.append(ruta_final)
+        self.label_archivo.configure(text="Subiendo video recién grabado…")
+        self._refrescar_lista_evidencias()
+        self._actualizar_botones_grabacion()
+        # Equivale al clic de "Subir y Vincular", pero sin obligar al auditor
+        # a realizar un segundo paso después de detener la grabación.
+        self._on_subir_evidencia()
 
     def _mostrar_indicador_rec(self):
         self._segundos_grabacion = 0

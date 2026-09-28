@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EvidenciaReporte } from './entities/evidencia-reporte.entity';
+import { Reporte } from '../reportes/entities/reporte.entity';
 import { CreateEvidenciaReporteDto } from './dto/create-evidencias-reporte.dto';
 import { UpdateEvidenciasReporteDto } from './dto/update-evidencias-reporte.dto';
 import { StorageService } from '../../common/storage/storage.service';
@@ -13,6 +14,8 @@ export class EvidenciasReporteService {
   constructor(
     @InjectRepository(EvidenciaReporte)
     private evidenciasRepo: Repository<EvidenciaReporte>,
+    @InjectRepository(Reporte)
+    private reportesRepo: Repository<Reporte>,
     private storageService: StorageService,
     private configService: ConfigService,
   ) {}
@@ -28,9 +31,13 @@ export class EvidenciasReporteService {
     });
   }
 
-  create(dto: CreateEvidenciaReporteDto) {
+  async create(dto: CreateEvidenciaReporteDto) {
     const nueva = this.evidenciasRepo.create(dto);
-    return this.evidenciasRepo.save(nueva);
+    const evidencia = await this.evidenciasRepo.save(nueva);
+    // Las evidencias son hijas del reporte. Tocar el padre permite que las
+    // demás PC detecten el cambio también al consultar sus listados/deltas.
+    await this.reportesRepo.update(dto.reporte_id, { updated_at: new Date() });
+    return evidencia;
   }
 
   async update(id: string, dto: UpdateEvidenciasReporteDto) {
@@ -49,7 +56,11 @@ export class EvidenciasReporteService {
       await this.storageService.eliminarArchivo(evidencia.evidencia_url);
     }
 
-    // 2. Eliminar registro de la DB (Hard Delete)
-    return this.evidenciasRepo.delete(id);
+    // 2. Eliminar registro de la DB (Hard Delete) y notificar el cambio al padre.
+    const resultado = await this.evidenciasRepo.delete(id);
+    if (resultado.affected) {
+      await this.reportesRepo.update(evidencia.reporte_id, { updated_at: new Date() });
+    }
+    return resultado;
   }
 }

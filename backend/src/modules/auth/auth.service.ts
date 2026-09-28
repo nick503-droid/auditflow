@@ -45,6 +45,8 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
+    await this.usuariosService.asegurarVerificadorOffline(usuario, password);
+
     // Devolver perfil limpio, sin el hash de la contraseña
     return {
       id: usuario.id,
@@ -53,5 +55,9 @@ export class AuthService implements OnModuleInit {
       role: usuario.role,
       require_password_change: usuario.require_password_change,
     };
+  }
+
+  directorioOffline() {
+    return this.usuariosService.directorioOffline();
   }
 }
