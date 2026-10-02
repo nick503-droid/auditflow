@@ -203,6 +203,25 @@ def inicializar_db():
             )
         """)
         conexion.execute("""
+            CREATE TABLE IF NOT EXISTS evidencia_bitacora_pendiente (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bitacora_local_id INTEGER,
+                b_id TEXT DEFAULT '',
+                codigo TEXT DEFAULT '',
+                ruta_local TEXT NOT NULL,
+                con_audio INTEGER DEFAULT 0,
+                carpeta_destino TEXT DEFAULT '',
+                evidencia_url TEXT DEFAULT '',
+                vinculada INTEGER DEFAULT 0,
+                creado_en TEXT NOT NULL,
+                FOREIGN KEY (bitacora_local_id) REFERENCES bitacora_pendiente(id)
+            )
+        """)
+        conexion.execute("""
+            CREATE INDEX IF NOT EXISTS idx_evidencia_bitacora_pendiente_local
+            ON evidencia_bitacora_pendiente(bitacora_local_id, b_id)
+        """)
+        conexion.execute("""
             CREATE TABLE IF NOT EXISTS acceso_offline (
                 username TEXT PRIMARY KEY,
                 usuario_id TEXT NOT NULL,
@@ -634,12 +653,16 @@ def guardar_bitacora_local(datos: dict) -> int:
         if local_id:
             conexion.execute(
                 """UPDATE bitacora_pendiente
-                   SET b_id=?, codigo=?, restaurante_id=?, usuario_id=?,
+                   SET b_id=CASE WHEN ?='' THEN b_id ELSE ? END,
+                       codigo=CASE WHEN ?='' THEN codigo ELSE ? END,
+                       restaurante_id=?, usuario_id=?,
                        descripcion=?, fecha=?, hora=?, urgencia=?,
                        pendiente=1, actualizado_en=?
                    WHERE id=?""",
                 (
+                    datos.get("b_id", "") or "",
                     datos.get("b_id", ""),
+                    datos.get("codigo", "") or "",
                     datos.get("codigo", ""),
                     datos["restaurante_id"],
                     datos["usuario_id"],
@@ -675,6 +698,16 @@ def guardar_bitacora_local(datos: dict) -> int:
         return nuevo_id
 
 
+def obtener_bitacora_local(local_id: int) -> dict | None:
+    """Lee la última asociación local/remota de una bitácora pendiente."""
+    with db_session() as conexion:
+        fila = conexion.execute(
+            "SELECT * FROM bitacora_pendiente WHERE id=?",
+            (local_id,),
+        ).fetchone()
+        return dict(fila) if fila else None
+
+
 def marcar_bitacora_sincronizada(local_id: int, b_id: str, codigo: str):
     """
     Se llama cuando el backend confirmó el guardado.
@@ -684,6 +717,14 @@ def marcar_bitacora_sincronizada(local_id: int, b_id: str, codigo: str):
     with db_session() as conexion:
         conexion.execute(
             "UPDATE bitacora_pendiente SET b_id=?, codigo=?, pendiente=0 WHERE id=?",
+            (b_id, codigo, local_id),
+        )
+        # Las evidencias en cola heredan el identificador y código remotos del
+        # registro padre para poder subirse en cuanto la bitácora exista en nube.
+        conexion.execute(
+            """UPDATE evidencia_bitacora_pendiente
+               SET b_id=?, codigo=?
+               WHERE bitacora_local_id=?""",
             (b_id, codigo, local_id),
         )
         conexion.commit()
@@ -699,6 +740,99 @@ def obtener_bitacoras_pendientes() -> list[dict]:
             "SELECT * FROM bitacora_pendiente WHERE pendiente=1 ORDER BY actualizado_en"
         ).fetchall()
         return [dict(f) for f in filas]
+
+
+def agregar_evidencia_bitacora_pendiente(
+    ruta_local: str,
+    con_audio: bool,
+    carpeta_destino: str,
+    *,
+    bitacora_local_id: int | None = None,
+    b_id: str = "",
+    codigo: str = "",
+) -> int:
+    """Registra en disco+SQLite una evidencia pendiente de una bitácora."""
+    with db_session() as conexion:
+        if bitacora_local_id is not None:
+            bitacora = conexion.execute(
+                "SELECT b_id, codigo FROM bitacora_pendiente WHERE id=?",
+                (bitacora_local_id,),
+            ).fetchone()
+            if bitacora:
+                b_id = b_id or bitacora["b_id"] or ""
+                codigo = codigo or bitacora["codigo"] or ""
+        cursor = conexion.execute(
+            """INSERT INTO evidencia_bitacora_pendiente
+               (bitacora_local_id, b_id, codigo, ruta_local, con_audio,
+                carpeta_destino, evidencia_url, creado_en)
+               VALUES (?, ?, ?, ?, ?, ?, '', ?)""",
+            (
+                bitacora_local_id,
+                b_id or "",
+                codigo or "",
+                ruta_local,
+                int(con_audio),
+                carpeta_destino or "",
+                datetime.now().isoformat(),
+            ),
+        )
+        conexion.commit()
+        return cursor.lastrowid
+
+
+def obtener_evidencias_bitacora_pendientes(
+    *,
+    bitacora_local_id: int | None = None,
+    b_id: str | None = None,
+) -> list[dict]:
+    """Lista la cola completa o las evidencias de una bitácora concreta."""
+    filtros = []
+    parametros = []
+    if bitacora_local_id is not None:
+        filtros.append("bitacora_local_id = ?")
+        parametros.append(bitacora_local_id)
+    if b_id:
+        filtros.append("b_id = ?")
+        parametros.append(b_id)
+
+    where = f"WHERE ({' OR '.join(filtros)})" if filtros else ""
+    with db_session() as conexion:
+        filas = conexion.execute(
+            f"""SELECT * FROM evidencia_bitacora_pendiente
+                {where} ORDER BY creado_en, id""",
+            parametros,
+        ).fetchall()
+        return [dict(fila) for fila in filas]
+
+
+def actualizar_url_evidencia_bitacora(evidencia_id: int, evidencia_url: str) -> None:
+    """Guarda la URL tras subir el archivo para reintentar sólo la vinculación."""
+    with db_session() as conexion:
+        conexion.execute(
+            "UPDATE evidencia_bitacora_pendiente SET evidencia_url=? WHERE id=?",
+            (evidencia_url, evidencia_id),
+        )
+        conexion.commit()
+
+
+def marcar_evidencia_bitacora_vinculada(evidencia_id: int) -> None:
+    """Marca que el backend confirmó el vínculo, antes de limpiar el archivo."""
+    with db_session() as conexion:
+        conexion.execute(
+            "UPDATE evidencia_bitacora_pendiente SET vinculada=1 WHERE id=?",
+            (evidencia_id,),
+        )
+        conexion.commit()
+
+
+def eliminar_evidencia_bitacora_pendiente(evidencia_id: int) -> None:
+    """Quita de la cola la evidencia sólo tras confirmarse su vínculo remoto."""
+    with db_session() as conexion:
+        conexion.execute(
+            "DELETE FROM evidencia_bitacora_pendiente WHERE id=?",
+            (evidencia_id,),
+        )
+        conexion.commit()
 
 
 def borrar_bitacora_local(local_id: int):

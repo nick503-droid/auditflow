@@ -654,7 +654,7 @@ class AdminFrame(ctk.CTkFrame):
                 fg_color="transparent", hover_color=ACCENT_HOVER,
                 border_width=1, border_color=ACCENT_COLOR, text_color=ACCENT_COLOR,
                 font=get_font(size=12, weight="bold"),
-                command=lambda u=url, p=popup: self._abrir_evidencia_y_cerrar_popup(p, u)
+                command=lambda u=url, p=popup: self._minimizar_popup_y_abrir_evidencia(p, u)
             ).pack(side="right", padx=(4, 8))
 
             if item["id"]:
@@ -824,10 +824,14 @@ class AdminFrame(ctk.CTkFrame):
                 
                 self._cargar_previsualizacion_async(url, lbl_img)
 
-    def _abrir_evidencia_y_cerrar_popup(self, popup, url: str):
-        """Cierra el visor de evidencias antes de abrir el archivo externo."""
+    def _minimizar_popup_y_abrir_evidencia(self, popup, url: str):
+        """Minimiza el visor para conservar su lista y posición al abrir evidencia."""
         if popup.winfo_exists():
-            popup.destroy()
+            # El visor no debe quedarse encima del reproductor o de otras
+            # ventanas, pero tampoco destruirse: puede haber miles de filas y
+            # el usuario debe poder restaurarlo donde dejó la lista.
+            popup.attributes("-topmost", False)
+            popup.iconify()
         __import__("api.client").client.descargar_y_abrir_evidencia(url)
 
     def _cargar_previsualizacion_async(self, url: str, etiqueta):

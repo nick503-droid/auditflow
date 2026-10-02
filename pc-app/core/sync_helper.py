@@ -52,6 +52,7 @@ def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
       'offline' → 💾 Guardando local
       'syncing' → ↻ Sincronizando…
       'writing' → Escribiendo…
+      'conflict' → ⚠ Integrar cambios
     """
     try:
         if not label.winfo_exists():
@@ -65,5 +66,7 @@ def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
             label.configure(text="↻ Sincronizando…", text_color=COLOR_SYNC_WORKING)
         elif estado == "writing":
             label.configure(text="Escribiendo…", text_color="gray50")
+        elif estado == "conflict":
+            label.configure(text="⚠ Integrar cambios", text_color=COLOR_SYNC_OFFLINE)
     except Exception:
         pass

@@ -23,6 +23,7 @@ from PIL import Image
 import io
 import keyboard
 import os
+import shutil
 import threading
 import time
 import webbrowser
@@ -40,14 +41,21 @@ from api.client import (
     obtener_usuarios,
     cerrar_bitacora_dia,
 )
-from core.recorder import GrabadorPantalla, es_archivo_grabado
+from core.recorder import GrabadorPantalla
 from core.sync_helper import actualizar_indicador_sync
 from db.local_db import (
     inicializar_db,
     guardar_bitacora_local,
+    obtener_bitacora_local,
     marcar_bitacora_sincronizada,
     obtener_bitacoras_pendientes,
     prefijo_nube_bitacora,
+    ruta_evidencia_bitacora,
+    agregar_evidencia_bitacora_pendiente,
+    obtener_evidencias_bitacora_pendientes,
+    actualizar_url_evidencia_bitacora,
+    marcar_evidencia_bitacora_vinculada,
+    eliminar_evidencia_bitacora_pendiente,
 )
 
 from ui.theme import (
@@ -134,12 +142,16 @@ class BitacorasFrame(ctk.CTkFrame):
         self.timestamp_ultimo_sync: int | None = None
 
         # Evidencia
-        self.rutas_evidencia = []
+        self.evidencias_locales_panel = []
         self.ruta_evidencia_actual = None
         self.grabador = GrabadorPantalla()
         self.grabando = False
+        self._grabacion_con_audio = False
         self.indicador = None
         self._codigo_panel_activo = ""   # código de la bitácora en el panel lateral
+        self._bitacora_local_id_panel = None
+        self._b_id_panel = ""
+        self._lock_sync_evidencias = threading.Lock()
 
         # Catálogos
         self.mapa_restaurantes = {}
@@ -391,9 +403,11 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # ── Col 4 — Botón de evidencia ────────────────────────────────────────
         evidencias = fila.get("evidencias", [])
-        tiene_ev = len(evidencias) > 0 or fila.get("evidencia") == "Sí"
+        cantidad_local = self._cantidad_evidencias_locales(fila)
+        cantidad_total = len(evidencias) + cantidad_local
+        tiene_ev = cantidad_total > 0 or fila.get("evidencia") == "Sí"
         if tiene_ev:
-            n = len(evidencias) if evidencias else 1
+            n = cantidad_total or 1
             ev_text  = f" {n} ev."
             ev_icon  = get_icon("check", size=(16, 16), color=STATUS["success"]["text"])
             ev_color = STATUS["success"]["bg"]
@@ -457,6 +471,12 @@ class BitacorasFrame(ctk.CTkFrame):
     def _reconstruir_tarjeta(self, idx: int):
         self._construir_tarjeta(idx)
 
+    def _cantidad_evidencias_locales(self, fila: dict) -> int:
+        return len(obtener_evidencias_bitacora_pendientes(
+            bitacora_local_id=fila.get("local_id"),
+            b_id=fila.get("b_id") or None,
+        ))
+
     def _actualizar_boton_evidencia(self, idx: int):
         """Refresca únicamente el chip de evidencias, sin perder el foco de la fila."""
         if idx < 0 or idx >= len(self.filas):
@@ -468,9 +488,11 @@ class BitacorasFrame(ctk.CTkFrame):
             return
 
         evidencias = fila.get("evidencias", [])
-        tiene_ev = bool(evidencias) or fila.get("evidencia") == "Sí"
+        cantidad_local = self._cantidad_evidencias_locales(fila)
+        cantidad_total = len(evidencias) + cantidad_local
+        tiene_ev = cantidad_total > 0 or fila.get("evidencia") == "Sí"
         if tiene_ev:
-            cantidad = len(evidencias) if evidencias else 1
+            cantidad = cantidad_total or 1
             ev_btn.configure(
                 text=f" {cantidad} ev.",
                 image=get_icon("check", size=(16, 16), color=STATUS["success"]["text"]),
@@ -780,6 +802,18 @@ class BitacorasFrame(ctk.CTkFrame):
             "client_id":      fila.get("client_id", ""),
         }
 
+        # SQLite siempre recibe primero la última versión de la fila. Además de
+        # proteger el texto ante cortes, esto da un ID estable a las evidencias
+        # si la bitácora todavía no ha podido crearse en el servidor.
+        try:
+            local_id = guardar_bitacora_local(datos_locales)
+            datos_locales["local_id"] = local_id
+            fila["local_id"] = local_id
+        except Exception as e:
+            print(f"[bitacoras] No se pudo guardar la fila localmente: {e}")
+            self.after(0, self._actualizar_indicador_sync, "offline")
+            return
+
         def _sync_bitacora():
             try:
                 dto = {
@@ -803,9 +837,6 @@ class BitacorasFrame(ctk.CTkFrame):
                     
                     b_id = resultado.get("id", "")
                     codigo = resultado.get("codigo", "")
-                    
-                    # Store locally to keep ID tracking
-                    local_id = guardar_bitacora_local(datos_locales)
                     marcar_bitacora_sincronizada(local_id, b_id, codigo)
                     self.after(0, self._aplicar_resultado_creacion, idx, b_id, codigo, local_id)
                 else:
@@ -816,7 +847,6 @@ class BitacorasFrame(ctk.CTkFrame):
                     if not resultado:
                         raise Exception("Fallo en API")
                     
-                    local_id = guardar_bitacora_local(datos_locales)
                     marcar_bitacora_sincronizada(local_id, b_id, datos_locales.get("codigo", ""))
                 
                 self.after(0, self._actualizar_indicador_sync, "ok")
@@ -824,9 +854,6 @@ class BitacorasFrame(ctk.CTkFrame):
                 # Fallback to local DB (Fail-safe)
                 if not datos_locales.get("b_id"):
                     self.after(0, lambda: self.filas[idx].update({"_creando_en_nube": False}))
-                local_id = guardar_bitacora_local(datos_locales)
-                if not datos_locales.get("local_id"):
-                    self.after(0, lambda: self.filas[idx].update({"local_id": local_id}))
                 self.after(0, self._actualizar_indicador_sync, "offline")
 
         if not fila.get("b_id") and (fila.get("hora") or fila.get("descripcion")):
@@ -844,9 +871,47 @@ class BitacorasFrame(ctk.CTkFrame):
             return
         self.filas[idx]["b_id"]   = b_id
         self.filas[idx]["codigo"] = codigo
+        self.filas[idx]["local_id"] = local_id
         self.filas[idx]["_creando_en_nube"] = False
         self.ultimo_hash_bd = None
         self._reconstruir_tarjeta(idx)
+
+    def _asegurar_bitacora_local(self, fila: dict) -> int | None:
+        """Asegura un ID local estable para guardar evidencias sin conexión."""
+        if fila.get("b_id"):
+            return fila.get("local_id")
+
+        if fila.get("local_id"):
+            existente = obtener_bitacora_local(fila["local_id"])
+            if existente and existente.get("b_id"):
+                # El worker de polling pudo sincronizarla mientras esta ventana
+                # seguía mostrando el estado local anterior.
+                fila["b_id"] = existente["b_id"]
+                fila["codigo"] = existente.get("codigo", "")
+                return fila["local_id"]
+
+        rest_nombre = fila.get("restaurante", "").strip()
+        rest_id = self.mapa_restaurantes.get(rest_nombre)
+        vig_nombre = self.usuario_activo["nombre"].strip()
+        usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
+        if not rest_id or not usr_id:
+            return None
+
+        datos = {
+            "local_id": fila.get("local_id"),
+            "b_id": "",
+            "codigo": "",
+            "restaurante_id": rest_id,
+            "usuario_id": usr_id,
+            "descripcion": fila.get("descripcion", ""),
+            "fecha": self.fecha_actual,
+            "hora": fila.get("hora", ""),
+            "urgencia": fila.get("urgencia", "leve"),
+            "client_id": fila.get("client_id", ""),
+        }
+        local_id = guardar_bitacora_local(datos)
+        fila["local_id"] = local_id
+        return local_id
 
     # ─── Lógica del botón Evidencia ───────────────────────────────────────────
 
@@ -862,55 +927,29 @@ class BitacorasFrame(ctk.CTkFrame):
             )
             return
 
-        # Deshabilitar botón temporalmente para evitar doble clic
-        ev_btn = fila.get("_widgets", {}).get("evidencia")
-        if ev_btn and ev_btn.winfo_exists():
-            ev_btn.configure(state="disabled", text="Operando...")
-            self.update()
-
-        # Si la fila no tiene ID → crear en backend ahora mismo en un hilo
+        # Una fila que todavía no existe en el servidor se conserva primero en
+        # SQLite. La sincronización del padre le asignará código y luego subirá
+        # cualquier evidencia que quede asociada a su local_id.
         if not fila.get("b_id"):
-            vig_nombre = self.usuario_activo["nombre"].strip()
-            rest_id = self.mapa_restaurantes[rest_nombre]
-            usr_id  = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
+            try:
+                if self._asegurar_bitacora_local(fila) is None:
+                    raise ValueError("No se pudo identificar el restaurante o usuario.")
+            except Exception as e:
+                messagebox.showerror("Error local", f"No se pudo guardar la bitácora localmente:\n{e}")
+                return
 
-            dto = {
-                "restaurante_id": rest_id,
-                "usuario_id":     usr_id,
-                "fecha":          self.fecha_actual,
-                "descripcion":    fila.get("descripcion", ""),
-                "hora":           fila.get("hora", ""),
-                "urgencia":       fila.get("urgencia", "leve"),
-                "client_id":      fila.get("client_id", ""),
-            }
-            
-            def _crear_worker():
-                try:
-                    resultado = crear_bitacora(dto)
-                    if not resultado:
-                        raise Exception("No se pudo crear el registro en el servidor.")
-                    
-                    def _on_success():
-                        fila["b_id"]   = resultado.get("id", "")
-                        fila["codigo"] = resultado.get("codigo", "")
-                        self.ultimo_hash_bd = None
-                        self._reconstruir_tarjeta(idx)
-                        self._continuar_evidencia(idx)
-                    self.after(0, _on_success)
-                except Exception as e:
-                    def _on_error():
-                        self._reconstruir_tarjeta(idx)  # Restaura el botón a su estado normal
-                        messagebox.showerror("Error de Conexión", str(e))
-                    self.after(0, _on_error)
-                    
-            threading.Thread(target=_crear_worker, daemon=True).start()
-        else:
+        codigo = fila.get("codigo", "")
+        self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []), fila=fila)
+        if fila.get("b_id"):
             self._continuar_evidencia(idx)
 
     def _continuar_evidencia(self, idx: int):
         fila = self.filas[idx]
         codigo = fila["codigo"]
-        self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []))  # muestra estado cacheado mientras carga
+        if not codigo:
+            self._mostrar_panel_evidencia("", fila.get("evidencias", []), fila=fila)
+            return
+        self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []), fila=fila)  # muestra caché mientras carga
 
         def _fetch_evidencias():
             try:
@@ -1001,10 +1040,8 @@ class BitacorasFrame(ctk.CTkFrame):
     def _sincronizar_pendientes(self):
         """Sube registros offline a medida que la conexión se restablece."""
         pendientes = obtener_bitacoras_pendientes()
-        if not pendientes:
-            return
-
-        self.after(0, self._actualizar_indicador_sync, "syncing", len(pendientes))
+        if pendientes:
+            self.after(0, self._actualizar_indicador_sync, "syncing", len(pendientes))
 
         for p in pendientes:
             try:
@@ -1020,6 +1057,10 @@ class BitacorasFrame(ctk.CTkFrame):
                 codigo = p["codigo"]
 
                 if not b_id:
+                    # Una fila vacía puede tener evidencia en cola, pero primero
+                    # debe completar los datos mínimos para crear el padre.
+                    if not (p.get("hora") or p.get("descripcion")):
+                        continue
                     resultado = crear_bitacora(dto)
                     if resultado:
                         b_id   = resultado.get("id", "")
@@ -1039,12 +1080,18 @@ class BitacorasFrame(ctk.CTkFrame):
                 print(f"[sync_pendientes] Fila {p['id']}: {e}")
                 break  # parar si hay error de red, reintentará en 5s
 
+        # Las evidencias de filas ya sincronizadas también se reintentan aunque
+        # no haya registros padre pendientes.
+        self._solicitar_sincronizacion_evidencias()
+
     def _actualizar_fila_por_local_id(self, local_id: int, b_id: str, codigo: str):
         for i, f in enumerate(self.filas):
             if f.get("local_id") == local_id:
                 f["b_id"]   = b_id
                 f["codigo"] = codigo
                 self._reconstruir_tarjeta(i)
+                if self._bitacora_local_id_panel == local_id:
+                    self._mostrar_panel_evidencia(codigo, f.get("evidencias", []), fila=f)
                 break
 
     def _aplicar_deltas(self, deltas: list):
@@ -1332,14 +1379,29 @@ class BitacorasFrame(ctk.CTkFrame):
         self.frame_evidencia.grid_remove()
         self.grid_columnconfigure(1, minsize=0, weight=0)
         self._codigo_panel_activo = ""
+        self._bitacora_local_id_panel = None
+        self._b_id_panel = ""
 
-    def _mostrar_panel_evidencia(self, codigo: str, evidencias: list):
-        self._codigo_panel_activo = codigo
+    def _mostrar_panel_evidencia(self, codigo: str, evidencias: list, fila: dict | None = None):
+        self._codigo_panel_activo = codigo or ""
+        if fila is None and codigo:
+            fila = next((f for f in self.filas if f.get("codigo") == codigo), None)
+        if fila is not None:
+            self._bitacora_local_id_panel = fila.get("local_id")
+            self._b_id_panel = fila.get("b_id", "")
+        elif codigo:
+            self._bitacora_local_id_panel = None
+            self._b_id_panel = ""
+
+        self.evidencias_locales_panel = obtener_evidencias_bitacora_pendientes(
+            bitacora_local_id=self._bitacora_local_id_panel,
+            b_id=self._b_id_panel or None,
+        )
         self.grid_columnconfigure(1, minsize=300, weight=0)
         self.frame_evidencia.grid(row=1, column=1, rowspan=2, sticky="ns", padx=(0, 12), pady=10)
 
         # Actualizar código (solo lectura)
-        self.label_codigo.configure(text=codigo if codigo else "——————")
+        self.label_codigo.configure(text=codigo if codigo else "Pendiente")
 
         # Actualizar lista de evidencias de la nube
         for w in self.frame_lista_ev.winfo_children():
@@ -1353,7 +1415,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self._checkboxes_desc_bit = []
         
         hay_nube = bool(evidencias)
-        hay_local = bool(self.rutas_evidencia)
+        hay_local = bool(self.evidencias_locales_panel)
 
         if not hay_nube:
             ctk.CTkLabel(
@@ -1368,38 +1430,73 @@ class BitacorasFrame(ctk.CTkFrame):
             self.frame_lista_local.pack_forget()
         else:
             self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
-            for idx, ruta in enumerate(self.rutas_evidencia, start=1):
-                self._agregar_chip_evidencia_local(ruta, idx)
+            for idx, item in enumerate(self.evidencias_locales_panel, start=1):
+                self._agregar_chip_evidencia_local(item, idx)
+
+        if hay_local:
+            self.label_archivo.configure(
+                text=f"Guardadas localmente: {len(self.evidencias_locales_panel)} · pendientes de nube"
+            )
+        else:
+            self.label_archivo.configure(text="Sin evidencia adjunta")
 
     def _refrescar_lista_evidencias(self):
-        if not self._codigo_panel_activo:
+        if not self._codigo_panel_activo and self._bitacora_local_id_panel is None:
             return
         
         fila_actual = None
         for fila in self.filas:
-            if fila.get("codigo") == self._codigo_panel_activo:
+            if (
+                (self._bitacora_local_id_panel is not None
+                 and fila.get("local_id") == self._bitacora_local_id_panel)
+                or (self._b_id_panel and fila.get("b_id") == self._b_id_panel)
+                or (self._codigo_panel_activo and fila.get("codigo") == self._codigo_panel_activo)
+            ):
                 fila_actual = fila
                 break
-                
-        if fila_actual:
-            self._mostrar_panel_evidencia(self._codigo_panel_activo, fila_actual.get("evidencias", []))
 
-    def _eliminar_evidencia_local(self, ruta: str):
-        from tkinter import messagebox
-        import os
+        self._mostrar_panel_evidencia(
+            self._codigo_panel_activo,
+            fila_actual.get("evidencias", []) if fila_actual else [],
+            fila=fila_actual,
+        )
+
+    def _eliminar_evidencia_local(self, evidencia_id: int):
+        if self._lock_sync_evidencias.locked():
+            messagebox.showwarning("Sincronización en curso", "Espera a que termine la sincronización antes de eliminar esta evidencia.")
+            return
         respuesta = messagebox.askyesno("Eliminar", "¿Seguro que quieres borrar esta evidencia local?")
-        if respuesta:
-            if ruta in self.rutas_evidencia:
-                self.rutas_evidencia.remove(ruta)
-            if os.path.exists(ruta):
-                try:
-                    os.remove(ruta)
-                except OSError:
-                    pass
-            self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}" if self.rutas_evidencia else "Sin evidencia adjunta")
-            self._refrescar_lista_evidencias()
+        if not respuesta:
+            return
+        item = next(
+            (ev for ev in self.evidencias_locales_panel if ev["id"] == evidencia_id),
+            None,
+        )
+        if not item:
+            return
+        ruta = item.get("ruta_local", "")
+        try:
+            if ruta and os.path.exists(ruta):
+                os.remove(ruta)
+            eliminar_evidencia_bitacora_pendiente(evidencia_id)
+        except OSError as e:
+            messagebox.showerror("Error", f"No se pudo eliminar el archivo local:\n{e}")
+            return
+        self._actualizar_boton_evidencia_de_fila_activa()
+        self._refrescar_lista_evidencias()
 
-    def _agregar_chip_evidencia_local(self, ruta: str, idx: int):
+    def _actualizar_boton_evidencia_de_fila_activa(self):
+        for idx, fila in enumerate(self.filas):
+            if (
+                (self._bitacora_local_id_panel is not None
+                 and fila.get("local_id") == self._bitacora_local_id_panel)
+                or (self._b_id_panel and fila.get("b_id") == self._b_id_panel)
+            ):
+                self._actualizar_boton_evidencia(idx)
+                break
+
+    def _agregar_chip_evidencia_local(self, evidencia: dict, idx: int):
+        ruta = evidencia.get("ruta_local", "")
         nombre = os.path.basename(ruta)
         chip = ctk.CTkFrame(self.frame_lista_local, fg_color=SURFACE_SECONDARY, corner_radius=6, border_width=1, border_color=BORDER)
         chip.pack(fill="x", pady=2, padx=2)
@@ -1411,7 +1508,7 @@ class BitacorasFrame(ctk.CTkFrame):
         
         ctk.CTkButton(
             top_row, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
-            command=lambda r=ruta: self._eliminar_evidencia_local(r)
+            command=lambda evidencia_id=evidencia["id"]: self._eliminar_evidencia_local(evidencia_id)
         ).pack(side="right")
         
         ctk.CTkLabel(chip, text=nombre, font=get_font(size=10), text_color="#94a3b8", justify="left").pack(side="left", padx=4, pady=(0,4))
@@ -1560,10 +1657,9 @@ class BitacorasFrame(ctk.CTkFrame):
             return
             
         def _on_capture(img, ruta_temp):
-            if ruta_temp not in self.rutas_evidencia:
-                self.rutas_evidencia.append(ruta_temp)
-                self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
-                self.after(0, self._on_subir_evidencia)
+            self._registrar_evidencia_local_bitacora(
+                ruta_temp, con_audio=False, origen_generado=True
+            )
                 
         open_snipping_tool(self.controlador, _on_capture)
 
@@ -1578,9 +1674,98 @@ class BitacorasFrame(ctk.CTkFrame):
             from tkinter import messagebox
             messagebox.showerror("Error al guardar", str(e))
             return
-        if ruta_temp not in self.rutas_evidencia:
-            self.rutas_evidencia.append(ruta_temp)
-        self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
+        self._registrar_evidencia_local_bitacora(
+            ruta_temp, con_audio=False, origen_generado=True
+        )
+
+    def _registrar_evidencia_local_bitacora(
+        self,
+        ruta_origen: str,
+        con_audio: bool = False,
+        *,
+        origen_generado: bool = False,
+        iniciar_sync: bool = True,
+    ) -> bool:
+        """Copia y registra la evidencia antes de cualquier intento de red."""
+        fila = None
+        for candidata in self.filas:
+            if (
+                (self._bitacora_local_id_panel is not None
+                 and candidata.get("local_id") == self._bitacora_local_id_panel)
+                or (self._b_id_panel and candidata.get("b_id") == self._b_id_panel)
+                or (self._codigo_panel_activo
+                    and candidata.get("codigo") == self._codigo_panel_activo)
+            ):
+                fila = candidata
+                break
+        if fila is None:
+            messagebox.showwarning("Bitácora requerida", "Selecciona primero la fila a la que pertenece la evidencia.")
+            return False
+
+        rest_nombre = fila.get("restaurante", "").strip()
+        if not rest_nombre or rest_nombre not in self.mapa_restaurantes:
+            messagebox.showwarning("Restaurante requerido", "Selecciona el restaurante de la bitácora antes de guardar evidencia.")
+            return False
+        if not ruta_origen or not os.path.isfile(ruta_origen):
+            messagebox.showerror("Archivo no encontrado", f"No se encontró la evidencia local:\n{ruta_origen}")
+            return False
+
+        try:
+            local_id = self._asegurar_bitacora_local(fila) if not fila.get("b_id") else fila.get("local_id")
+            if not fila.get("b_id") and local_id is None:
+                raise ValueError("No se pudo guardar el registro padre de la bitácora.")
+
+            fecha_iso = str(fila.get("fecha") or self.fecha_actual).split("T")[0]
+            nombre_original = os.path.basename(ruta_origen)
+            nombre_base, extension = os.path.splitext(nombre_original)
+            nombre_local = (
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                f"{uuid.uuid4().hex[:8]}_{nombre_base[:120]}{extension[:16]}"
+            )
+            ruta_local = ruta_evidencia_bitacora(fecha_iso, nombre_local)
+            if os.path.abspath(ruta_origen) != os.path.abspath(ruta_local):
+                shutil.copy2(ruta_origen, ruta_local)
+
+            try:
+                agregar_evidencia_bitacora_pendiente(
+                    ruta_local,
+                    con_audio,
+                    prefijo_nube_bitacora(fecha_iso),
+                    bitacora_local_id=local_id,
+                    b_id=fila.get("b_id", ""),
+                    codigo=fila.get("codigo", ""),
+                )
+                if local_id is not None:
+                    estado_local = obtener_bitacora_local(local_id)
+                    if estado_local and estado_local.get("b_id"):
+                        fila["b_id"] = estado_local["b_id"]
+                        fila["codigo"] = estado_local.get("codigo", "")
+            except Exception:
+                if os.path.exists(ruta_local):
+                    os.remove(ruta_local)
+                raise
+
+            if origen_generado and os.path.abspath(ruta_origen) != os.path.abspath(ruta_local):
+                try:
+                    os.remove(ruta_origen)
+                except OSError:
+                    pass
+
+            self._mostrar_panel_evidencia(
+                fila.get("codigo", ""), fila.get("evidencias", []), fila=fila
+            )
+            self._actualizar_boton_evidencia_de_fila_activa()
+            if fila.get("codigo"):
+                self.label_archivo.configure(text="Evidencia local guardada; sincronizando…")
+            else:
+                self.label_archivo.configure(text="Evidencia guardada en esta PC; se subirá al sincronizar la bitácora")
+
+            if iniciar_sync and fila.get("codigo"):
+                self._solicitar_sincronizacion_evidencias()
+            return True
+        except Exception as e:
+            messagebox.showerror("Error al guardar evidencia", f"No se pudo guardar la evidencia localmente:\n{e}")
+            return False
 
     # ─── Descarga múltiple de evidencias (bitácoras) ─────────────────────────
 
@@ -1706,6 +1891,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
+        self._grabacion_con_audio = con_audio
         self.grabador.iniciar(con_audio=con_audio)
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
@@ -1767,15 +1953,13 @@ class BitacorasFrame(ctk.CTkFrame):
         threading.Thread(target=procesar_video, daemon=True).start()
 
     def _adjuntar_video_grabado(self, ruta_final: str):
-        """Añade y vincula automáticamente el video recién finalizado."""
-        if ruta_final not in self.rutas_evidencia:
-            self.rutas_evidencia.append(ruta_final)
-        self.label_archivo.configure(text="Subiendo video recién grabado…")
-        self._refrescar_lista_evidencias()
+        """Persiste el video y lo sincroniza cuando exista conexión."""
         self._actualizar_botones_grabacion()
-        # Equivale al clic de "Subir y Vincular", pero sin obligar al auditor
-        # a realizar un segundo paso después de detener la grabación.
-        self._on_subir_evidencia()
+        self._registrar_evidencia_local_bitacora(
+            ruta_final,
+            con_audio=self._grabacion_con_audio,
+            origen_generado=True,
+        )
 
     def _mostrar_indicador_rec(self):
         self._segundos_grabacion = 0
@@ -1864,98 +2048,125 @@ class BitacorasFrame(ctk.CTkFrame):
     def _on_adjuntar(self):
         rutas = filedialog.askopenfilenames(
             title="Selecciona las evidencias",
-            filetypes=[("Videos e imágenes", "*.mp4;*.jpg;*.jpeg;*.png")],
+            filetypes=[("Todos los archivos", "*.*")],
         )
-        if rutas:
-            for r in rutas:
-                if r not in self.rutas_evidencia:
-                    self.rutas_evidencia.append(r)
-            self.label_archivo.configure(text=f"✅ Adjuntos: {len(self.rutas_evidencia)}")
-            self._refrescar_lista_evidencias()
+        if not rutas:
+            return
+        agregadas = 0
+        for ruta in rutas:
+            agregadas += bool(self._registrar_evidencia_local_bitacora(
+                ruta, con_audio=False, iniciar_sync=False
+            ))
+        if agregadas:
+            self._solicitar_sincronizacion_evidencias()
 
     def _on_subir_evidencia(self):
-        codigo = self._codigo_panel_activo.strip().upper()
-
-        if not codigo or len(codigo) != 6:
-            messagebox.showwarning("Atención", "No hay un código de bitácora activo.")
-            return
-
-        if not self.rutas_evidencia:
+        pendientes = obtener_evidencias_bitacora_pendientes(
+            bitacora_local_id=self._bitacora_local_id_panel,
+            b_id=self._b_id_panel or None,
+        )
+        if not pendientes:
             messagebox.showwarning("Atención", "No has grabado ni adjuntado ninguna evidencia.")
             return
 
-        self.boton_subir.configure(state="disabled", text="Subiendo…")
-        self.update()
+        self.boton_subir.configure(state="disabled", text="Sincronizando…")
+        self.label_archivo.configure(text="La evidencia está guardada localmente; sincronizando…")
+        self._solicitar_sincronizacion_evidencias()
 
-        # variables capturadas para el hilo
-        rutas_a_subir = list(self.rutas_evidencia)
-        con_audio = bool(self.switch_audio.get())
-        
-        # Buscar la fecha de la bitácora para generar la carpeta destino correcta
-        fecha_iso = None
-        for fila in self.filas:
-            if fila.get("codigo") == codigo:
-                # "2026-08-30T00:00:00.000Z" -> "2026-08-30"
-                fecha_iso = str(fila.get("fecha", "")).split("T")[0]
-                break
-        if not fecha_iso:
-            from datetime import datetime
-            fecha_iso = datetime.now().strftime("%Y-%m-%d")
-            
-        prefijo = prefijo_nube_bitacora(fecha_iso)
-        
-        def _subir_worker():
-            exitos = 0
-            ultima_bitacora_actualizada = None
-            for ruta in rutas_a_subir:
-                evidencia_url, error_upload = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
-                if evidencia_url is None:
-                    self.after(0, lambda r=ruta, e=error_upload: messagebox.showerror("Error", f"No se pudo subir {r}.\n\nMotivo: {e}"))
-                    continue
-                    
-                data, error_link = adjuntar_evidencia_por_codigo(codigo, evidencia_url, con_audio)
-                
-                if error_link:
-                    self.after(0, lambda r=ruta, e=error_link: messagebox.showerror("Error", f"No se pudo vincular {r}: {e}"))
-                else:
-                    exitos += 1
-                    # El backend devuelve la bitácora con todas sus evidencias.
-                    # Conservamos el último estado para actualizar la UI de PC
-                    # inmediatamente, sin depender del próximo polling.
-                    if isinstance(data, dict):
-                        ultima_bitacora_actualizada = data
-                    # remover la ruta de forma segura en el main thread
-                    self.after(0, lambda r=ruta: self._remover_ruta_y_archivo(r))
-            
-            def _on_finish():
-                if exitos > 0:
-                    self.switch_audio.deselect()
-                    evidencias = (ultima_bitacora_actualizada or {}).get("evidencias", [])
-                    self._actualizar_evidencias_fila(codigo, evidencias)
-                    self._mostrar_toast(f"✅ {exitos} evidencias vinculadas a {codigo}")
-                    self.ultimo_hash_bd = None
-                
-                if self.rutas_evidencia:
-                    self.label_archivo.configure(text=f"Quedan {len(self.rutas_evidencia)} archivos por subir")
-                else:
-                    self.label_archivo.configure(text="Sin evidencia adjunta")
-                    
-                if self.boton_subir.winfo_exists():
-                    self.boton_subir.configure(state="normal", text="⬆️  Subir y Vincular")
-            
-            self.after(0, _on_finish)
+    def _solicitar_sincronizacion_evidencias(self):
+        """Ejecuta un único worker para toda la cola local de evidencias."""
+        if not self._lock_sync_evidencias.acquire(blocking=False):
+            return
+        self.after(0, self._actualizar_indicador_sync, "syncing")
 
-        threading.Thread(target=_subir_worker, daemon=True).start()
-
-    def _remover_ruta_y_archivo(self, ruta):
-        if ruta in self.rutas_evidencia:
-            self.rutas_evidencia.remove(ruta)
-        if es_archivo_grabado(ruta):
+        def _worker():
+            vinculadas: dict[str, dict] = {}
+            cantidad_subida = 0
             try:
-                os.remove(ruta)
-            except OSError:
-                pass
+                pendientes = obtener_evidencias_bitacora_pendientes()
+                for item in pendientes:
+                    codigo = (item.get("codigo") or "").strip().upper()
+                    ruta = item.get("ruta_local", "")
+                    if not item.get("vinculada") and not codigo:
+                        # El padre también está offline: la cola esperará a que
+                        # _sincronizar_pendientes le asigne su código remoto.
+                        continue
+                    if not item.get("vinculada") and (not ruta or not os.path.isfile(ruta)):
+                        print(f"[bitacoras-evidencia] Archivo local no encontrado: {ruta}")
+                        continue
+
+                    if item.get("vinculada"):
+                        url = item.get("evidencia_url", "")
+                    else:
+                        url = item.get("evidencia_url", "")
+                        if not url:
+                            url, error = subir_archivo_con_destino(
+                                ruta,
+                                prefijo_nube=item.get("carpeta_destino") or None,
+                            )
+                            if not url:
+                                print(f"[bitacoras-evidencia] No se pudo subir {ruta}: {error}")
+                                continue
+                            actualizar_url_evidencia_bitacora(item["id"], url)
+
+                        data, error = adjuntar_evidencia_por_codigo(
+                            codigo, url, bool(item.get("con_audio"))
+                        )
+                        if error:
+                            print(f"[bitacoras-evidencia] No se pudo vincular {ruta}: {error}")
+                            continue
+                        marcar_evidencia_bitacora_vinculada(item["id"])
+                        item["vinculada"] = 1
+                        if isinstance(data, dict):
+                            vinculadas[codigo] = data
+                        cantidad_subida += 1
+
+                    # Eliminar sólo la copia administrada por AuditFlow y sólo
+                    # después de confirmar el vínculo remoto. Si falla el borrado,
+                    # queda marcada como vinculada y el siguiente ciclo sólo
+                    # reintenta la limpieza, no vuelve a adjuntarla.
+                    try:
+                        if ruta and os.path.exists(ruta):
+                            os.remove(ruta)
+                        eliminar_evidencia_bitacora_pendiente(item["id"])
+                    except OSError as e:
+                        print(f"[bitacoras-evidencia] No se pudo limpiar {ruta}: {e}")
+            except Exception as e:
+                print(f"[bitacoras-evidencia] Error de sincronización: {e}")
+            finally:
+                self._lock_sync_evidencias.release()
+                self.after(0, self._finalizar_sincronizacion_evidencias, vinculadas, cantidad_subida)
+
+        threading.Thread(target=_worker, daemon=True, name="BitacorasEvidenciasSync").start()
+
+    def _finalizar_sincronizacion_evidencias(self, vinculadas: dict, cantidad_subida: int):
+        for codigo, data in vinculadas.items():
+            self._actualizar_evidencias_fila(codigo, data.get("evidencias", []))
+
+        pendientes = obtener_evidencias_bitacora_pendientes(
+            bitacora_local_id=self._bitacora_local_id_panel,
+            b_id=self._b_id_panel or None,
+        )
+        pendientes_totales = obtener_evidencias_bitacora_pendientes()
+        self._actualizar_indicador_sync("offline" if pendientes_totales else "ok")
         self._refrescar_lista_evidencias()
+        self._actualizar_boton_evidencia_de_fila_activa()
+        if cantidad_subida:
+            self._mostrar_toast(f"✅ {cantidad_subida} evidencia(s) sincronizada(s)")
+        if pendientes:
+            sin_codigo = any(not item.get("codigo") for item in pendientes)
+            texto = (
+                "Guardada localmente; esperando a que se sincronice la bitácora"
+                if sin_codigo
+                else f"Guardadas localmente: {len(pendientes)} · reintento automático pendiente"
+            )
+            self.label_archivo.configure(text=texto)
+        elif not cantidad_subida:
+            self.label_archivo.configure(text="Sin evidencia adjunta")
+        if self.boton_subir.winfo_exists():
+            self.boton_subir.configure(state="normal", text="✓  Subir y Vincular")
+        if cantidad_subida:
+            self.ultimo_hash_bd = None
 
     # ─── Navegación ───────────────────────────────────────────────────────────
 

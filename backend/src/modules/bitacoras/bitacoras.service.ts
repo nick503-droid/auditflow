@@ -145,6 +145,16 @@ export class BitacorasService {
       return null;
     }
 
+    // El cliente offline reintenta una vinculación si la respuesta se perdió.
+    // La URL del objeto es estable en la cola local, así que reconocerla aquí
+    // evita registrar la misma evidencia dos veces.
+    const existente = await this.evidenciasRepo.findOne({
+      where: { bitacora_id: bitacora.id, evidencia_url },
+    });
+    if (existente) {
+      return this.findOne(bitacora.id);
+    }
+
     // Insertar en la tabla hija — no sobreescribe, agrega una nueva fila
     const nueva = this.evidenciasRepo.create({
       bitacora_id: bitacora.id,
