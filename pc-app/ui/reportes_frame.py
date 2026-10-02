@@ -31,6 +31,7 @@ from ui.icons import get_icon
 
 from db.local_db import (
     obtener_o_crear_borrador,
+    crear_borrador_nuevo,
     actualizar_notas,
     agregar_evidencia,
     obtener_evidencias,
@@ -212,6 +213,14 @@ class ReportesFrame(ctk.CTkFrame):
         self._hilo_directorio: threading.Thread | None = None
         self._firma_directorio = None
         self._ultimo_intento_sync_borradores = 0.0
+        self._minsize_antes_editor = None
+        self._geometria_pre_compacto = None
+        self._estado_pre_compacto = None
+        self._modo_compacto = False
+        self._after_adaptar_editor = None
+        self._titulo_editor_completo = ""
+        self._contexto_editor_completo = ""
+        self._tamano_fuente_editor = None
 
         # Borrador SQLite (se inicializa cuando se conoce el restaurante)
         self.borrador = None
@@ -446,7 +455,7 @@ class ReportesFrame(ctk.CTkFrame):
             self._stop_event_directorio.wait(2)
 
     def _sincronizar_borradores_pendientes_setup(self) -> None:
-        """Crea en nube los reportes offline aunque el editor ya se haya cerrado."""
+        """Sincroniza reportes y evidencias locales aunque el editor esté cerrado."""
         ahora = time.monotonic()
         if ahora - self._ultimo_intento_sync_borradores < 10:
             return
@@ -455,49 +464,82 @@ class ReportesFrame(ctk.CTkFrame):
         for borrador_resumen in listar_borradores_activos():
             if self._stop_event_directorio.is_set():
                 return
-            if not borrador_resumen.get("pendiente") or borrador_resumen.get("reporte_remoto_id"):
-                continue
-
             try:
-                with self._lock_guardado_texto:
-                    borrador = obtener_borrador_completo(borrador_resumen["id"])
-                    if (
-                        not borrador
-                        or not borrador.get("pendiente")
-                        or borrador.get("reporte_remoto_id")
-                    ):
+                borrador_id = borrador_resumen["id"]
+                borrador = obtener_borrador_completo(borrador_id)
+                if not borrador:
+                    continue
+
+                reporte_remoto = None
+                remoto_id = borrador.get("reporte_remoto_id")
+                if not remoto_id:
+                    if not borrador.get("pendiente"):
                         continue
 
-                    titulo = (borrador.get("titulo") or "").strip()
-                    usuario_id = borrador.get("usuario_id")
-                    restaurante_id = borrador.get("restaurante_id")
-                    if not titulo or not usuario_id or not restaurante_id:
-                        continue
+                    with self._lock_guardado_texto:
+                        # El editor pudo haber creado el reporte mientras este
+                        # sincronizador esperaba el candado.
+                        borrador = obtener_borrador_completo(borrador_id)
+                        if not borrador:
+                            continue
+                        remoto_id = borrador.get("reporte_remoto_id")
+                        if not remoto_id:
+                            titulo = (borrador.get("titulo") or "").strip()
+                            usuario_id = borrador.get("usuario_id")
+                            restaurante_id = borrador.get("restaurante_id")
+                            if not titulo or not usuario_id or not restaurante_id:
+                                continue
 
-                    notas_enviadas = borrador.get("notas_finales") or ""
-                    resultado = crear_reporte({
-                        "usuario_id": usuario_id,
-                        "restaurante_id": restaurante_id,
-                        "titulo": titulo,
-                        "notas_finales": notas_enviadas,
-                        "fecha_jornada": borrador.get("fecha_jornada")
-                        or datetime.now().strftime("%Y-%m-%d"),
-                    })
-                    if not resultado or not resultado.get("id"):
-                        # Si el servidor no respondió, no insistir con cada
-                        # registro en cola ni saturar el reintento de conexión.
-                        return
+                            notas_enviadas = borrador.get("notas_finales") or ""
+                            reporte_remoto = crear_reporte({
+                                "usuario_id": usuario_id,
+                                "restaurante_id": restaurante_id,
+                                "titulo": titulo,
+                                "notas_finales": notas_enviadas,
+                                "fecha_jornada": borrador.get("fecha_jornada")
+                                or datetime.now().strftime("%Y-%m-%d"),
+                            })
+                            if not reporte_remoto or not reporte_remoto.get("id"):
+                                # No martillar el servidor si la conexión todavía
+                                # no está disponible; se reintenta en el próximo ciclo.
+                                return
 
-                    marcar_reporte_sincronizado(borrador["id"], resultado["id"])
-                    borrador_actual = obtener_borrador_completo(borrador["id"])
-                    if (
-                        borrador_actual
-                        and (borrador_actual.get("notas_finales") or "") != notas_enviadas
-                    ):
-                        marcar_notas_pendientes(borrador["id"])
+                            remoto_id = reporte_remoto["id"]
+                            marcar_reporte_sincronizado(borrador_id, remoto_id)
+                            borrador_actual = obtener_borrador_completo(borrador_id)
+                            if (
+                                borrador_actual
+                                and (borrador_actual.get("notas_finales") or "")
+                                != notas_enviadas
+                            ):
+                                marcar_notas_pendientes(borrador_id)
+
+                # También vaciar la cola de adjuntos desde la pantalla inicial:
+                # no es necesario reabrir el editor para que lleguen al servidor.
+                evidencias = obtener_evidencias(borrador_id)
+                if not remoto_id or not evidencias:
+                    continue
+                if reporte_remoto is None:
+                    reporte_remoto = obtener_reporte(remoto_id)
+                if not reporte_remoto:
+                    return
+
+                if not self._lock_sync_evidencias.acquire(blocking=False):
+                    continue
+                try:
+                    self._subir_evidencias_de_borrador(
+                        borrador_id,
+                        remoto_id,
+                        prefijo_nube_reporte(
+                            reporte_remoto.get("codigo") or "PENDIENTE",
+                            reporte_remoto.get("titulo") or borrador.get("titulo") or "sin_titulo",
+                        ),
+                    )
+                finally:
+                    self._lock_sync_evidencias.release()
             except Exception as e:
                 print(f"[reportes-offline] Error sincronizando borrador: {e}")
-                return
+                continue
 
     def _actualizar_restaurantes(self, restaurantes: list):
         if not self.winfo_exists() or not hasattr(self, "dropdown_restaurante"):
@@ -545,7 +587,12 @@ class ReportesFrame(ctk.CTkFrame):
             for b in borradores:
                 titulo = b.get("titulo")
                 if not titulo: continue
-                clave = f"💾 {titulo} (Local)"
+                clave_base = f"💾 {titulo} (Local)"
+                clave = clave_base
+                duplicado = 1
+                while clave in self.reportes_data:
+                    clave = f"{clave_base} ({duplicado})"
+                    duplicado += 1
                 self.reportes_data[clave] = {
                     "id": b.get("reporte_remoto_id") or None,
                     "titulo": titulo,
@@ -724,6 +771,7 @@ class ReportesFrame(ctk.CTkFrame):
 
         self._viene_de_nube = not reporte.get("es_borrador_local")
 
+        self._activar_ventana_editor_adaptativa()
         self.frame_setup.destroy()
         self._construir_ui_editor()
         self._cargar_estado_previo()
@@ -750,23 +798,18 @@ class ReportesFrame(ctk.CTkFrame):
         self.reporte_remoto_id = None
         self.codigo_reporte = "PENDIENTE"
 
-        borrador_viejo = obtener_o_crear_borrador(
-            self.usuario["id"], self.restaurante["id"]
-        )
-        eliminar_borrador_completo(borrador_viejo["id"])
-        self.borrador = obtener_o_crear_borrador(
-            self.usuario["id"], self.restaurante["id"]
-        )
-        marcar_reporte_pendiente(
-            self.borrador["id"],
-            titulo,
+        fecha_jornada = datetime.now().strftime("%Y-%m-%d")
+        self.borrador = crear_borrador_nuevo(
             self.usuario["id"],
             self.restaurante["id"],
+            titulo,
+            fecha_jornada,
         )
 
         # El editor tiene su propio sincronizador. Detener el del directorio
         # evita dos pollers concurrentes mientras se trabaja en este reporte.
         self._stop_event_directorio.set()
+        self._activar_ventana_editor_adaptativa()
         self.frame_setup.destroy()
         self._construir_ui_editor()
         self._cargar_estado_previo()
@@ -794,7 +837,8 @@ class ReportesFrame(ctk.CTkFrame):
                         "restaurante_id": self.restaurante["id"],
                         "titulo": self.titulo_reporte,
                         "notas_finales": "",
-                        "fecha_jornada": datetime.now().strftime("%Y-%m-%d"),
+                        "fecha_jornada": (borrador_actual or {}).get("fecha_jornada")
+                        or datetime.now().strftime("%Y-%m-%d"),
                     }
                     resultado = crear_reporte(dto)
                     if not resultado:
@@ -832,6 +876,115 @@ class ReportesFrame(ctk.CTkFrame):
     # PANTALLA 2: EDITOR
     # ═══════════════════════════════════════════════════════════════════════════
 
+    def _activar_ventana_editor_adaptativa(self) -> None:
+        """Permite reducir la ventana mientras se edita, sólo en Reportes."""
+        if self._minsize_antes_editor is not None:
+            return
+        try:
+            self.controlador.update_idletasks()
+            minsize = self.controlador.minsize()
+            self._minsize_antes_editor = (int(minsize[0]), int(minsize[1]))
+        except Exception:
+            self._minsize_antes_editor = (800, 600)
+        try:
+            self.controlador.minsize(340, 190)
+        except Exception:
+            self._minsize_antes_editor = None
+
+    def _restaurar_ventana_editor(self) -> None:
+        """Restaura las restricciones normales al salir del módulo de Reportes."""
+        try:
+            if self._modo_compacto and self._geometria_pre_compacto:
+                self.controlador.state("normal")
+                self.controlador.geometry(self._geometria_pre_compacto)
+                if self._estado_pre_compacto == "zoomed":
+                    self.controlador.state("zoomed")
+            if self._minsize_antes_editor:
+                self.controlador.minsize(*self._minsize_antes_editor)
+        except Exception:
+            pass
+        self._modo_compacto = False
+
+    def _alternar_modo_compacto(self) -> None:
+        """Reduce/restaura la ventana para tomar notas mientras se trabaja."""
+        try:
+            if not self._modo_compacto:
+                self.controlador.update_idletasks()
+                self._geometria_pre_compacto = self.controlador.geometry()
+                self._estado_pre_compacto = self.controlador.state()
+                if self._estado_pre_compacto == "zoomed":
+                    self.controlador.state("normal")
+
+                ancho = min(480, max(340, self.controlador.winfo_screenwidth() - 40))
+                alto = min(260, max(190, self.controlador.winfo_screenheight() - 80))
+                self.controlador.geometry(f"{ancho}x{alto}")
+                if self._panel_visible:
+                    self._toggle_panel_lateral()
+                self._modo_compacto = True
+            else:
+                self.controlador.state("normal")
+                self.controlador.geometry(self._geometria_pre_compacto or "1280x800")
+                if self._estado_pre_compacto == "zoomed":
+                    self.controlador.state("zoomed")
+                self._modo_compacto = False
+            self._adaptar_barra_editor()
+        except Exception as e:
+            print(f"[reportes] No se pudo cambiar el tamaño de ventana: {e}")
+
+    def _programar_adaptacion_editor(self, event=None) -> None:
+        """Agrupa eventos de redimensionamiento para evitar trabajo repetido."""
+        if self._after_adaptar_editor is not None:
+            try:
+                self.after_cancel(self._after_adaptar_editor)
+            except Exception:
+                pass
+        try:
+            self._after_adaptar_editor = self.after(80, self._adaptar_barra_editor)
+        except Exception:
+            self._after_adaptar_editor = None
+
+    def _adaptar_barra_editor(self) -> None:
+        """Ajusta título, botones y tipografía al tamaño disponible."""
+        self._after_adaptar_editor = None
+        if not hasattr(self, "frame_editor") or not self.frame_editor.winfo_exists():
+            return
+        ancho = max(1, self.frame_editor.winfo_width())
+        if self._panel_visible:
+            self._ajustar_ancho_panel_lateral()
+
+        if hasattr(self, "label_titulo_editor") and self.label_titulo_editor.winfo_exists():
+            caracteres = max(8, int((ancho - 205) / 8))
+            titulo = self._titulo_editor_completo
+            if ancho < 700 and len(titulo) > caracteres:
+                titulo = titulo[: max(5, caracteres - 1)] + "…"
+            self.label_titulo_editor.configure(text=f"▣  {titulo}")
+
+        if hasattr(self, "btn_modo_compacto") and self.btn_modo_compacto.winfo_exists():
+            if ancho < 600:
+                self.btn_modo_compacto.configure(
+                    text="↗" if self._modo_compacto else "↘", width=28
+                )
+            else:
+                self.btn_modo_compacto.configure(
+                    text="Restaurar" if self._modo_compacto else "Compactar",
+                    width=82,
+                )
+
+        if hasattr(self, "label_contexto_editor") and self.label_contexto_editor.winfo_exists():
+            contexto = self._contexto_editor_completo
+            max_contexto = max(16, int((ancho - 24) / 8))
+            if len(contexto) > max_contexto:
+                contexto = contexto[: max_contexto - 1] + "…"
+            self.label_contexto_editor.configure(text=f"  {contexto}")
+
+        if hasattr(self, "textbox_notas") and self.textbox_notas.winfo_exists():
+            tamano = 12 if ancho < 460 else 13 if ancho < 760 else 14
+            if tamano != self._tamano_fuente_editor:
+                self.textbox_notas.configure(
+                    font=get_font(family="Consolas", size=tamano)
+                )
+                self._tamano_fuente_editor = tamano
+
     def _construir_ui_editor(self):
         # Columnas: editor (weight=1) + panel lateral (weight=0, oculto por defecto)
         self.grid_columnconfigure(0, weight=1)
@@ -851,14 +1004,17 @@ class ReportesFrame(ctk.CTkFrame):
         topbar.grid_propagate(False)
         topbar.grid_columnconfigure(0, weight=1)
 
-        # Col 0: título del reporte (crece y cede espacio si la ventana es estrecha)
-        ctk.CTkLabel(
+        # Col 0: título truncable para que los controles sigan accesibles en pequeño.
+        self._titulo_editor_completo = self.titulo_reporte or "Reporte sin título"
+        self.label_titulo_editor = ctk.CTkLabel(
             topbar,
-            text=f"\u25A3  {self.titulo_reporte}",
+            text=f"▣  {self._titulo_editor_completo}",
             font=get_font(size=12, weight="bold"),
             text_color=TEXT_PRIMARY,
             anchor="w",
-        ).grid(row=0, column=0, padx=(10, 4), sticky="ew")
+            width=1,
+        )
+        self.label_titulo_editor.grid(row=0, column=0, padx=(10, 4), sticky="ew")
 
         # Col 1: indicador de texto (ok / offline / syncing)
         _estado_inicial = "ok" if self.reporte_remoto_id else "offline"
@@ -872,7 +1028,23 @@ class ReportesFrame(ctk.CTkFrame):
         )
         self.label_estado_guardado.grid(row=0, column=1, padx=(0, 4), sticky="e")
 
-        # Col 2: botón zen (toggle panel)
+        # Col 2: modo compacto para redactar sobre otras ventanas.
+        self.btn_modo_compacto = ctk.CTkButton(
+            topbar,
+            text="Compactar",
+            width=82,
+            height=26,
+            fg_color="transparent",
+            hover_color=SURFACE_SECONDARY,
+            text_color=TEXT_PRIMARY,
+            border_width=1,
+            border_color=BORDER,
+            font=get_font(size=10, weight="bold"),
+            command=self._alternar_modo_compacto,
+        )
+        self.btn_modo_compacto.grid(row=0, column=2, padx=(0, 4), sticky="e")
+
+        # Col 3: botón zen (toggle panel)
         self.btn_toggle_panel = ctk.CTkButton(
             topbar,
             text="\u25B6",
@@ -886,32 +1058,27 @@ class ReportesFrame(ctk.CTkFrame):
             font=get_font(size=12, weight="bold"),
             command=self._toggle_panel_lateral,
         )
-        self.btn_toggle_panel.grid(row=0, column=2, padx=(0, 8), sticky="e")
+        self.btn_toggle_panel.grid(row=0, column=3, padx=(0, 8), sticky="e")
 
-        # ── Textbox (Modo Zen / Documento) ────────────────────────────────────────────
-        self.bg_documento = ctk.CTkFrame(self.frame_editor, fg_color=APP_BACKGROUND, corner_radius=0)
+        # ── Bloc continuo: ocupa toda la ventana, sin hoja ni ancho mínimo. ──
+        self.bg_documento = ctk.CTkFrame(
+            self.frame_editor, fg_color=SURFACE, corner_radius=0
+        )
         self.bg_documento.grid(row=1, column=0, sticky="nsew")
         self.bg_documento.grid_rowconfigure(0, weight=1)
         self.bg_documento.grid_columnconfigure(0, weight=1)
-        self.bg_documento.grid_columnconfigure(1, weight=0, minsize=800) # Ancho fijo de hoja
-        self.bg_documento.grid_columnconfigure(2, weight=1)
-
-        self.hoja_documento = ctk.CTkFrame(self.bg_documento, fg_color=SURFACE, corner_radius=0, border_width=1, border_color=BORDER)
-        self.hoja_documento.grid(row=0, column=1, sticky="nsew", pady=24)
-        self.hoja_documento.grid_rowconfigure(0, weight=1)
-        self.hoja_documento.grid_columnconfigure(0, weight=1)
 
         self.textbox_notas = ctk.CTkTextbox(
-            self.hoja_documento,
+            self.bg_documento,
             font=get_font(family="Consolas", size=14),
             wrap="word",
-            fg_color="transparent",
+            fg_color=SURFACE,
             text_color=TEXT_PRIMARY,
             border_width=0,
             corner_radius=0,
             activate_scrollbars=True,
         )
-        self.textbox_notas.grid(row=0, column=0, sticky="nsew", padx=40, pady=40)
+        self.textbox_notas.grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
         self.textbox_notas.bind("<KeyRelease>", self._on_texto_cambiado)
 
         # ── Statusbar ────────────────────────────────────────────────────
@@ -919,16 +1086,20 @@ class ReportesFrame(ctk.CTkFrame):
         statusbar.grid(row=2, column=0, sticky="ew")
         statusbar.grid_propagate(False)
         restaurante_nombre = self.restaurante.get("nombre", "—") if self.restaurante else "—"
-        ctk.CTkLabel(
+        self._contexto_editor_completo = f"{self.usuario['nombre']}  ·  {restaurante_nombre}"
+        self.label_contexto_editor = ctk.CTkLabel(
             statusbar,
-            text=f"  {self.usuario['nombre']}  \u00b7  {restaurante_nombre}",
+            text=f"  {self._contexto_editor_completo}",
             font=get_font(size=10),
             text_color=TEXT_MUTED,
             anchor="w",
-        ).pack(side="left", fill="y")
+        )
+        self.label_contexto_editor.pack(side="left", fill="y")
 
         # ── Panel lateral (oculto al inicio) ─────────────────────────────
         self._construir_panel_lateral()
+        self.frame_editor.bind("<Configure>", self._programar_adaptacion_editor, add="+")
+        self.after(0, self._adaptar_barra_editor)
 
     def _construir_panel_lateral(self):
         """Crea el panel de herramientas derecho (oculto por defecto)."""
@@ -1060,14 +1231,30 @@ class ReportesFrame(ctk.CTkFrame):
     # MODO ZEN: TOGGLE PANEL
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _ajustar_ancho_panel_lateral(self) -> None:
+        """Reserva espacio proporcional para las herramientas al redimensionar."""
+        ancho_ventana = max(340, int(self.controlador.winfo_width()))
+        ancho_panel = min(248, max(136, int(ancho_ventana * 0.42)))
+        ancho_editor = max(120, ancho_ventana - ancho_panel)
+        self.grid_columnconfigure(0, weight=1, minsize=ancho_editor)
+        self.grid_columnconfigure(1, weight=0, minsize=ancho_panel)
+        self.frame_side.configure(width=ancho_panel)
+
     def _toggle_panel_lateral(self):
         """Alterna el panel lateral (modo zen \u2194 modo herramientas)."""
         self._panel_visible = not self._panel_visible
         if self._panel_visible:
+            try:
+                self._ajustar_ancho_panel_lateral()
+            except Exception:
+                self.grid_columnconfigure(0, weight=1, minsize=0)
+                self.grid_columnconfigure(1, weight=0, minsize=0)
             self.frame_side.grid()
             self.btn_toggle_panel.configure(text="\u25C0")
         else:
             self.frame_side.grid_remove()
+            self.grid_columnconfigure(0, weight=1, minsize=0)
+            self.grid_columnconfigure(1, weight=0, minsize=0)
             self.btn_toggle_panel.configure(text="\u25B6")
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1371,6 +1558,7 @@ class ReportesFrame(ctk.CTkFrame):
             # Un reintento de la cola offline puede haber recibido y persistido
             # el UUID remoto mientras este autosave esperaba el candado. Adoptar
             # ese ID evita crear un segundo reporte para el mismo borrador local.
+            borrador_local = None
             if not self.reporte_remoto_id and self.borrador:
                 borrador_local = obtener_borrador_completo(self.borrador["id"])
                 remoto_id_local = (borrador_local or {}).get("reporte_remoto_id")
@@ -1394,7 +1582,9 @@ class ReportesFrame(ctk.CTkFrame):
                     "restaurante_id": self.restaurante["id"],
                     "titulo": self.titulo_reporte,
                     "notas_finales": texto,
-                    "fecha_jornada": datetime.now().strftime("%Y-%m-%d"),
+                    "fecha_jornada": (borrador_local or {}).get("fecha_jornada")
+                    or (self.borrador or {}).get("fecha_jornada")
+                    or datetime.now().strftime("%Y-%m-%d"),
                 }
                 resultado = crear_reporte(dto)
                 if not resultado:
@@ -1913,6 +2103,19 @@ class ReportesFrame(ctk.CTkFrame):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _al_destruir(self, event):
+        # El bind pertenece al frame; ignorar Destroy de cualquier hijo por seguridad.
+        if getattr(event, "widget", self) is not self:
+            return
+
+        if self._after_adaptar_editor is not None:
+            try:
+                self.after_cancel(self._after_adaptar_editor)
+            except Exception:
+                pass
+            self._after_adaptar_editor = None
+
+        self._restaurar_ventana_editor()
+
         # Detener el hilo de polling de forma limpia e inmediata.
         self.stop_event.set()
         self._stop_event_directorio.set()
@@ -2045,23 +2248,64 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _subir_evidencias_pendientes(self) -> bool:
         """Sube la cola local y sólo la borra después de crear su registro remoto."""
-        if not self.reporte_remoto_id:
+        if not self.reporte_remoto_id or not self.borrador:
             return False
 
-        for evidencia in obtener_evidencias(self.borrador["id"]):
+        return self._subir_evidencias_de_borrador(
+            self.borrador["id"],
+            self.reporte_remoto_id,
+            self._prefijo_nube(),
+            reflejar_editor=True,
+        )
+
+    def _subir_evidencias_de_borrador(
+        self,
+        borrador_id: int,
+        reporte_remoto_id: str,
+        prefijo_default: str,
+        *,
+        reflejar_editor: bool = False,
+    ) -> bool:
+        """Sube evidencias locales de cualquier borrador sincronizado con la nube."""
+        if not reporte_remoto_id:
+            return False
+
+        evidencias = obtener_evidencias(borrador_id)
+        if not evidencias:
+            return True
+
+        # Un archivo capturado sin red pudo guardar el prefijo PENDIENTE. Al
+        # asignarse el UUID, resolver el código real antes de publicarlo.
+        prefijos_pendientes = any(
+            "[PENDIENTE]" in (ev.get("carpeta_destino") or "")
+            for ev in evidencias
+        ) or "[PENDIENTE]" in (prefijo_default or "")
+        if prefijos_pendientes:
+            reporte = obtener_reporte(reporte_remoto_id)
+            if not reporte:
+                return False
+            codigo = reporte.get("codigo")
+            titulo = reporte.get("titulo")
+            if not codigo or not titulo:
+                return False
+            prefijo_default = prefijo_nube_reporte(codigo, titulo)
+
+        for evidencia in evidencias:
             ruta = evidencia.get("ruta_local", "")
             if not ruta or not os.path.isfile(ruta):
                 print(f"[reportes] Evidencia local no encontrada: {ruta}")
                 return False
 
-            prefijo = evidencia.get("carpeta_destino") or self._prefijo_nube()
+            prefijo = evidencia.get("carpeta_destino") or prefijo_default
+            if "[PENDIENTE]" in prefijo:
+                prefijo = prefijo_default
             url_subida, error = subir_archivo_con_destino(ruta, prefijo_nube=prefijo)
             if not url_subida:
                 print(f"[reportes] No se pudo subir evidencia: {error}")
                 return False
 
             creada = crear_evidencia_reporte({
-                "reporte_id": self.reporte_remoto_id,
+                "reporte_id": reporte_remoto_id,
                 "evidencia_url": url_subida,
                 "con_audio": bool(evidencia.get("con_audio")),
                 "orden_reproduccion": evidencia.get("orden_reproduccion", 0),
@@ -2076,7 +2320,15 @@ class ReportesFrame(ctk.CTkFrame):
                     os.remove(ruta)
                 except OSError:
                     pass
-            self.after(0, self._agregar_evidencia_remota, creada)
+            if (
+                reflejar_editor
+                and self.borrador
+                and self.borrador.get("id") == borrador_id
+            ):
+                try:
+                    self.after(0, self._agregar_evidencia_remota, creada)
+                except Exception:
+                    pass
 
         return True
 

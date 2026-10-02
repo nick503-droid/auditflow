@@ -347,6 +347,30 @@ def obtener_o_crear_borrador(
         }
 
 
+def crear_borrador_nuevo(
+    usuario_id: str,
+    restaurante_id: str,
+    titulo: str,
+    fecha_jornada: str | None = None,
+) -> dict:
+    """Crea un borrador independiente sin reutilizar ni reemplazar otro."""
+    fecha_jornada = fecha_jornada or datetime.now().strftime("%Y-%m-%d")
+    actualizado_en = datetime.now().isoformat()
+    with db_session() as conexion:
+        cursor = conexion.execute(
+            """INSERT INTO reporte_borrador
+               (usuario_id, restaurante_id, notas_finales, fecha_jornada,
+                actualizado_en, titulo, reporte_remoto_id, pendiente)
+               VALUES (?, ?, '', ?, ?, ?, '', 1)""",
+            (usuario_id, restaurante_id, fecha_jornada, actualizado_en, titulo),
+        )
+        conexion.commit()
+        fila = conexion.execute(
+            "SELECT * FROM reporte_borrador WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return dict(fila)
+
+
 def actualizar_notas(borrador_id: int, notas: str, marcar_pendiente: bool = False):
     """
     Autoguardado del texto — se llama con debounce desde la UI.
