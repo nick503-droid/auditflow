@@ -1,0 +1,6 @@
+#!/bin/sh
+# Activado sólo en el servidor por install_pc_updates.py.
+python3 deploy/publish_pc_update.py --request || {
+    echo '[AuditFlow] Pull completado; no se pudo solicitar la actualización PC.' >&2
+}
+exit 0

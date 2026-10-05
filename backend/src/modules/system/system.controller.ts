@@ -9,6 +9,11 @@ const execAsync = promisify(exec);
 export class SystemController {
   constructor(private configService: ConfigService) {}
 
+  @Get('deployment')
+  deployment() {
+    return { commit: process.env.AUDITFLOW_DEPLOY_COMMIT || 'development' };
+  }
+
   @Get('info')
   async getSystemInfo() {
     // 1. Obtener IP del servidor

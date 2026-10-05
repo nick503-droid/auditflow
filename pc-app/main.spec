@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
 datas = []
+if Path('ui/auditflow_theme.json').is_file():
+    datas.append(('ui/auditflow_theme.json', 'ui'))
+if Path('third-party').is_dir():
+    datas.append(('third-party', 'third-party'))
 binaries = [('ffmpeg.exe', '.')]
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')

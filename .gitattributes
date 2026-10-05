@@ -1,0 +1,4 @@
+# Los scripts/hook de Linux deben conservar LF aunque se editen en Windows.
+deploy/*.sh text eol=lf
+deploy/hooks/* text eol=lf
+*.yml text eol=lf

@@ -1,0 +1,79 @@
+name: Paquete Windows para actualizaciones PC
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pc-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: pc-app/requirements.txt
+      - name: Instalar dependencias
+        shell: pwsh
+        run: |
+          python -m pip install -r pc-app/requirements.txt pyinstaller==6.22.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Descargar FFmpeg y verificar checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP/ffmpeg.zip"
+          $checksum = (Invoke-WebRequest "$url.sha256").Content.Trim().Split(' ')[0].ToLower()
+          if ($checksum -notmatch '^[a-f0-9]{64}$') { throw 'Checksum FFmpeg invalido' }
+          if ((Get-FileHash "$env:RUNNER_TEMP/ffmpeg.zip" -Algorithm SHA256).Hash.ToLower() -ne $checksum) { throw 'Checksum FFmpeg no coincide' }
+          Expand-Archive "$env:RUNNER_TEMP/ffmpeg.zip" "$env:RUNNER_TEMP/ffmpeg" -Force
+          $binary = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          if (-not $binary) { throw 'No se encontro ffmpeg.exe' }
+          Copy-Item -LiteralPath $binary.FullName -Destination pc-app/ffmpeg.exe
+          # Mantener licencia y procedencia junto al binario redistribuido.
+          $licenses = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Filter LICENSE* -Recurse
+          New-Item -ItemType Directory -Path pc-app/third-party -Force | Out-Null
+          foreach ($license in $licenses) { Copy-Item -LiteralPath $license.FullName -Destination pc-app/third-party }
+          Set-Content pc-app/third-party/FFmpeg-SOURCE.txt "Build: $url`nSHA256: $checksum`nSource: https://www.gyan.dev/ffmpeg/builds/"
+      - name: Pruebas del actualizador
+        run: python -m unittest discover -s tests -p "test_pc_updates.py" -v
+      - name: Compilar y empaquetar
+        shell: pwsh
+        run: ./tools/build_pc_release.ps1 -Commit '${{ github.sha }}' -Build ${{ github.run_number }}
+      - name: Publicar paquete del commit (el servidor decide cuándo distribuirlo)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'pc-${{ github.sha }}'
+          $existingJson = gh release view $tag --json isDraft,assets 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            if (-not $existing.isDraft) {
+              foreach ($name in @('auditflow-pc.zip', 'manifest.json', 'AuditFlow-Instalar.zip')) {
+                if ($name -notin $existing.assets.name) { throw "Release publicado incompleto: falta $name. Revisar manualmente; no sobrescribir assets publicados." }
+              }
+              Write-Host 'Este commit ya tiene paquete completo; no modificar un release publicado.'
+              exit 0
+            }
+            # Un draft de una compilacion interrumpida nunca estuvo distribuido.
+            gh release delete $tag --yes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release create $tag pc-releases/auditflow-pc.zip pc-releases/manifest.json pc-releases/AuditFlow-Instalar.zip --target '${{ github.sha }}' --title 'AuditFlow PC ${{ github.run_number }}' --notes 'Paquete Windows. Sólo se distribuye en la LAN cuando el servidor solicita este commit tras un pull.' --draft --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Hacerlo visible unicamente despues de subir todos los assets.
+          gh release edit $tag --draft=false --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

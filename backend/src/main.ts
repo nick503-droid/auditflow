@@ -75,9 +75,25 @@ async function bootstrap() {
   );
   app.use('/evidencias', express.static(path.resolve(storagePath)));
 
+  // Paquetes de PC publicados por el servidor tras un pull. Separados de las
+  // evidencias: los endpoints de subida NO pueden escribir en esta carpeta.
+  const updatesPath = process.env.PC_UPDATES_PATH || './pc_updates';
+  app.use('/pc-updates', express.static(path.resolve(updatesPath), {
+    index: false,
+    dotfiles: 'deny',
+    setHeaders: (res, filename) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const immutable = filename.includes(`${path.sep}packages${path.sep}`)
+        || filename.includes(`${path.sep}installers${path.sep}`);
+      res.setHeader('Cache-Control', immutable
+        ? 'public, max-age=31536000, immutable'
+        : 'no-store');
+    },
+  }));
+
   await app.listen(3000, '0.0.0.0');
   console.log(
     `[AuditFlow] Servidor listo en http://0.0.0.0:3000 (entorno: ${process.env.NODE_ENV ?? 'development'})`,
   );
 }
-bootstrap();
+bootstrap();

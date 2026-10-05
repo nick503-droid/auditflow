@@ -1,0 +1,8 @@
+#!/bin/sh
+# Protección: el publicador sólo acepta HEAD == origin/main.
+if [ "$1" = rebase ]; then
+    python3 deploy/publish_pc_update.py --request || {
+        echo '[AuditFlow] Código recibido; revisar solicitud de actualización PC.' >&2
+    }
+fi
+exit 0

@@ -25,6 +25,11 @@ temp_selection.py
 *.db
 build/
 *.exe
+.pc-release-build/
+pc-releases/
+pc_updates/
+.auditflow-deploy/
+pc-app/third-party/
 
 # ─── Node.js (Backend NestJS y Mobile App Vue 3) ──────────────────────────
 node_modules/

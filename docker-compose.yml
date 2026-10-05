@@ -53,8 +53,11 @@ services:
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=admin123456
       - STORAGE_PATH=/usr/src/app/storage
+      - PC_UPDATES_PATH=/usr/src/app/pc_updates
+      - AUDITFLOW_DEPLOY_COMMIT=${AUDITFLOW_DEPLOY_COMMIT:-development}
     volumes:
       - ./storage_data:/usr/src/app/storage
+      - ./pc_updates:/usr/src/app/pc_updates:ro
 
 volumes:
   mysql_data:
