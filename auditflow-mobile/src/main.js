@@ -16,15 +16,17 @@ const vuetify = createVuetify({
     themes: {
       light: {
         colors: {
-          primary: '#059669',
-          secondary: '#F1F5F9',
-          accent: '#059669',
+          primary: '#047857',
+          // Mantiene el azul secundario del tema de escritorio y evita
+          // controles outlined casi blancos sobre superficies claras.
+          secondary: '#0369A1',
+          accent: '#047857',
           background: '#F8FAFC',
           surface: '#FFFFFF',
           error: '#B91C1C',
           warning: '#B45309',
           info: '#0369A1',
-          success: '#059669'
+          success: '#047857'
         }
       }
     }

@@ -76,7 +76,7 @@ ACCENT_HOVER = PRIMARY_HOVER
 SUCCESS_COLOR = STATUS["success"]["text"]
 WARN_COLOR = STATUS["warning"]["text"]
 DANGER_COLOR = STATUS["error"]["text"]
-DANGER_HOVER = "#dc2626"
+DANGER_HOVER = "#991B1B"
 
 URGENCIA_COLORES = {
     "comentar": {"bg": STATUS["info"]["bg"],    "fg": STATUS["info"]["text"],    "tarjeta_par": SURFACE, "tarjeta_impar": SURFACE_SECONDARY},
@@ -129,6 +129,10 @@ class BitacorasFrame(ctk.CTkFrame):
 
         self.lock = threading.Lock()
         self.filas_editando = set()
+        self.campos_editando = {}
+        # Evita que el guardado por debounce y el sincronizador de pendientes
+        # creen a la vez la misma bitácora local.
+        self._creaciones_en_curso = set()
         # --- DETENCIÓN LIMPIA DE HILOS ---
         # threading.Event es la herramienta correcta para señalar a un hilo
         # que debe detenerse. A diferencia de un bool, wait() libera el GIL
@@ -351,6 +355,16 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         om_rest.set(rest_val if rest_val else "— Restaurante —")
         om_rest.grid(row=0, column=0, padx=(4, 2), pady=3)
+        om_rest.bind(
+            "<Return>",
+            lambda event, w=om_rest: self._abrir_selector_restaurante(event, w),
+        )
+        om_rest.bind(
+            "<Down>",
+            lambda event, w=om_rest: self._abrir_selector_restaurante(event, w),
+        )
+        om_rest.bind("<FocusIn>", lambda e=None, i=idx: self._marcar_editando(i, True, "restaurante"))
+        om_rest.bind("<FocusOut>", lambda e=None, i=idx: self._marcar_editando(i, False, "restaurante"))
 
         # ── Col 1 — Hora (texto libre) ────────────────────────────────────────
         hora_entry = ctk.CTkEntry(card, placeholder_text="HH:MM", width=ANCHO_HORA, height=28,
@@ -360,9 +374,12 @@ class BitacorasFrame(ctk.CTkFrame):
             hora_entry.insert(0, hora_val)
         hora_entry.grid(row=0, column=1, padx=2, pady=3)
         hora_entry.bind("<KeyRelease>", lambda e=None, i=idx, w=hora_entry: self._on_keyrelease(i, "hora", w))
-        hora_entry.bind("<FocusIn>",  lambda e=None, i=idx: self._marcar_editando(i, True))
-        hora_entry.bind("<FocusOut>", lambda e=None, i=idx: self._marcar_editando(i, False))
-        hora_entry.bind("<Return>", lambda event: desc_box.focus_set())
+        hora_entry.bind("<FocusIn>",  lambda e=None, i=idx: self._marcar_editando(i, True, "hora"))
+        hora_entry.bind("<FocusOut>", lambda e=None, i=idx: self._marcar_editando(i, False, "hora"))
+        hora_entry.bind(
+            "<Return>",
+            lambda event, i=idx, w=hora_entry: self._on_enter_hora(event, i, w),
+        )
 
         # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
@@ -375,8 +392,16 @@ class BitacorasFrame(ctk.CTkFrame):
             desc_box.insert("1.0", desc_val)
         desc_box.grid(row=0, column=2, padx=2, pady=3, sticky="ew")
         desc_box.bind("<KeyRelease>", lambda e=None, i=idx, w=desc_box: self._on_keyrelease_textbox(i, w))
-        desc_box.bind("<FocusIn>",   lambda e=None, i=idx: self._marcar_editando(i, True))
-        desc_box.bind("<FocusOut>",  lambda e=None, i=idx: self._marcar_editando(i, False))
+        desc_box.bind(
+            "<Return>",
+            lambda event, i=idx, w=desc_box: self._on_enter_descripcion(event, i, w),
+        )
+        desc_box.bind(
+            "<Shift-Return>",
+            lambda event, i=idx, w=desc_box: self._on_shift_enter_descripcion(i, w),
+        )
+        desc_box.bind("<FocusIn>",   lambda e=None, i=idx: self._marcar_editando(i, True, "descripcion"))
+        desc_box.bind("<FocusOut>",  lambda e=None, i=idx: self._marcar_editando(i, False, "descripcion"))
         # Ajustar altura inicial al contenido ya cargado
         self.after(50, lambda w=desc_box: self._ajustar_altura_textbox(w))
 
@@ -623,6 +648,7 @@ class BitacorasFrame(ctk.CTkFrame):
         try:
             texto = widget.get("1.0", "end-1c").strip()
             self.filas[idx]["descripcion"] = texto
+            self._marcar_campo_pendiente(idx, "descripcion")
             self._ajustar_altura_textbox(widget)
             self._programar_guardado(idx)
         except Exception:
@@ -630,14 +656,14 @@ class BitacorasFrame(ctk.CTkFrame):
 
     # ─── Agregar fila vacía ───────────────────────────────────────────────────
 
-    def _agregar_fila_vacia(self):
+    def _agregar_fila_vacia(self, restaurante: str = "", enfocar_restaurante: bool = False):
         vigilante_actual = self.usuario_activo["nombre"]
         nueva_fila = {
             "b_id": "",
             "local_id": None,
             "codigo": "",
             "hora": "",
-            "restaurante": "",
+            "restaurante": restaurante,
             "vigilante": vigilante_actual,
             "descripcion": "",
             "urgencia": "leve",
@@ -651,30 +677,130 @@ class BitacorasFrame(ctk.CTkFrame):
         idx = len(self.filas) - 1
         self._construir_tarjeta(idx)
         self.after(50, lambda: self.scroll_frame._parent_canvas.yview_moveto(1.0))
+        if enfocar_restaurante:
+            self.after_idle(lambda i=idx: self._enfocar_selector_restaurante(i, abrir=True))
+        return idx
 
     # ─── Callbacks de campo ───────────────────────────────────────────────────
 
-    def _marcar_editando(self, idx: int, estado: bool):
+    def _marcar_editando(self, idx: int, estado: bool, campo: str | None = None):
         with self.lock:
             if estado:
                 self.filas_editando.add(idx)
+                if campo:
+                    self.campos_editando.setdefault(idx, set()).add(campo)
             else:
-                self.filas_editando.discard(idx)
+                campos = self.campos_editando.get(idx, set())
+                if campo:
+                    campos.discard(campo)
+                if not campos:
+                    self.campos_editando.pop(idx, None)
+                    self.filas_editando.discard(idx)
+
+    def _marcar_campo_pendiente(self, idx: int, campo: str):
+        if 0 <= idx < len(self.filas):
+            self.filas[idx].setdefault("_campos_pendientes", set()).add(campo)
 
     def _on_campo_inmediato(self, idx: int, campo: str, valor: str):
         """Para OptionMenus (no tienen KeyRelease) — cambio registrado de inmediato."""
+        if idx >= len(self.filas):
+            return
         self.filas[idx][campo] = valor
+        self._marcar_campo_pendiente(idx, campo)
         self._programar_guardado(idx)
+        if campo == "restaurante":
+            widgets = self.filas[idx].get("_widgets", {})
+            hora_entry = widgets.get("hora")
+            if hora_entry and hora_entry.winfo_exists() and valor in self.mapa_restaurantes:
+                self.after_idle(hora_entry.focus_set)
+
+    def _abrir_selector_restaurante(self, event, widget):
+        """Abre el menú para que pueda recorrerse con flechas y confirmarse con Enter."""
+        try:
+            if widget._dropdown_menu.winfo_viewable():
+                return "break"
+            widget._open_dropdown_menu()
+            valor_actual = widget.get()
+            valores = widget.cget("values")
+            if valor_actual in valores:
+                widget._dropdown_menu.activate(valores.index(valor_actual))
+        except Exception:
+            pass
+        return "break"
+
+    def _enfocar_selector_restaurante(self, idx: int, abrir: bool = False):
+        if idx < 0 or idx >= len(self.filas):
+            return
+        selector = self.filas[idx].get("_widgets", {}).get("restaurante")
+        if not selector or not selector.winfo_exists():
+            return
+        selector.focus_set()
+        if abrir:
+            self._abrir_selector_restaurante(None, selector)
+
+    def _on_enter_hora(self, event, idx: int, widget):
+        if idx < len(self.filas):
+            self.filas[idx]["hora"] = widget.get()
+            self._marcar_campo_pendiente(idx, "hora")
+            self._programar_guardado(idx)
+            descripcion = self.filas[idx].get("_widgets", {}).get("descripcion")
+            if descripcion and descripcion.winfo_exists():
+                descripcion.focus_set()
+        return "break"
+
+    def _on_enter_descripcion(self, event, idx: int, widget):
+        """Enter termina la línea actual y prepara inmediatamente la siguiente."""
+        if idx >= len(self.filas):
+            return "break"
+
+        texto = widget.get("1.0", "end-1c").strip()
+        self.filas[idx]["descripcion"] = texto
+        self._marcar_campo_pendiente(idx, "descripcion")
+        self._programar_guardado(idx)
+        if not texto:
+            return "break"
+
+        restaurante = self.filas[idx].get("restaurante", "")
+        siguiente = next(
+            (
+                i for i in range(idx + 1, len(self.filas))
+                if not self.filas[i].get("b_id")
+                and not self.filas[i].get("hora")
+                and not self.filas[i].get("descripcion")
+                and not self.filas[i].get("evidencias")
+            ),
+            None,
+        )
+        if siguiente is None:
+            siguiente = self._agregar_fila_vacia(restaurante, enfocar_restaurante=True)
+        else:
+            fila_siguiente = self.filas[siguiente]
+            if not fila_siguiente.get("restaurante"):
+                fila_siguiente["restaurante"] = restaurante
+                selector = fila_siguiente.get("_widgets", {}).get("restaurante")
+                if selector and selector.winfo_exists():
+                    selector.set(restaurante or "— Restaurante —")
+            self.after_idle(lambda i=siguiente: self._enfocar_selector_restaurante(i, abrir=True))
+        return "break"
+
+    def _on_shift_enter_descripcion(self, idx: int, widget):
+        """Permite un salto de línea manual sin abandonar el flujo de Enter."""
+        if idx < len(self.filas):
+            widget.insert("insert", "\n")
+            self._on_keyrelease_textbox(idx, widget)
+        return "break"
 
     def _on_keyrelease(self, idx: int, campo: str, widget):
         """Cada pulsación de tecla reinicia el debounce."""
         self.filas[idx][campo] = widget.get()
+        self._marcar_campo_pendiente(idx, campo)
         self._programar_guardado(idx)
 
     def _on_cambiar_urgencia(self, idx: int, display_value: str):
         """Convierte el nombre display a valor backend y reconstruye la tarjeta."""
         valor = URGENCIA_DISPLAY_A_VALOR.get(display_value, "leve")
         self.filas[idx]["urgencia"] = valor
+        self._marcar_campo_pendiente(idx, "urgencia")
         self._programar_guardado(idx)
         self._reconstruir_tarjeta(idx)   # reconstruir para cambiar bg_color
 
@@ -757,10 +883,35 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _programar_guardado(self, idx: int):
         """Cancela el timer anterior y programa uno nuevo a 1.5 s."""
+        if idx < 0 or idx >= len(self.filas):
+            return
         timer_id = self.filas[idx].get("_debounce_id")
         if timer_id:
             self.after_cancel(timer_id)
         self.filas[idx]["_debounce_id"] = self.after(DEBOUNCE_MS, lambda: self._procesar_modificacion(idx))
+
+    def _reservar_creacion(self, local_id: int) -> bool:
+        """Reserva una fila local para que sólo un worker pueda hacer su POST."""
+        if local_id is None:
+            return False
+        with self.lock:
+            if local_id in self._creaciones_en_curso:
+                return False
+            self._creaciones_en_curso.add(local_id)
+            return True
+
+    def _liberar_creacion(self, local_id: int):
+        if local_id is None:
+            return
+        with self.lock:
+            self._creaciones_en_curso.discard(local_id)
+
+    def _marcar_creacion_fallida(self, local_id: int):
+        for fila in self.filas:
+            if fila.get("local_id") == local_id:
+                fila["_creando_en_nube"] = False
+                break
+        self._liberar_creacion(local_id)
 
     def _procesar_modificacion(self, idx: int):
         """
@@ -801,6 +952,10 @@ class BitacorasFrame(ctk.CTkFrame):
             "urgencia":       fila.get("urgencia", "leve"),
             "client_id":      fila.get("client_id", ""),
         }
+        campos_enviados = {
+            campo: fila.get(campo)
+            for campo in ("restaurante", "hora", "descripcion", "urgencia")
+        }
 
         # SQLite siempre recibe primero la última versión de la fila. Además de
         # proteger el texto ante cortes, esto da un ID estable a las evidencias
@@ -813,6 +968,17 @@ class BitacorasFrame(ctk.CTkFrame):
             print(f"[bitacoras] No se pudo guardar la fila localmente: {e}")
             self.after(0, self._actualizar_indicador_sync, "offline")
             return
+
+        crear_nueva = not fila.get("b_id") and bool(
+            datos_locales.get("hora") or datos_locales.get("descripcion")
+        )
+        if crear_nueva:
+            if not self._reservar_creacion(local_id):
+                # El worker de pendientes ya tomó esta fila. La dejamos
+                # programada para que aplique cualquier edición posterior.
+                self._programar_guardado(idx)
+                return
+            fila["_creando_en_nube"] = True
 
         def _sync_bitacora():
             try:
@@ -837,8 +1003,10 @@ class BitacorasFrame(ctk.CTkFrame):
                     
                     b_id = resultado.get("id", "")
                     codigo = resultado.get("codigo", "")
+                    if not b_id:
+                        raise Exception("El servidor no devolvió el ID de la bitácora creada")
                     marcar_bitacora_sincronizada(local_id, b_id, codigo)
-                    self.after(0, self._aplicar_resultado_creacion, idx, b_id, codigo, local_id)
+                    self.after(0, self._aplicar_resultado_creacion, b_id, codigo, local_id)
                 else:
                     resultado = actualizar_bitacora(b_id, dto, version=datos_locales.get("version"))
                     if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
@@ -848,33 +1016,92 @@ class BitacorasFrame(ctk.CTkFrame):
                         raise Exception("Fallo en API")
                     
                     marcar_bitacora_sincronizada(local_id, b_id, datos_locales.get("codigo", ""))
+
+                self.after(0, self._limpiar_campos_guardados, local_id, campos_enviados)
                 
                 self.after(0, self._actualizar_indicador_sync, "ok")
             except Exception:
                 # Fallback to local DB (Fail-safe)
-                if not datos_locales.get("b_id"):
-                    self.after(0, lambda: self.filas[idx].update({"_creando_en_nube": False}))
+                if crear_nueva:
+                    self.after(0, self._marcar_creacion_fallida, local_id)
                 self.after(0, self._actualizar_indicador_sync, "offline")
-
-        if not fila.get("b_id") and (fila.get("hora") or fila.get("descripcion")):
-            # BLOQUEO SÍNCRONO: se asigna inmediatamente en el hilo principal
-            # ANTES de lanzar el hilo de guardado. Esto bloquea cualquier otro
-            # debounce que intente hacer POST.
-            fila["_creando_en_nube"] = True
 
         self.after(0, self._actualizar_indicador_sync, "syncing")
         threading.Thread(target=_sync_bitacora, daemon=True).start()
 
-    def _aplicar_resultado_creacion(self, idx: int, b_id: str, codigo: str, local_id: int):
-        """Llamado en el hilo principal tras crear exitosamente en el backend."""
-        if idx >= len(self.filas):
+    def _actualizar_codigo_fila(self, idx: int):
+        """Actualiza sólo el código; evita reconstruir controles con foco."""
+        if idx < 0 or idx >= len(self.filas):
             return
-        self.filas[idx]["b_id"]   = b_id
-        self.filas[idx]["codigo"] = codigo
-        self.filas[idx]["local_id"] = local_id
-        self.filas[idx]["_creando_en_nube"] = False
+        fila = self.filas[idx]
+        card = fila.get("_card_frame")
+        if not card or not card.winfo_exists():
+            return
+
+        widgets = fila.setdefault("_widgets", {})
+        codigo = fila.get("codigo", "")
+        actual = widgets.get("codigo")
+        if actual and actual.winfo_exists() and isinstance(actual, ctk.CTkButton):
+            actual.configure(text=codigo, command=lambda c=codigo: self._copiar_codigo(c))
+            return
+        if actual and actual.winfo_exists():
+            actual.destroy()
+
+        boton = ctk.CTkButton(
+            card,
+            text=codigo,
+            width=ANCHO_COD,
+            height=28,
+            fg_color=STATUS["info"]["bg"],
+            text_color=STATUS["info"]["text"],
+            hover_color=SURFACE_SECONDARY,
+            font=get_font(family="Consolas", size=12, weight="bold"),
+            corner_radius=4,
+            command=lambda c=codigo: self._copiar_codigo(c),
+        )
+        boton.grid(row=0, column=3, padx=2, pady=3)
+        widgets["codigo"] = boton
+
+    def _aplicar_resultado_creacion(self, b_id: str, codigo: str, local_id: int):
+        """Vincula el ID sin reconstruir la fila ni quitar el foco al usuario."""
+        idx = next(
+            (i for i, fila in enumerate(self.filas) if fila.get("local_id") == local_id),
+            None,
+        )
+        if idx is None:
+            self._liberar_creacion(local_id)
+            return
+
+        # El delta polling puede llegar antes que la respuesta del POST y
+        # materializar el mismo registro como una segunda tarjeta. Consolidar
+        # ambas por el ID definitivo antes de actualizar el borrador local.
+        duplicados = [
+            i for i, fila in enumerate(self.filas)
+            if i != idx and fila.get("b_id") == b_id
+        ]
+        for duplicado in reversed(duplicados):
+            card = self.filas[duplicado].get("_card_frame")
+            if card and card.winfo_exists():
+                card.destroy()
+            self.filas.pop(duplicado)
+            if duplicado < idx:
+                idx -= 1
+        self._reindexar_tarjetas_desde(min(duplicados, default=idx))
+
+        fila = self.filas[idx]
+        fila["b_id"] = b_id
+        fila["codigo"] = codigo
+        fila["_creando_en_nube"] = False
+        self._actualizar_codigo_fila(idx)
         self.ultimo_hash_bd = None
-        self._reconstruir_tarjeta(idx)
+        self._liberar_creacion(local_id)
+
+    def _reindexar_tarjetas_desde(self, inicio: int):
+        """Mueve tarjetas existentes sin recrear sus entradas ni quitarles foco."""
+        for i in range(max(0, inicio), len(self.filas)):
+            card = self.filas[i].get("_card_frame")
+            if card and card.winfo_exists():
+                card.grid_configure(row=i)
 
     def _asegurar_bitacora_local(self, fila: dict) -> int | None:
         """Asegura un ID local estable para guardar evidencias sin conexión."""
@@ -1044,6 +1271,7 @@ class BitacorasFrame(ctk.CTkFrame):
             self.after(0, self._actualizar_indicador_sync, "syncing", len(pendientes))
 
         for p in pendientes:
+            reserva_creacion = None
             try:
                 dto = {
                     "restaurante_id": p["restaurante_id"],
@@ -1052,6 +1280,7 @@ class BitacorasFrame(ctk.CTkFrame):
                     "fecha":          p["fecha"],
                     "hora":           p["hora"],
                     "urgencia":       p["urgencia"],
+                    "client_id":      p.get("client_id"),
                 }
                 b_id   = p["b_id"]
                 codigo = p["codigo"]
@@ -1061,10 +1290,16 @@ class BitacorasFrame(ctk.CTkFrame):
                     # debe completar los datos mínimos para crear el padre.
                     if not (p.get("hora") or p.get("descripcion")):
                         continue
+                    reserva_creacion = p["id"]
+                    if not self._reservar_creacion(reserva_creacion):
+                        reserva_creacion = None
+                        continue
                     resultado = crear_bitacora(dto)
                     if resultado:
                         b_id   = resultado.get("id", "")
                         codigo = resultado.get("codigo", "")
+                        if not b_id:
+                            raise Exception("El servidor no devolvió el ID de la bitácora creada")
                 else:
                     version = p.get("version")
                     resultado = actualizar_bitacora(b_id, dto, version=version)
@@ -1074,11 +1309,34 @@ class BitacorasFrame(ctk.CTkFrame):
 
                 if resultado is not None:
                     marcar_bitacora_sincronizada(p["id"], b_id, codigo)
+                    nombre_restaurante = next(
+                        (
+                            nombre for nombre, rest_id in self.mapa_restaurantes.items()
+                            if rest_id == p["restaurante_id"]
+                        ),
+                        None,
+                    )
+                    self.after(
+                        0,
+                        self._limpiar_campos_guardados,
+                        p["id"],
+                        {
+                            "restaurante": nombre_restaurante,
+                            "hora": p.get("hora", ""),
+                            "descripcion": p.get("descripcion", ""),
+                            "urgencia": p.get("urgencia", "leve"),
+                        },
+                    )
                     # Actualizar fila en memoria si existe
                     self.after(0, self._actualizar_fila_por_local_id, p["id"], b_id, codigo)
+                    # El callback libera la reserva cuando ya enlazó el b_id.
+                    reserva_creacion = None
             except Exception as e:
                 print(f"[sync_pendientes] Fila {p['id']}: {e}")
                 break  # parar si hay error de red, reintentará en 5s
+            finally:
+                if reserva_creacion is not None:
+                    self._liberar_creacion(reserva_creacion)
 
         # Las evidencias de filas ya sincronizadas también se reintentan aunque
         # no haya registros padre pendientes.
@@ -1089,10 +1347,90 @@ class BitacorasFrame(ctk.CTkFrame):
             if f.get("local_id") == local_id:
                 f["b_id"]   = b_id
                 f["codigo"] = codigo
-                self._reconstruir_tarjeta(i)
+                f["_creando_en_nube"] = False
+                self._actualizar_codigo_fila(i)
                 if self._bitacora_local_id_panel == local_id:
                     self._mostrar_panel_evidencia(codigo, f.get("evidencias", []), fila=f)
+                self._liberar_creacion(local_id)
                 break
+        else:
+            self._liberar_creacion(local_id)
+
+    def _actualizar_fila_remota(self, idx: int, datos_nuevos: dict):
+        """Fusiona un delta sin tocar los campos que el usuario está editando."""
+        if idx < 0 or idx >= len(self.filas):
+            return
+        fila = self.filas[idx]
+        with self.lock:
+            campos_activos = set(self.campos_editando.get(idx, set()))
+        campos_pendientes = set(fila.get("_campos_pendientes", set()))
+        campos_protegidos = campos_activos | campos_pendientes
+        valores_locales = {campo: fila.get(campo) for campo in campos_protegidos}
+        fila.update(datos_nuevos)
+        fila.update(valores_locales)
+
+        if campos_protegidos:
+            # Sincroniza las columnas remotas no editadas sin destruir los
+            # controles que tienen foco ni reemplazar cambios locales pendientes.
+            self._actualizar_widgets_fila_in_place(idx, datos_nuevos, campos_protegidos)
+        else:
+            self._reconstruir_tarjeta(idx)
+
+    def _actualizar_widgets_fila_in_place(self, idx: int, datos: dict, protegidos: set):
+        fila = self.filas[idx]
+        widgets = fila.get("_widgets", {})
+
+        if "restaurante" in datos and "restaurante" not in protegidos:
+            selector = widgets.get("restaurante")
+            if selector and selector.winfo_exists():
+                selector.set(datos["restaurante"] or "— Restaurante —")
+
+        if "hora" in datos and "hora" not in protegidos:
+            entry = widgets.get("hora")
+            if entry and entry.winfo_exists():
+                entry.delete(0, "end")
+                if datos["hora"]:
+                    entry.insert(0, datos["hora"])
+
+        if "descripcion" in datos and "descripcion" not in protegidos:
+            textbox = widgets.get("descripcion")
+            if textbox and textbox.winfo_exists():
+                textbox.delete("1.0", "end")
+                if datos["descripcion"]:
+                    textbox.insert("1.0", datos["descripcion"])
+                self.after(50, lambda w=textbox: self._ajustar_altura_textbox(w))
+
+        if "urgencia" in datos and "urgencia" not in protegidos:
+            urgencia = URGENCIA_LEGACY.get(datos["urgencia"], datos["urgencia"])
+            info = URGENCIA_COLORES.get(urgencia, URGENCIA_COLORES["leve"])
+            menu = widgets.get("urgencia")
+            card = fila.get("_card_frame")
+            if menu and menu.winfo_exists():
+                menu.set(URGENCIA_VALOR_A_DISPLAY.get(urgencia, "Leve"))
+                menu.configure(
+                    fg_color=info["bg"],
+                    text_color=info["fg"],
+                    button_color=info["bg"],
+                    button_hover_color=info["bg"],
+                )
+            if card and card.winfo_exists():
+                color = info["tarjeta_par"] if idx % 2 == 0 else info["tarjeta_impar"]
+                card.configure(fg_color=color)
+
+        if fila.get("codigo"):
+            self._actualizar_codigo_fila(idx)
+        self._actualizar_boton_evidencia(idx)
+
+    def _limpiar_campos_guardados(self, local_id: int, enviados: dict):
+        """Libera sólo los campos que siguen iguales a la versión ya sincronizada."""
+        for fila in self.filas:
+            if fila.get("local_id") != local_id:
+                continue
+            pendientes = fila.get("_campos_pendientes", set())
+            for campo in tuple(pendientes):
+                if campo in enviados and enviados[campo] is not None and fila.get(campo) == enviados[campo]:
+                    pendientes.discard(campo)
+            break
 
     def _aplicar_deltas(self, deltas: list):
         """
@@ -1144,15 +1482,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
             if b_id in ids_local:
                 idx = ids_local[b_id]
-                with self.lock:
-                    esta_editando = idx in self.filas_editando
-
-                self.filas[idx].update(datos_nuevos)
-
-                if esta_editando:
-                    self._actualizar_boton_evidencia(idx)
-                else:
-                    self._reconstruir_tarjeta(idx)
+                self._actualizar_fila_remota(idx, datos_nuevos)
 
                 if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
                     self._mostrar_panel_evidencia(datos_nuevos["codigo"], evids)
@@ -1218,17 +1548,7 @@ class BitacorasFrame(ctk.CTkFrame):
                         break
 
                 if cambios:
-                    with self.lock:
-                        esta_editando = local_idx in self.filas_editando
-
-                    self.filas[local_idx].update(datos_nuevos)
-                    
-                    if esta_editando:
-                        # Si está editando, actualizar sólo el chip conserva el cursor.
-                        self._actualizar_boton_evidencia(local_idx)
-                    else:
-                        # Si no está editando, podemos reconstruir la fila completa
-                        self._reconstruir_tarjeta(local_idx)
+                    self._actualizar_fila_remota(local_idx, datos_nuevos)
                 
                 # Auto-refresco del panel lateral de evidencias si está abierto para esta fila
                 if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
@@ -1904,7 +2224,7 @@ class BitacorasFrame(ctk.CTkFrame):
             self.lbl_dot.configure(text="⏸️", text_color="#facc15")
             self.btn_pausa_float.configure(
                 text="▶️  Reanudar", 
-                fg_color="#10b981", hover_color="#059669",
+                fg_color=SUCCESS_COLOR, hover_color=PRIMARY_HOVER,
                 width=85
             )
             # Cambiar fondo del panel y hotkey label

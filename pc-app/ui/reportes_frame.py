@@ -218,8 +218,13 @@ class ReportesFrame(ctk.CTkFrame):
         self._estado_pre_compacto = None
         self._modo_compacto = False
         self._after_adaptar_editor = None
+        self._ultimo_ancho_editor_config = None
+        self._ancho_panel_lateral_aplicado = None
         self._titulo_editor_completo = ""
+        self._titulo_editor_visible = None
         self._contexto_editor_completo = ""
+        self._contexto_editor_visible = None
+        self._estado_boton_compacto_visible = None
         self._tamano_fuente_editor = None
 
         # Borrador SQLite (se inicializa cuando se conoce el restaurante)
@@ -915,9 +920,13 @@ class ReportesFrame(ctk.CTkFrame):
                 if self._estado_pre_compacto == "zoomed":
                     self.controlador.state("normal")
 
-                ancho = min(480, max(340, self.controlador.winfo_screenwidth() - 40))
-                alto = min(260, max(190, self.controlador.winfo_screenheight() - 80))
-                self.controlador.geometry(f"{ancho}x{alto}")
+                pantalla_ancho = self.controlador.winfo_screenwidth()
+                pantalla_alto = self.controlador.winfo_screenheight()
+                ancho = min(480, max(340, pantalla_ancho - 40))
+                alto = min(260, max(190, pantalla_alto - 80))
+                x = max(0, (pantalla_ancho - ancho) // 2)
+                y = max(0, (pantalla_alto - alto) // 2)
+                self.controlador.geometry(f"{ancho}x{alto}+{x}+{y}")
                 if self._panel_visible:
                     self._toggle_panel_lateral()
                 self._modo_compacto = True
@@ -933,13 +942,21 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _programar_adaptacion_editor(self, event=None) -> None:
         """Agrupa eventos de redimensionamiento para evitar trabajo repetido."""
+        if event is not None:
+            if getattr(event, "widget", None) is not self.frame_editor:
+                return
+            tamano = (event.width, event.height)
+            if tamano == self._ultimo_ancho_editor_config:
+                return
+            self._ultimo_ancho_editor_config = tamano
+
         if self._after_adaptar_editor is not None:
             try:
                 self.after_cancel(self._after_adaptar_editor)
             except Exception:
                 pass
         try:
-            self._after_adaptar_editor = self.after(80, self._adaptar_barra_editor)
+            self._after_adaptar_editor = self.after(140, self._adaptar_barra_editor)
         except Exception:
             self._after_adaptar_editor = None
 
@@ -957,25 +974,34 @@ class ReportesFrame(ctk.CTkFrame):
             titulo = self._titulo_editor_completo
             if ancho < 700 and len(titulo) > caracteres:
                 titulo = titulo[: max(5, caracteres - 1)] + "…"
-            self.label_titulo_editor.configure(text=f"▣  {titulo}")
+            texto_titulo = f"▣  {titulo}"
+            if texto_titulo != self._titulo_editor_visible:
+                self.label_titulo_editor.configure(text=texto_titulo)
+                self._titulo_editor_visible = texto_titulo
 
         if hasattr(self, "btn_modo_compacto") and self.btn_modo_compacto.winfo_exists():
             if ancho < 600:
-                self.btn_modo_compacto.configure(
-                    text="↗" if self._modo_compacto else "↘", width=28
-                )
+                estado_boton = ("↗" if self._modo_compacto else "↘", 28)
             else:
-                self.btn_modo_compacto.configure(
-                    text="Restaurar" if self._modo_compacto else "Compactar",
-                    width=82,
+                estado_boton = (
+                    "Restaurar" if self._modo_compacto else "Compactar",
+                    82,
                 )
+            if estado_boton != self._estado_boton_compacto_visible:
+                self.btn_modo_compacto.configure(
+                    text=estado_boton[0], width=estado_boton[1]
+                )
+                self._estado_boton_compacto_visible = estado_boton
 
         if hasattr(self, "label_contexto_editor") and self.label_contexto_editor.winfo_exists():
             contexto = self._contexto_editor_completo
             max_contexto = max(16, int((ancho - 24) / 8))
             if len(contexto) > max_contexto:
                 contexto = contexto[: max_contexto - 1] + "…"
-            self.label_contexto_editor.configure(text=f"  {contexto}")
+            texto_contexto = f"  {contexto}"
+            if texto_contexto != self._contexto_editor_visible:
+                self.label_contexto_editor.configure(text=texto_contexto)
+                self._contexto_editor_visible = texto_contexto
 
         if hasattr(self, "textbox_notas") and self.textbox_notas.winfo_exists():
             tamano = 12 if ancho < 460 else 13 if ancho < 760 else 14
@@ -987,8 +1013,8 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _construir_ui_editor(self):
         # Columnas: editor (weight=1) + panel lateral (weight=0, oculto por defecto)
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(0, weight=1, minsize=0)
+        self.grid_columnconfigure(1, weight=0, minsize=0)
 
         # ── Frame editor ──────────────────────────────────────────────────
         self.frame_editor = ctk.CTkFrame(self, fg_color="transparent")
@@ -1232,13 +1258,12 @@ class ReportesFrame(ctk.CTkFrame):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _ajustar_ancho_panel_lateral(self) -> None:
-        """Reserva espacio proporcional para las herramientas al redimensionar."""
+        """Adapta el panel sin convertir el tamaño actual en un mínimo de ventana."""
         ancho_ventana = max(340, int(self.controlador.winfo_width()))
-        ancho_panel = min(248, max(136, int(ancho_ventana * 0.42)))
-        ancho_editor = max(120, ancho_ventana - ancho_panel)
-        self.grid_columnconfigure(0, weight=1, minsize=ancho_editor)
-        self.grid_columnconfigure(1, weight=0, minsize=ancho_panel)
-        self.frame_side.configure(width=ancho_panel)
+        ancho_panel = min(248, max(136, int(ancho_ventana * 0.35)))
+        if ancho_panel != self._ancho_panel_lateral_aplicado:
+            self._ancho_panel_lateral_aplicado = ancho_panel
+            self.frame_side.configure(width=ancho_panel)
 
     def _toggle_panel_lateral(self):
         """Alterna el panel lateral (modo zen \u2194 modo herramientas)."""

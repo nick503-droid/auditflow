@@ -215,6 +215,7 @@ imports:
  &#8226;   <a href="#sre_constants">sre_constants</a>
  &#8226;   <a href="#sre_parse">sre_parse</a>
  &#8226;   <a href="#stat">stat</a>
+ &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#traceback">traceback</a>
  &#8226;   <a href="#types">types</a>
  &#8226;   <a href="#ui.main_window">ui.main_window</a>
@@ -1584,6 +1585,7 @@ imported by:
  &#8226;   <a href="#PIL.CurImagePlugin">PIL.CurImagePlugin</a>
  &#8226;   <a href="#PIL.GifImagePlugin">PIL.GifImagePlugin</a>
  &#8226;   <a href="#PIL.TiffImagePlugin">PIL.TiffImagePlugin</a>
+ &#8226;   <a href="#core.thumbnailer">core.thumbnailer</a>
  &#8226;   <a href="#ui.icons">ui.icons</a>
 
   </div>
@@ -4100,6 +4102,8 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#api">api</a>
+ &#8226;   <a href="#db.local_db">db.local_db</a>
+ &#8226;   <a href="#hashlib">hashlib</a>
  &#8226;   <a href="#json">json</a>
  &#8226;   <a href="#mimetypes">mimetypes</a>
  &#8226;   <a href="#os">os</a>
@@ -4115,7 +4119,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#main.py">main.py</a>
+    <a href="#core.thumbnailer">core.thumbnailer</a>
+ &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.admin_frame">ui.admin_frame</a>
  &#8226;   <a href="#ui.bitacoras_frame">ui.bitacoras_frame</a>
  &#8226;   <a href="#ui.login_frame">ui.login_frame</a>
@@ -5409,7 +5414,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#email._encoded_words">email._encoded_words</a>
+    <a href="#db.local_db">db.local_db</a>
+ &#8226;   <a href="#email._encoded_words">email._encoded_words</a>
  &#8226;   <a href="#email.base64mime">email.base64mime</a>
  &#8226;   <a href="#email.encoders">email.encoders</a>
  &#8226;   <a href="#encodings.base64_codec">encodings.base64_codec</a>
@@ -6607,11 +6613,15 @@ imported by:
 imports:
     <a href="#PIL">PIL</a>
  &#8226;   <a href="#PIL.Image">PIL.Image</a>
+ &#8226;   <a href="#PIL.ImageOps">PIL.ImageOps</a>
+ &#8226;   <a href="#api.client">api.client</a>
  &#8226;   <a href="#core">core</a>
  &#8226;   <a href="#cv2">cv2</a>
+ &#8226;   <a href="#hashlib">hashlib</a>
+ &#8226;   <a href="#io">io</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#requests">requests</a>
- &#8226;   <a href="#tempfile">tempfile</a>
+ &#8226;   <a href="#urllib.parse">urllib.parse</a>
 
   </div>
   <div class="import">
@@ -8452,20 +8462,26 @@ imported by:
   <a target="code" href="///C:/Users/Nick/Documents/Projects/auditflow/pc-app/db/local_db.py" type="text/plain"><tt>db.local_db</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#contextlib">contextlib</a>
+    <a href="#base64">base64</a>
+ &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#core.recorder">core.recorder</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#db">db</a>
+ &#8226;   <a href="#hashlib">hashlib</a>
+ &#8226;   <a href="#hmac">hmac</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#sqlite3">sqlite3</a>
+ &#8226;   <a href="#time">time</a>
 
   </div>
   <div class="import">
 imported by:
-    <a href="#main.py">main.py</a>
+    <a href="#api.client">api.client</a>
+ &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.admin_frame">ui.admin_frame</a>
  &#8226;   <a href="#ui.bitacoras_frame">ui.bitacoras_frame</a>
+ &#8226;   <a href="#ui.login_frame">ui.login_frame</a>
  &#8226;   <a href="#ui.main_window">ui.main_window</a>
  &#8226;   <a href="#ui.reportes_frame">ui.reportes_frame</a>
 
@@ -8522,6 +8538,7 @@ imported by:
     <a href="#difflib">difflib</a>
  &#8226;   <a href="#doctest">doctest</a>
  &#8226;   <a href="#numpy.testing._private.utils">numpy.testing._private.utils</a>
+ &#8226;   <a href="#ui.reportes_frame">ui.reportes_frame</a>
  &#8226;   <a href="#unittest.case">unittest.case</a>
 
   </div>
@@ -12163,7 +12180,10 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#hmac">hmac</a>
+    <a href="#api.client">api.client</a>
+ &#8226;   <a href="#core.thumbnailer">core.thumbnailer</a>
+ &#8226;   <a href="#db.local_db">db.local_db</a>
+ &#8226;   <a href="#hmac">hmac</a>
  &#8226;   <a href="#random">random</a>
  &#8226;   <a href="#requests.auth">requests.auth</a>
  &#8226;   <a href="#urllib.request">urllib.request</a>
@@ -12208,7 +12228,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#multiprocessing.connection">multiprocessing.connection</a>
+    <a href="#db.local_db">db.local_db</a>
+ &#8226;   <a href="#multiprocessing.connection">multiprocessing.connection</a>
  &#8226;   <a href="#secrets">secrets</a>
  &#8226;   <a href="#urllib3.util.ssl_">urllib3.util.ssl_</a>
 
@@ -13068,6 +13089,7 @@ imported by:
  &#8226;   <a href="#asyncio.proactor_events">asyncio.proactor_events</a>
  &#8226;   <a href="#asyncio.unix_events">asyncio.unix_events</a>
  &#8226;   <a href="#bz2">bz2</a>
+ &#8226;   <a href="#core.thumbnailer">core.thumbnailer</a>
  &#8226;   <a href="#csv">csv</a>
  &#8226;   <a href="#dis">dis</a>
  &#8226;   <a href="#doctest">doctest</a>
@@ -23206,6 +23228,7 @@ imported by:
  &#8226;   <a href="#numpy.testing._private.utils">numpy.testing._private.utils</a>
  &#8226;   <a href="#tarfile">tarfile</a>
  &#8226;   <a href="#tempfile">tempfile</a>
+ &#8226;   <a href="#ui.bitacoras_frame">ui.bitacoras_frame</a>
  &#8226;   <a href="#ui.reportes_frame">ui.reportes_frame</a>
  &#8226;   <a href="#uuid">uuid</a>
  &#8226;   <a href="#webbrowser">webbrowser</a>
@@ -24041,7 +24064,6 @@ imported by:
  &#8226;   <a href="#PIL.JpegImagePlugin">PIL.JpegImagePlugin</a>
  &#8226;   <a href="#api.client">api.client</a>
  &#8226;   <a href="#asyncio.windows_utils">asyncio.windows_utils</a>
- &#8226;   <a href="#core.thumbnailer">core.thumbnailer</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
  &#8226;   <a href="#dotenv.main">dotenv.main</a>
  &#8226;   <a href="#importlib._common">importlib._common</a>
@@ -24141,6 +24163,7 @@ imported by:
  &#8226;   <a href="#keyboard._nixcommon">keyboard._nixcommon</a>
  &#8226;   <a href="#keyboard._winkeyboard">keyboard._winkeyboard</a>
  &#8226;   <a href="#logging">logging</a>
+ &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#multiprocessing.context">multiprocessing.context</a>
  &#8226;   <a href="#multiprocessing.dummy">multiprocessing.dummy</a>
  &#8226;   <a href="#multiprocessing.forkserver">multiprocessing.forkserver</a>
@@ -24209,6 +24232,7 @@ imported by:
  &#8226;   <a href="#core.audio_recorder">core.audio_recorder</a>
  &#8226;   <a href="#core.recorder">core.recorder</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#db.local_db">db.local_db</a>
  &#8226;   <a href="#email._parseaddr">email._parseaddr</a>
  &#8226;   <a href="#email.generator">email.generator</a>
  &#8226;   <a href="#email.utils">email.utils</a>
@@ -25122,6 +25146,7 @@ imports:
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#requests">requests</a>
+ &#8226;   <a href="#shutil">shutil</a>
  &#8226;   <a href="#tempfile">tempfile</a>
  &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#time">time</a>
@@ -25177,6 +25202,7 @@ imported by:
 imports:
     <a href="#api.client">api.client</a>
  &#8226;   <a href="#customtkinter">customtkinter</a>
+ &#8226;   <a href="#db.local_db">db.local_db</a>
  &#8226;   <a href="#requests">requests</a>
  &#8226;   <a href="#session">session</a>
  &#8226;   <a href="#threading">threading</a>
@@ -25230,6 +25256,7 @@ imports:
  &#8226;   <a href="#customtkinter">customtkinter</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#db.local_db">db.local_db</a>
+ &#8226;   <a href="#difflib">difflib</a>
  &#8226;   <a href="#keyboard">keyboard</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#requests">requests</a>
@@ -25698,6 +25725,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#api.client">api.client</a>
+ &#8226;   <a href="#core.thumbnailer">core.thumbnailer</a>
  &#8226;   <a href="#email.utils">email.utils</a>
  &#8226;   <a href="#http.client">http.client</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>

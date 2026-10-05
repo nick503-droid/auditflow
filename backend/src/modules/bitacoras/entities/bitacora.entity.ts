@@ -6,6 +6,7 @@ import {
   OneToMany,
   JoinColumn,
   DeleteDateColumn,
+  Index,
   UpdateDateColumn,
   VersionColumn,
 } from 'typeorm';
@@ -27,6 +28,7 @@ export enum NivelUrgencia {
 }
 
 @Entity('bitacoras')
+@Index('uq_bitacoras_client_id', ['client_id'], { unique: true })
 export class Bitacora {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -44,6 +46,10 @@ export class Bitacora {
 
   @Column({ name: 'usuario_id' })
   usuario_id: string;
+
+  /** Clave UUID persistente del cliente para que los reintentos no dupliquen filas. */
+  @Column({ name: 'client_id', type: 'varchar', length: 36, nullable: true })
+  client_id: string | null;
 
   @Column({ type: 'text' })
   descripcion: string;

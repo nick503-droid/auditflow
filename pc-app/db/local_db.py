@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import time
+import uuid
 from datetime import datetime
 import contextlib
 
@@ -192,6 +193,7 @@ def inicializar_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 b_id TEXT DEFAULT '',
                 codigo TEXT DEFAULT '',
+                client_id TEXT DEFAULT '',
                 restaurante_id TEXT NOT NULL,
                 usuario_id TEXT NOT NULL,
                 descripcion TEXT DEFAULT '',
@@ -251,6 +253,20 @@ def inicializar_db():
                 conexion.execute(sql)
             except Exception:
                 pass  # columna ya existe — ignorar
+
+        # v4: clave estable para reintentos idempotentes de bitácoras.
+        try:
+            conexion.execute("ALTER TABLE bitacora_pendiente ADD COLUMN client_id TEXT DEFAULT ''")
+        except Exception:
+            pass  # columna ya existe
+        filas_sin_client_id = conexion.execute(
+            "SELECT id FROM bitacora_pendiente WHERE client_id IS NULL OR client_id=''"
+        ).fetchall()
+        for fila in filas_sin_client_id:
+            conexion.execute(
+                "UPDATE bitacora_pendiente SET client_id=? WHERE id=?",
+                (str(uuid.uuid4()), fila["id"]),
+            )
 
         # v3: carpeta_destino en evidencia_borrador (para que AdminFrame sepa dónde buscar)
         _migraciones_evidencia = [
@@ -679,6 +695,7 @@ def guardar_bitacora_local(datos: dict) -> int:
                 """UPDATE bitacora_pendiente
                    SET b_id=CASE WHEN ?='' THEN b_id ELSE ? END,
                        codigo=CASE WHEN ?='' THEN codigo ELSE ? END,
+                       client_id=CASE WHEN ?='' THEN client_id ELSE ? END,
                        restaurante_id=?, usuario_id=?,
                        descripcion=?, fecha=?, hora=?, urgencia=?,
                        pendiente=1, actualizado_en=?
@@ -688,6 +705,8 @@ def guardar_bitacora_local(datos: dict) -> int:
                     datos.get("b_id", ""),
                     datos.get("codigo", "") or "",
                     datos.get("codigo", ""),
+                    datos.get("client_id", "") or "",
+                    datos.get("client_id", ""),
                     datos["restaurante_id"],
                     datos["usuario_id"],
                     datos.get("descripcion", ""),
@@ -703,11 +722,12 @@ def guardar_bitacora_local(datos: dict) -> int:
 
         cursor = conexion.execute(
             """INSERT INTO bitacora_pendiente
-               (b_id, codigo, restaurante_id, usuario_id, descripcion, fecha, hora, urgencia, pendiente, actualizado_en)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+               (b_id, codigo, client_id, restaurante_id, usuario_id, descripcion, fecha, hora, urgencia, pendiente, actualizado_en)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
             (
                 datos.get("b_id", ""),
                 datos.get("codigo", ""),
+                datos.get("client_id", ""),
                 datos["restaurante_id"],
                 datos["usuario_id"],
                 datos.get("descripcion", ""),

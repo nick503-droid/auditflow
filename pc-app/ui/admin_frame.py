@@ -35,7 +35,7 @@ SUCCESS_COLOR = STATUS["success"]["text"]
 SUCCESS_HOVER = PRIMARY
 WARN_COLOR = STATUS["warning"]["text"]
 DANGER_COLOR = STATUS["error"]["text"]
-DANGER_HOVER = "#dc2626"
+DANGER_HOVER = "#991B1B"
 CORNER_RADIUS = RADIUS_PANEL
 
 # Paleta específica para urgencias en admin

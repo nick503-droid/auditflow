@@ -7,7 +7,8 @@
         <v-btn
           icon="mdi-cog"
           variant="text"
-          color="white"
+          color="primary"
+          aria-label="Configuración de red"
           class="position-absolute"
           style="top: 16px; right: 16px; z-index: 10;"
           @click="mostrarConfig = true"
@@ -18,6 +19,7 @@
           icon="mdi-bug"
           variant="flat"
           color="warning"
+          aria-label="Abrir registros de diagnóstico"
           class="position-absolute rounded-circle elevation-4"
           style="bottom: 16px; left: 16px; z-index: 10;"
           @click="mostrarLogs = true"
@@ -27,10 +29,10 @@
         <v-dialog v-model="mostrarLogs" fullscreen transition="dialog-bottom-transition">
           <v-card color="#0F172A" class="text-white">
             <v-toolbar color="warning">
-              <v-btn icon="mdi-close" @click="mostrarLogs = false"></v-btn>
+              <v-btn icon="mdi-close" aria-label="Cerrar registros" @click="mostrarLogs = false"></v-btn>
               <v-toolbar-title class="font-weight-bold">Consola Android</v-toolbar-title>
               <v-spacer></v-spacer>
-              <v-btn icon="mdi-delete" @click="logs = []"></v-btn>
+              <v-btn icon="mdi-delete" aria-label="Limpiar registros" @click="logs = []"></v-btn>
             </v-toolbar>
             <v-card-text class="pa-4 bg-black" style="font-family: monospace; overflow-y: auto; height: 100%;">
               <div v-for="(log, idx) in logs" :key="idx" class="mb-2 pb-2 border-b border-opacity-25" :class="log.type === 'error' ? 'text-red-lighten-1' : 'text-green-lighten-2'">
@@ -121,7 +123,7 @@
                 :disabled="codigo.length !== 6 || subiendo"
                 height="56"
               >
-                <v-icon left class="mr-2" size="24">mdi-magnify</v-icon>
+                <v-icon start size="24">mdi-magnify</v-icon>
                 Buscar Destino
               </v-btn>
             </div>
@@ -195,7 +197,7 @@
                 :disabled="subiendo"
                 height="56"
               >
-                <v-icon left class="mr-2" size="24">mdi-camera</v-icon>
+                <v-icon start size="24">mdi-camera</v-icon>
                 Tomar Evidencia
               </v-btn>
 
@@ -209,7 +211,7 @@
                 :disabled="subiendo"
                 height="56"
               >
-                <v-icon left class="mr-2" size="24">mdi-video</v-icon>
+                <v-icon start size="24">mdi-video</v-icon>
                 Grabar Video
               </v-btn>
 
@@ -225,7 +227,7 @@
                 height="56"
                 style="border-width: 2px;"
               >
-                <v-icon left class="mr-2" size="24">mdi-folder-image</v-icon>
+                <v-icon start size="24">mdi-folder-image</v-icon>
                 Subir de Galería
               </v-btn>
               
@@ -599,12 +601,12 @@ body {
 .logo-container {
   width: 80px;
   height: 80px;
-  background: linear-gradient(135deg, #3B82F6, #2563EB);
+  background: linear-gradient(135deg, #059669, #047857);
   border-radius: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 10px 25px rgba(5, 150, 105, 0.32);
   transform: rotate(-5deg);
   transition: transform 0.3s ease;
 }
@@ -621,7 +623,7 @@ body {
   box-shadow: 0 4px 6px rgba(0,0,0,0.02) !important;
 }
 .gradient-btn {
-  background: linear-gradient(90deg, #0F172A 0%, #1E293B 100%) !important;
+  background: linear-gradient(90deg, #047857 0%, #065F46 100%) !important;
   color: white !important;
 }
 .shadow-btn {
@@ -711,7 +713,7 @@ body {
   transition: all 0.2s ease;
 }
 .otp-box.active {
-  border-color: #3b82f6;
-  background-color: #F8FAFC;
+  border-color: #047857;
+  background-color: #ECFDF5;
 }
 </style>

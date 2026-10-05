@@ -88,6 +88,14 @@ export class BitacorasService {
   }
 
   async create(dto: CreateBitacoraDto) {
+    const clientId = dto.client_id?.trim() || null;
+    if (clientId) {
+      const existente = await this.bitacorasRepo.findOne({
+        where: { client_id: clientId },
+      });
+      if (existente) return existente;
+    }
+
     const codigo = await this.generarCodigoUnico();
 
     // Normalizar campos opcionales: si no vienen, usar valores neutros
@@ -96,17 +104,38 @@ export class BitacorasService {
       descripcion: '',
       hora: '',
       ...dto,
+      client_id: clientId,
       // Pasamos el string de la fecha directamente si existe para evitar desfases de zona horaria
       fecha: dto.fecha ? (dto.fecha) : new Date(),
       codigo,
     });
-    return this.bitacorasRepo.save(nueva);
+    try {
+      return await this.bitacorasRepo.save(nueva);
+    } catch (error) {
+      // Dos reintentos pueden llegar simultáneamente y pasar el findOne previo.
+      // El índice único decide el ganador; el otro devuelve ese mismo registro.
+      const dbError = error as {
+        code?: string;
+        driverError?: { code?: string };
+      };
+      if (
+        clientId &&
+        (dbError.code ?? dbError.driverError?.code) === 'ER_DUP_ENTRY'
+      ) {
+        const creadoPorOtroIntento = await this.bitacorasRepo.findOne({
+          where: { client_id: clientId },
+        });
+        if (creadoPorOtroIntento) return creadoPorOtroIntento;
+      }
+      throw error;
+    }
   }
 
   async update(id: string, dto: UpdateBitacoraDto) {
     const bitacora = await this.findOne(id);
     if (!bitacora) return null;
-    Object.assign(bitacora, dto);
+    const { client_id: _clientId, ...camposActualizables } = dto;
+    Object.assign(bitacora, camposActualizables);
     await this.bitacorasRepo.save(bitacora);
     return this.findOne(id);
   }
