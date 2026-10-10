@@ -5,18 +5,7 @@ import time
 from datetime import datetime
 from core.audio_recorder import GrabadorAudio
 import sys
-
-def obtener_ruta_ffmpeg() -> str:
-    """Retorna la ruta segura a ffmpeg, ya sea empaquetado por PyInstaller o local."""
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, 'ffmpeg.exe')
-    
-    # Fallback desarrollo: Raíz del proyecto o PATH
-    ruta_raiz = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ffmpeg.exe')
-    if os.path.exists(ruta_raiz):
-        return ruta_raiz
-        
-    return 'ffmpeg'
+from core.ffmpeg_path import obtener_ruta_ffmpeg
 
 
 CARPETA_TEMPORAL = os.path.join(os.path.expanduser("~"), "AuditFlow_Temp")

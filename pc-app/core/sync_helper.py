@@ -32,6 +32,10 @@ def actualizar_indicador_sync(label: ctk.CTkLabel, estado: str, pendientes: int 
     try:
         if not label.winfo_exists():
             return
+        firma = (estado, pendientes)
+        if getattr(label, "_firma_sync", None) == firma:
+            return
+        label._firma_sync = firma
 
         if estado == "ok":
             label.configure(text="⬤ Sincronizado", text_color=COLOR_SYNC_OK)
@@ -57,6 +61,9 @@ def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
     try:
         if not label.winfo_exists():
             return
+        if getattr(label, "_firma_sync", None) == estado:
+            return
+        label._firma_sync = estado
 
         if estado == "ok":
             label.configure(text="☁️ En la nube", text_color=COLOR_SYNC_OK)

@@ -19,8 +19,6 @@ Refinamientos implementados:
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
-from PIL import Image
-import io
 import keyboard
 import os
 import shutil
@@ -43,6 +41,8 @@ from api.client import (
 )
 from core.recorder import GrabadorPantalla
 from core.sync_helper import actualizar_indicador_sync
+from core.thumbnail_service import MiniaturasUI
+from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
 from db.local_db import (
     inicializar_db,
     guardar_bitacora_local,
@@ -156,6 +156,13 @@ class BitacorasFrame(ctk.CTkFrame):
         self._bitacora_local_id_panel = None
         self._b_id_panel = ""
         self._lock_sync_evidencias = threading.Lock()
+        self._cerrado = False
+        self._miniaturas = MiniaturasUI(self)
+        self._lista_ev_tarjetas = None
+        self._lista_local_tarjetas = None
+        self._panel_ev_visible = False
+        self._codigo_mostrado = None
+        self._firma_panel_evidencias = None
 
         # Catálogos
         self.mapa_restaurantes = {}
@@ -184,7 +191,6 @@ class BitacorasFrame(ctk.CTkFrame):
         # Carga inmediata + polling
         self._carga_inicial()
         self._iniciar_polling()
-        self.bind("<Destroy>", self._al_destruir)
 
     # ─── Catálogos ────────────────────────────────────────────────────────────
 
@@ -456,6 +462,7 @@ class BitacorasFrame(ctk.CTkFrame):
             command=lambda i=idx: self._on_boton_evidencia(i),
         )
         ev_btn.grid(row=0, column=4, padx=2, pady=3)
+        ev_btn._estado_evidencias = (tiene_ev, cantidad_total or (1 if tiene_ev else 0))
 
         # ── Col 5 — Urgencia (OptionMenu, al final) ───────────────────────────
         urg_display = URGENCIA_VALOR_A_DISPLAY.get(urgencia, "Leve")
@@ -516,6 +523,10 @@ class BitacorasFrame(ctk.CTkFrame):
         cantidad_local = self._cantidad_evidencias_locales(fila)
         cantidad_total = len(evidencias) + cantidad_local
         tiene_ev = cantidad_total > 0 or fila.get("evidencia") == "Sí"
+        estado = (tiene_ev, cantidad_total or (1 if tiene_ev else 0))
+        if getattr(ev_btn, "_estado_evidencias", None) == estado:
+            return
+        ev_btn._estado_evidencias = estado
         if tiene_ev:
             cantidad = cantidad_total or 1
             ev_btn.configure(
@@ -534,7 +545,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 text_color=STATUS["info"]["text"],
             )
 
-    def _actualizar_evidencias_fila(self, codigo: str, evidencias: list):
+    def _actualizar_evidencias_fila(self, codigo: str, evidencias: list, *, refrescar_panel=True):
         """Inyecta las evidencias recibidas del servidor y actualiza su chip in-place."""
         for idx, fila in enumerate(self.filas):
             if fila.get("codigo") != codigo:
@@ -544,7 +555,7 @@ class BitacorasFrame(ctk.CTkFrame):
             fila["evidencia"] = "Sí" if fila["evidencias"] else ""
             self._actualizar_boton_evidencia(idx)
 
-            if self._codigo_panel_activo == codigo:
+            if refrescar_panel and self._codigo_panel_activo == codigo:
                 self._mostrar_panel_evidencia(codigo, fila["evidencias"])
             return
 
@@ -583,7 +594,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # Reconstruir las filas siguientes para actualizar sus índices
         for i in range(idx, len(self.filas)):
             self._reconstruir_tarjeta(i)
-    def _ajustar_altura_textbox(self, textbox: ctk.CTkTextbox):
+    def _ajustar_altura_textbox(self, widget: ctk.CTkTextbox):
         """Ajusta la altura del CTkTextbox al número de líneas VISUALES.
 
         Estrategia principal: dlineinfo("end-1c") — lee la posición Y del
@@ -1166,9 +1177,10 @@ class BitacorasFrame(ctk.CTkFrame):
                 return
 
         codigo = fila.get("codigo", "")
-        self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []), fila=fila)
         if fila.get("b_id"):
             self._continuar_evidencia(idx)
+        else:
+            self._mostrar_panel_evidencia(codigo, fila.get("evidencias", []), fila=fila)
 
     def _continuar_evidencia(self, idx: int):
         fila = self.filas[idx]
@@ -1181,11 +1193,11 @@ class BitacorasFrame(ctk.CTkFrame):
         def _fetch_evidencias():
             try:
                 evidencias_frescas = obtener_evidencias_bitacora(codigo)
+                if evidencias_frescas is None:
+                    return  # Un corte de red no significa que se borraron las evidencias.
                 def _actualizar():
-                    fila["evidencias"] = evidencias_frescas   # mantiene caché local consistente
-                    if getattr(self, "_codigo_panel_activo", None) == codigo:
-                        self._mostrar_panel_evidencia(codigo, evidencias_frescas)
-                    self._reconstruir_tarjeta(idx)
+                    if not self._cerrado:
+                        self._actualizar_evidencias_fila(codigo, evidencias_frescas)
                 self.after(0, _actualizar)
             except Exception:
                 pass
@@ -1236,6 +1248,8 @@ class BitacorasFrame(ctk.CTkFrame):
                     # Sin full-fetch previo, hacemos uno completo ahora
                     ts_antes = int(time.time() * 1000) - 1000
                     bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
+                    if self.stop_event.is_set():
+                        break
                     if bitacoras is not None:
                         self.timestamp_ultimo_sync = ts_antes
                         self.after(0, self._reconciliar_con_datos, bitacoras)
@@ -1246,6 +1260,8 @@ class BitacorasFrame(ctk.CTkFrame):
                     # Delta-fetch: solo pedir lo que cambio desde el cursor
                     ts_antes = int(time.time() * 1000) - 1000
                     deltas = obtener_bitacoras_delta(self.fecha_actual, ts_cursor)
+                    if self.stop_event.is_set():
+                        break
                     if deltas is None:
                         # Error de red
                         self.after(0, self._actualizar_indicador_sync, "offline")
@@ -1365,16 +1381,17 @@ class BitacorasFrame(ctk.CTkFrame):
             campos_activos = set(self.campos_editando.get(idx, set()))
         campos_pendientes = set(fila.get("_campos_pendientes", set()))
         campos_protegidos = campos_activos | campos_pendientes
+        cambios = {k: v for k, v in datos_nuevos.items()
+                   if k not in campos_protegidos and fila.get(k) != v}
+        if "evidencias" in cambios and firma_evidencias(fila.get("evidencias", [])) == firma_evidencias(cambios["evidencias"]):
+            cambios.pop("evidencias")
         valores_locales = {campo: fila.get(campo) for campo in campos_protegidos}
         fila.update(datos_nuevos)
         fila.update(valores_locales)
 
-        if campos_protegidos:
-            # Sincroniza las columnas remotas no editadas sin destruir los
-            # controles que tienen foco ni reemplazar cambios locales pendientes.
-            self._actualizar_widgets_fila_in_place(idx, datos_nuevos, campos_protegidos)
-        else:
-            self._reconstruir_tarjeta(idx)
+        # Incluso sin foco, una evidencia nueva no debe destruir toda la fila.
+        if cambios:
+            self._actualizar_widgets_fila_in_place(idx, cambios, campos_protegidos)
 
     def _actualizar_widgets_fila_in_place(self, idx: int, datos: dict, protegidos: set):
         fila = self.filas[idx]
@@ -1417,9 +1434,10 @@ class BitacorasFrame(ctk.CTkFrame):
                 color = info["tarjeta_par"] if idx % 2 == 0 else info["tarjeta_impar"]
                 card.configure(fg_color=color)
 
-        if fila.get("codigo"):
+        if "codigo" in datos and fila.get("codigo"):
             self._actualizar_codigo_fila(idx)
-        self._actualizar_boton_evidencia(idx)
+        if "evidencias" in datos or "evidencia" in datos:
+            self._actualizar_boton_evidencia(idx)
 
     def _limpiar_campos_guardados(self, local_id: int, enviados: dict):
         """Libera sólo los campos que siguen iguales a la versión ya sincronizada."""
@@ -1437,10 +1455,12 @@ class BitacorasFrame(ctk.CTkFrame):
         Actualiza la UI in-place con los registros cambiados recibidos del servidor.
         Reglas:
           - Si el delta trae deleted_at != None → retirar la tarjeta de la UI.
-          - Si el b_id ya está en self.filas → actualizar datos y reconstruir tarjeta.
+          - Si el b_id ya está en self.filas → actualizar sólo controles cambiados.
           - Si es nuevo → construir la tarjeta y añadirla.
         Nunca limpia la lista completa; la limpieza sólo ocurre al cambiar de fecha.
         """
+        if self._cerrado:
+            return
         ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
 
         for b in deltas:
@@ -1697,12 +1717,15 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _ocultar_panel_evidencia(self):
         self.frame_evidencia.grid_remove()
+        self._panel_ev_visible = False
         self.grid_columnconfigure(1, minsize=0, weight=0)
         self._codigo_panel_activo = ""
         self._bitacora_local_id_panel = None
         self._b_id_panel = ""
 
     def _mostrar_panel_evidencia(self, codigo: str, evidencias: list, fila: dict | None = None):
+        if self._cerrado:
+            return
         self._codigo_panel_activo = codigo or ""
         if fila is None and codigo:
             fila = next((f for f in self.filas if f.get("codigo") == codigo), None)
@@ -1717,41 +1740,54 @@ class BitacorasFrame(ctk.CTkFrame):
             bitacora_local_id=self._bitacora_local_id_panel,
             b_id=self._b_id_panel or None,
         )
-        self.grid_columnconfigure(1, minsize=300, weight=0)
-        self.frame_evidencia.grid(row=1, column=1, rowspan=2, sticky="ns", padx=(0, 12), pady=10)
+        if not self._panel_ev_visible:
+            self.grid_columnconfigure(1, minsize=300, weight=0)
+            self.frame_evidencia.grid(row=1, column=1, rowspan=2, sticky="ns", padx=(0, 12), pady=10)
+            self._panel_ev_visible = True
 
         # Actualizar código (solo lectura)
-        self.label_codigo.configure(text=codigo if codigo else "Pendiente")
-
-        # Actualizar lista de evidencias de la nube
-        for w in self.frame_lista_ev.winfo_children():
-            w.destroy()
-
-        # Actualizar lista de evidencias locales
-        for w in self.frame_lista_local.winfo_children():
-            w.destroy()
-
-        # Reiniciar lista de checkboxes para descarga
-        self._checkboxes_desc_bit = []
+        if self._codigo_mostrado != codigo:
+            self.label_codigo.configure(text=codigo if codigo else "Pendiente")
+            self._codigo_mostrado = codigo
+        firma_panel = (
+            codigo, self._bitacora_local_id_panel, self._b_id_panel,
+            firma_evidencias(evidencias), firma_evidencias(self.evidencias_locales_panel),
+        )
+        if firma_panel == self._firma_panel_evidencias:
+            return
+        self._firma_panel_evidencias = firma_panel
+        if self._lista_ev_tarjetas is None:
+            self._lista_ev_tarjetas = ListaEvidencias(self.frame_lista_ev)
+            self._lista_local_tarjetas = ListaEvidencias(self.frame_lista_local)
         
-        hay_nube = bool(evidencias)
         hay_local = bool(self.evidencias_locales_panel)
 
-        if not hay_nube:
-            ctk.CTkLabel(
+        items_nube = [
+            (ev.get("id") or ev.get("evidencia_url"), firma_evidencias([ev]), ev)
+            for ev in ordenar_evidencias(evidencias)
+        ]
+        self._lista_ev_tarjetas.actualizar(
+            items_nube, self._agregar_chip_evidencia,
+            vacio=lambda: ctk.CTkLabel(
                 self.frame_lista_ev, text="Sin evidencias aún",
                 text_color="gray50", font=get_font(size=10),
-            ).pack(pady=10)
-        else:
-            for ev in evidencias:
-                self._agregar_chip_evidencia(ev)
-                
+            ),
+        )
+        self._checkboxes_desc_bit = [card._descarga for card in self._lista_ev_tarjetas.widgets()
+                                     if hasattr(card, "_descarga")]
+        items_locales = [
+            (ev["id"], ev.get("ruta_local", ""), {"evidencia": ev, "indice": idx})
+            for idx, ev in enumerate(self.evidencias_locales_panel, start=1)
+        ]
+        self._lista_local_tarjetas.actualizar(
+            items_locales,
+            lambda datos: self._agregar_chip_evidencia_local(datos["evidencia"], datos["indice"]),
+            actualizar=lambda card, datos: card._label_etiqueta.configure(text=f"Ev. Local {datos['indice']}"),
+        )
         if not hay_local:
             self.frame_lista_local.pack_forget()
         else:
             self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
-            for idx, item in enumerate(self.evidencias_locales_panel, start=1):
-                self._agregar_chip_evidencia_local(item, idx)
 
         if hay_local:
             self.label_archivo.configure(
@@ -1819,12 +1855,12 @@ class BitacorasFrame(ctk.CTkFrame):
         ruta = evidencia.get("ruta_local", "")
         nombre = os.path.basename(ruta)
         chip = ctk.CTkFrame(self.frame_lista_local, fg_color=SURFACE_SECONDARY, corner_radius=6, border_width=1, border_color=BORDER)
-        chip.pack(fill="x", pady=2, padx=2)
         
         top_row = ctk.CTkFrame(chip, fg_color="transparent")
         top_row.pack(fill="x", padx=4, pady=2)
         
-        ctk.CTkLabel(top_row, text=f"Ev. Local {idx}", font=get_font(size=10, weight="bold"), text_color="#38bdf8").pack(side="left")
+        chip._label_etiqueta = ctk.CTkLabel(top_row, text=f"Ev. Local {idx}", font=get_font(size=10, weight="bold"), text_color="#38bdf8")
+        chip._label_etiqueta.pack(side="left")
         
         ctk.CTkButton(
             top_row, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
@@ -1832,6 +1868,7 @@ class BitacorasFrame(ctk.CTkFrame):
         ).pack(side="right")
         
         ctk.CTkLabel(chip, text=nombre, font=get_font(size=10), text_color="#94a3b8", justify="left").pack(side="left", padx=4, pady=(0,4))
+        return chip
 
     def _agregar_chip_evidencia(self, ev: dict):
         """Agrega un chip de miniatura o ícono de video para una evidencia.
@@ -1842,13 +1879,12 @@ class BitacorasFrame(ctk.CTkFrame):
         ext = url.rsplit(".", 1)[-1].lower() if "." in url else ""
 
         chip = ctk.CTkFrame(self.frame_lista_ev, fg_color="#1e3a5e", corner_radius=6)
-        chip.pack(fill="x", pady=2, padx=2)
 
         es_imagen = ext in ("jpg", "jpeg", "png", "webp")
         es_video  = ext in ("mp4", "avi", "mov", "mkv", "webm")
 
         # Configurar UI Inicial (Cargando)
-        ico = ctk.CTkLabel(chip, text="⏳", font=get_font(size=18), cursor="hand2")
+        ico = ctk.CTkLabel(chip, text="🖼" if es_imagen else "🎬", font=get_font(size=18), cursor="hand2")
         ico.pack(side="left", padx=8)
         ico.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
 
@@ -1863,52 +1899,17 @@ class BitacorasFrame(ctk.CTkFrame):
         lbl_nombre.pack(side="left", padx=4)
         lbl_nombre.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
 
-        def _cargar_miniatura_bg():
-            img_ctk = None
-            if es_imagen:
-                try:
-                    import urllib.request
-                    from api.client import normalizar_url
-                    url_norm = normalizar_url(url)
-                    with urllib.request.urlopen(url_norm, timeout=3) as resp:
-                        datos = resp.read()
-                    img_pil = Image.open(io.BytesIO(datos)).convert("RGB")
-                    img_pil.thumbnail((60, 40))
-                    img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-                except Exception as exc:
-                    pass # Silenciar errores de red
-            elif es_video:
-                try:
-                    import cv2
-                    from api.client import normalizar_url
-                    url_norm = normalizar_url(url)
-                    cap = cv2.VideoCapture(url_norm)
-                    ret, frame = cap.read()
-                    if ret:
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        img_pil = Image.fromarray(frame_rgb)
-                        img_pil.thumbnail((60, 40))
-                        img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(60, 40))
-                    cap.release()
-                except Exception as exc:
-                    pass
+        def aplicar(imagen):
+            if not chip.winfo_exists():
+                return False
+            if imagen is not None:
+                img_ctk = ctk.CTkImage(light_image=imagen, dark_image=imagen, size=(60, 40))
+                ico.configure(image=img_ctk, text="")
+                ico.image = img_ctk
+            return True
 
-            def _actualizar_ui():
-                if not chip.winfo_exists(): return
-                if img_ctk:
-                    ico.destroy()
-                    lbl = ctk.CTkLabel(chip, image=img_ctk, text="", cursor="hand2")
-                    lbl.pack(side="left", padx=6, pady=4, before=lbl_nombre)
-                    lbl.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
-                else:
-                    icono_txt = "🖼" if es_imagen else "🎬"
-                    ico.configure(text=icono_txt)
-
-            if chip.winfo_exists():
-                self.after(0, _actualizar_ui)
-
-        import threading
-        threading.Thread(target=_cargar_miniatura_bg, daemon=True).start()
+        if es_imagen or es_video:
+            self._miniaturas.solicitar(url, aplicar)
 
         fecha_creada = ev.get("creado_en", "")
         if fecha_creada:
@@ -1934,10 +1935,9 @@ class BitacorasFrame(ctk.CTkFrame):
                     command=lambda id=ev_id: self._eliminar_evidencia_nube(id)
                 ).pack(side="right", padx=(4, 8))
                 
-            if not hasattr(self, "_checkboxes_desc_bit"):
-                self._checkboxes_desc_bit = []
             nombre_desc = url.rsplit("/", 1)[-1] if "/" in url else url
-            self._checkboxes_desc_bit.append((var, nombre_desc, url))
+            chip._descarga = (var, nombre_desc, url)
+        return chip
 
     def _eliminar_evidencia_nube(self, ev_id: int):
         from tkinter import messagebox
@@ -2005,6 +2005,7 @@ class BitacorasFrame(ctk.CTkFrame):
         *,
         origen_generado: bool = False,
         iniciar_sync: bool = True,
+        refrescar: bool = True,
     ) -> bool:
         """Copia y registra la evidencia antes de cualquier intento de red."""
         fila = None
@@ -2071,10 +2072,11 @@ class BitacorasFrame(ctk.CTkFrame):
                 except OSError:
                     pass
 
-            self._mostrar_panel_evidencia(
-                fila.get("codigo", ""), fila.get("evidencias", []), fila=fila
-            )
-            self._actualizar_boton_evidencia_de_fila_activa()
+            if refrescar:
+                self._mostrar_panel_evidencia(
+                    fila.get("codigo", ""), fila.get("evidencias", []), fila=fila
+                )
+                self._actualizar_boton_evidencia_de_fila_activa()
             if fila.get("codigo"):
                 self.label_archivo.configure(text="Evidencia local guardada; sincronizando…")
             else:
@@ -2160,13 +2162,20 @@ class BitacorasFrame(ctk.CTkFrame):
     def _registrar_hotkeys(self):
         keyboard.add_hotkey("ctrl+k+l", self._toggle_grabacion)
 
+    def destroy(self):
+        if not self._cerrado:
+            self._cerrado = True
+            self._al_destruir(None)
+        super().destroy()
+
     def _al_destruir(self, event):
+        if getattr(event, "widget", self) is not self:
+            return
+        self._miniaturas.cerrar()
         # Señalar al hilo de polling que debe detenerse.
         # stop_event.set() despierta inmediatamente el stop_event.wait(5)
         # del worker, evitando que el hilo quede vivo hasta el próximo ciclo.
         self.stop_event.set()
-        if self._hilo_polling and self._hilo_polling.is_alive():
-            self._hilo_polling.join(timeout=1)
         try:
             keyboard.remove_hotkey("ctrl+k+l")
         except Exception:
@@ -2375,9 +2384,11 @@ class BitacorasFrame(ctk.CTkFrame):
         agregadas = 0
         for ruta in rutas:
             agregadas += bool(self._registrar_evidencia_local_bitacora(
-                ruta, con_audio=False, iniciar_sync=False
+                ruta, con_audio=False, iniciar_sync=False, refrescar=False
             ))
         if agregadas:
+            self._refrescar_lista_evidencias()
+            self._actualizar_boton_evidencia_de_fila_activa()
             self._solicitar_sincronizacion_evidencias()
 
     def _on_subir_evidencia(self):
@@ -2395,6 +2406,11 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _solicitar_sincronizacion_evidencias(self):
         """Ejecuta un único worker para toda la cola local de evidencias."""
+        if self._cerrado:
+            return
+        pendientes = obtener_evidencias_bitacora_pendientes()
+        if not any(item.get("vinculada") or item.get("codigo") for item in pendientes):
+            return
         if not self._lock_sync_evidencias.acquire(blocking=False):
             return
         self.after(0, self._actualizar_indicador_sync, "syncing")
@@ -2403,6 +2419,8 @@ class BitacorasFrame(ctk.CTkFrame):
             vinculadas: dict[str, dict] = {}
             cantidad_subida = 0
             try:
+                # Releer bajo el lock: otro worker pudo vaciar la cola después
+                # de la comprobación inicial y antes de adquirirlo.
                 pendientes = obtener_evidencias_bitacora_pendientes()
                 for item in pendientes:
                     codigo = (item.get("codigo") or "").strip().upper()
@@ -2455,13 +2473,16 @@ class BitacorasFrame(ctk.CTkFrame):
                 print(f"[bitacoras-evidencia] Error de sincronización: {e}")
             finally:
                 self._lock_sync_evidencias.release()
-                self.after(0, self._finalizar_sincronizacion_evidencias, vinculadas, cantidad_subida)
+                if not self._cerrado:
+                    self.after(0, self._finalizar_sincronizacion_evidencias, vinculadas, cantidad_subida)
 
         threading.Thread(target=_worker, daemon=True, name="BitacorasEvidenciasSync").start()
 
     def _finalizar_sincronizacion_evidencias(self, vinculadas: dict, cantidad_subida: int):
+        if self._cerrado:
+            return
         for codigo, data in vinculadas.items():
-            self._actualizar_evidencias_fila(codigo, data.get("evidencias", []))
+            self._actualizar_evidencias_fila(codigo, data.get("evidencias", []), refrescar_panel=False)
 
         pendientes = obtener_evidencias_bitacora_pendientes(
             bitacora_local_id=self._bitacora_local_id_panel,

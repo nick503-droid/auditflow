@@ -79,6 +79,8 @@ if __name__ == "__main__":
     ).start()
     
     app = MainWindow()
+    from core.runtime_diagnostics import instalar_diagnostico
+    cerrar_diagnostico = instalar_diagnostico(app)
     from core.pc_updates import mark_application_ready, start_background_updates
     from api import client
 
@@ -101,6 +103,9 @@ if __name__ == "__main__":
             _mostrar_version()
 
     app.after(0, _iniciar_actualizador)
-    app.mainloop()
-    if getattr(app, "_pc_update_stop", None):
-        app._pc_update_stop.set()
+    try:
+        app.mainloop()
+    finally:
+        cerrar_diagnostico()
+        if getattr(app, "_pc_update_stop", None):
+            app._pc_update_stop.set()

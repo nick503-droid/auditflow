@@ -59,6 +59,8 @@ from api.client import (
 )
 from core.recorder import GrabadorPantalla, es_archivo_grabado
 from core.sync_helper import actualizar_indicador_reporte
+from core.thumbnail_service import MiniaturasUI
+from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
 
 
 # ─── Tipos de archivo soportados ─────────────────────────────────────────────
@@ -188,6 +190,9 @@ class ReportesFrame(ctk.CTkFrame):
         # Sólo una subida de evidencias por reporte a la vez: evita que el
         # polling y un clic del usuario publiquen la misma cola dos veces.
         self._lock_sync_evidencias = threading.Lock()
+        self._cerrado = False
+        self._miniaturas = MiniaturasUI(self)
+        self._lista_evidencias = None
 
         # Búsqueda de reportes en nube
         self.reportes_data = {}   # titulo_clave → dict reporte
@@ -245,7 +250,8 @@ class ReportesFrame(ctk.CTkFrame):
         )
         self._hilo_directorio.start()
 
-        self.bind("<Destroy>", self._al_destruir)
+        # La limpieza se realiza antes de destruir hijos, no mediante el
+        # bind de CTkFrame (que realmente se enlaza a su canvas interno).
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PANTALLA 1: SETUP
@@ -867,8 +873,6 @@ class ReportesFrame(ctk.CTkFrame):
         # Detener el hilo de polling de forma limpia antes de navegar.
         self.stop_event.set()
         self._stop_event_directorio.set()
-        if self._hilo_polling and self._hilo_polling.is_alive():
-            self._hilo_polling.join(timeout=1)
         try:
             keyboard.remove_hotkey("ctrl+k+l")
         except Exception:
@@ -941,6 +945,8 @@ class ReportesFrame(ctk.CTkFrame):
             print(f"[reportes] No se pudo cambiar el tamaño de ventana: {e}")
 
     def _programar_adaptacion_editor(self, event=None) -> None:
+        if self._cerrado:
+            return
         """Agrupa eventos de redimensionamiento para evitar trabajo repetido."""
         if event is not None:
             if getattr(event, "widget", None) is not self.frame_editor:
@@ -1301,6 +1307,8 @@ class ReportesFrame(ctk.CTkFrame):
         while not self.stop_event.is_set():
             if self.reporte_remoto_id:
                 data = obtener_reporte(self.reporte_remoto_id)
+                if self.stop_event.is_set():
+                    break
                 if data:
                     self.after(0, self._aplicar_estado_remoto, data)
                 # Igual que el texto: cualquier evidencia que quedó en cola
@@ -1454,13 +1462,13 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _aplicar_estado_remoto(self, remoto: dict):
         """Aplica cambios de otros auditores sin borrar una edición local pendiente."""
-        if not hasattr(self, "textbox_notas") or not self.textbox_notas.winfo_exists():
+        if self._cerrado or not hasattr(self, "textbox_notas") or not self.textbox_notas.winfo_exists():
             return
 
         texto_remoto = remoto.get("notas_finales", "")
         evidencias_remotas = remoto.get("evidencias", [])
         cambio_texto = texto_remoto != self._texto_base_remoto
-        cambio_evidencias = hash(str(evidencias_remotas)) != hash(str(getattr(self, "evidencias_nube", [])))
+        cambio_evidencias = firma_evidencias(evidencias_remotas) != firma_evidencias(getattr(self, "evidencias_nube", []))
 
         if cambio_evidencias:
             self.evidencias_nube = evidencias_remotas
@@ -1797,39 +1805,39 @@ class ReportesFrame(ctk.CTkFrame):
         return ruta_evidencia_reporte(codigo, titulo, nombre_archivo)
 
     def _refrescar_lista_evidencias(self):
-        if not hasattr(self, "frame_lista_evidencias") or not self.frame_lista_evidencias.winfo_exists():
+        if self._cerrado or not self.borrador or not hasattr(self, "frame_lista_evidencias") or not self.frame_lista_evidencias.winfo_exists():
             return
-        for widget in self.frame_lista_evidencias.winfo_children():
-            widget.destroy()
-
+        if self._lista_evidencias is None:
+            self._lista_evidencias = ListaEvidencias(self.frame_lista_evidencias)
         evidencias_locales = obtener_evidencias(self.borrador["id"])
-        evidencias_nube = getattr(self, "evidencias_nube", [])
-        
-        if not evidencias_locales and not evidencias_nube:
-            ctk.CTkLabel(
+        items = []
+        for tipo, evidencias in (("nube", ordenar_evidencias(getattr(self, "evidencias_nube", []))),
+                                 ("local", evidencias_locales)):
+            for i, ev in enumerate(evidencias, start=1):
+                ruta = ev.get("evidencia_url", "") if tipo == "nube" else ev["ruta_local"]
+                nombre = ruta.split("/")[-1] if tipo == "nube" else os.path.basename(ruta)
+                datos = {"tipo": tipo, "id": ev.get("id"), "ruta": ruta,
+                         "nombre": nombre or f"Nube_{i}",
+                         "etiqueta": f"☁️ Nube {i}" if tipo == "nube" else f"Ev. {i}",
+                         "color": "#64748b" if tipo == "nube" else "#38bdf8"}
+                items.append(((tipo, ev.get("id") or ruta), (ruta, datos["nombre"]), datos))
+
+        def crear(datos):
+            ev_id = datos["id"]
+            eliminar = self._eliminar_evidencia_nube if datos["tipo"] == "nube" else self._eliminar_evidencia_local
+            comando = (lambda id=ev_id: eliminar(id)) if ev_id is not None else None
+            return self._crear_tarjeta_evidencia(datos["nombre"], datos["ruta"], datos["etiqueta"], datos["color"], comando)
+
+        self._lista_evidencias.actualizar(
+            items, crear,
+            actualizar=lambda card, datos: card._label_etiqueta.configure(text=datos["etiqueta"]),
+            vacio=lambda: ctk.CTkLabel(
                 self.frame_lista_evidencias,
                 text="Sin evidencias aún",
                 text_color=TEXT_SECONDARY,
                 font=get_font(size=11),
-            ).pack(pady=16)
-            if self.label_estado_evidencias.winfo_exists():
-                self.label_estado_evidencias.configure(text="")
-            return
-
-        # 1. Evidencias en la Nube
-        for i, ev in enumerate(evidencias_nube, start=1):
-            url = ev.get("evidencia_url", "")
-            nombre = url.split("/")[-1] if url else f"Nube_{i}"
-            ev_id = ev.get("id")
-            cmd = (lambda id=ev_id: self._eliminar_evidencia_nube(id)) if ev_id else None
-            self._crear_tarjeta_evidencia(nombre, url, f"☁️ Nube {i}", "#64748b", delete_command=cmd)
-
-        # 2. Evidencias Locales (pendientes de subir)
-        for i, ev in enumerate(evidencias_locales, start=1):
-            nombre = os.path.basename(ev["ruta_local"])
-            ruta = ev["ruta_local"]
-            cmd = lambda id=ev["id"]: self._eliminar_evidencia_local(id)
-            self._crear_tarjeta_evidencia(nombre, ruta, f"Ev. {i}", "#38bdf8", delete_command=cmd)
+            ),
+        )
 
     def _eliminar_evidencia_local(self, ev_id: int):
         from db.local_db import db_session
@@ -1872,17 +1880,17 @@ class ReportesFrame(ctk.CTkFrame):
     def _crear_tarjeta_evidencia(self, nombre: str, ruta_o_url: str, etiqueta: str, color_etiqueta: str, delete_command=None):
         """Tarjeta de evidencia con miniatura inline y botón de previsualización."""
         card = ctk.CTkFrame(self.frame_lista_evidencias, fg_color=SURFACE_SECONDARY, corner_radius=5)
-        card.pack(fill="x", pady=3, padx=2)
 
         top_row = ctk.CTkFrame(card, fg_color="transparent")
         top_row.pack(fill="x", padx=8, pady=(5, 2))
 
-        ctk.CTkLabel(
+        card._label_etiqueta = ctk.CTkLabel(
             top_row,
             text=etiqueta,
             font=get_font(size=10, weight="bold"),
             text_color=color_etiqueta,
-        ).pack(side="left")
+        )
+        card._label_etiqueta.pack(side="left")
 
         ctk.CTkButton(
             top_row,
@@ -1913,29 +1921,20 @@ class ReportesFrame(ctk.CTkFrame):
         ext = os.path.splitext(nombre)[1].lower()
         es_imagen = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
         if es_imagen and (ruta_o_url.startswith("http") or os.path.exists(ruta_o_url)):
-            def _cargar_thumb(r=ruta_o_url, parent=body_row):
-                try:
-                    from PIL import Image
-                    if r.startswith("http"):
-                        from api.client import normalizar_url
-                        r_norm = normalizar_url(r)
-                        img = Image.open(requests.get(r_norm, stream=True).raw).convert("RGB")
-                    else:
-                        img = Image.open(r).convert("RGB")
-                    img.thumbnail((54, 38))
+            lbl_thumb = ctk.CTkLabel(body_row, text="🖼", width=54, cursor="hand2")
+            lbl_thumb.pack(side="left", padx=(0, 6))
+            lbl_thumb.bind("<Button-1>", lambda e=None, ru=ruta_o_url: self._previsualizar_archivo(ru))
+
+            def aplicar(img):
+                if not lbl_thumb.winfo_exists():
+                    return False
+                if img is not None:
                     ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(54, 38))
-                    
-                    def _actualizar_ui():
-                        if parent.winfo_exists():
-                            lbl_thumb = ctk.CTkLabel(parent, image=ctk_img, text="", cursor="hand2")
-                            lbl_thumb.image = ctk_img
-                            lbl_thumb.pack(side="left", padx=(0, 6))
-                            lbl_thumb.bind("<Button-1>", lambda e=None, ru=r: self._previsualizar_archivo(ru))
-                    
-                    self.after(0, _actualizar_ui)
-                except Exception:
-                    pass  # falla silenciosa si PIL no está o el archivo es inválido
-            threading.Thread(target=_cargar_thumb, daemon=True).start()
+                    lbl_thumb.configure(image=ctk_img, text="")
+                    lbl_thumb.image = ctk_img
+                return True
+
+            self._miniaturas.solicitar(ruta_o_url, aplicar)
         elif ext in (".mp4", ".avi", ".mov", ".mkv", ".webm"):
             ctk.CTkLabel(body_row, text="🎥", font=get_font(size=20)).pack(side="left", padx=(0, 6))
 
@@ -1947,6 +1946,7 @@ class ReportesFrame(ctk.CTkFrame):
             wraplength=130,
             justify="left",
         ).pack(side="left", anchor="w")
+        return card
 
 
 
@@ -2127,10 +2127,17 @@ class ReportesFrame(ctk.CTkFrame):
     # GRABACIÓN DE PANTALLA
     # ═══════════════════════════════════════════════════════════════════════════
 
+    def destroy(self):
+        if not self._cerrado:
+            self._cerrado = True
+            self._al_destruir(None)
+        super().destroy()
+
     def _al_destruir(self, event):
         # El bind pertenece al frame; ignorar Destroy de cualquier hijo por seguridad.
         if getattr(event, "widget", self) is not self:
             return
+        self._miniaturas.cerrar()
 
         if self._after_adaptar_editor is not None:
             try:
@@ -2144,8 +2151,6 @@ class ReportesFrame(ctk.CTkFrame):
         # Detener el hilo de polling de forma limpia e inmediata.
         self.stop_event.set()
         self._stop_event_directorio.set()
-        if self._hilo_polling and self._hilo_polling.is_alive():
-            self._hilo_polling.join(timeout=1)
         self._ocultar_indicador_rec()
 
     def _actualizar_botones_grabacion(self):
@@ -2259,13 +2264,18 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _solicitar_sincronizacion_evidencias(self) -> None:
         """Inicia un único intento de envío; los fallos permanecen en SQLite."""
-        if not self.reporte_remoto_id or not self._lock_sync_evidencias.acquire(blocking=False):
+        if self._cerrado or not self.reporte_remoto_id or not self.borrador:
+            return
+        if not obtener_evidencias(self.borrador["id"]):
+            return
+        if not self._lock_sync_evidencias.acquire(blocking=False):
             return
 
         def _worker():
             try:
                 exito = self._subir_evidencias_pendientes()
-                self.after(0, self._terminar_sincronizacion_evidencias, exito)
+                if not self._cerrado:
+                    self.after(0, self._terminar_sincronizacion_evidencias, exito)
             finally:
                 self._lock_sync_evidencias.release()
 
@@ -2347,6 +2357,7 @@ class ReportesFrame(ctk.CTkFrame):
                     pass
             if (
                 reflejar_editor
+                and not self._cerrado
                 and self.borrador
                 and self.borrador.get("id") == borrador_id
             ):
@@ -2359,6 +2370,8 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _agregar_evidencia_remota(self, evidencia: dict) -> None:
         """Refleja el éxito local de inmediato; el polling confirma a las demás PC."""
+        if self._cerrado:
+            return
         existentes = getattr(self, "evidencias_nube", [])
         evidencia_id = evidencia.get("id")
         if evidencia_id and any(ev.get("id") == evidencia_id for ev in existentes):
@@ -2367,7 +2380,7 @@ class ReportesFrame(ctk.CTkFrame):
         self._refrescar_lista_evidencias()
 
     def _terminar_sincronizacion_evidencias(self, exito: bool) -> None:
-        if not hasattr(self, "label_estado_evidencias") or not self.label_estado_evidencias.winfo_exists():
+        if self._cerrado or not self.borrador or not hasattr(self, "label_estado_evidencias") or not self.label_estado_evidencias.winfo_exists():
             return
         pendientes = obtener_evidencias(self.borrador["id"])
         actualizar_indicador_reporte(self.label_estado_evidencias, "ok" if exito and not pendientes else "offline")

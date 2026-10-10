@@ -28,7 +28,11 @@ jobs:
           node-version: '20'
           package-manager-cache: false
       - name: Pruebas aisladas de despliegue y sintaxis systemd (no inicia servicios)
-        run: python -m unittest discover -s tests -p 'test_pc*.py' -v
+        # Las pruebas de miniaturas no necesitan Tk, OpenCV ni audio en Linux.
+        # Instalar sólo las dos dependencias portables usadas por esas pruebas.
+        run: |
+          python -m pip install pillow==12.3.0 requests==2.34.2
+          python -m unittest discover -s tests -p 'test_pc*.py' -v
       - name: Compilar y verificar entrypoint backend sin DB
         working-directory: backend
         run: |

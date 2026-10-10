@@ -333,11 +333,11 @@ def eliminar_bitacora_remota(b_id: str) -> bool:
         return False
 
 
-def obtener_evidencias_bitacora(codigo: str) -> list:
+def obtener_evidencias_bitacora(codigo: str) -> list | None:
     """
     Devuelve la lista fresca de evidencias de una bitácora usando su
     código corto (6 chars). Llama directamente al backend — no usa caché.
-    Regresa [] si hay error de red o el código no existe.
+    Regresa None si falla la red; [] sólo si el servidor confirma una lista vacía.
     """
     try:
         response = requests.get(
@@ -348,7 +348,7 @@ def obtener_evidencias_bitacora(codigo: str) -> list:
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"[evidencias] Error al obtener evidencias del código {codigo}: {e}")
-        return []
+        return None
 
 
 def cerrar_bitacora_dia(fecha: str) -> dict | None:
