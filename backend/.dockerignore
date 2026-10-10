@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+deployment.json
+local_storage
+storage
+pc_updates
+*.log

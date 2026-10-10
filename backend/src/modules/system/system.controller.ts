@@ -2,6 +2,8 @@ import { Controller, Get, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 const execAsync = promisify(exec);
 
@@ -11,7 +13,17 @@ export class SystemController {
 
   @Get('deployment')
   deployment() {
-    return { commit: process.env.AUDITFLOW_DEPLOY_COMMIT || 'development' };
+    // Sólo la identidad grabada al construir la imagen, no un SHA que alguien
+    // haya exportado al recrear el contenedor con código distinto.
+    try {
+      const metadata = JSON.parse(readFileSync(resolve(process.cwd(), 'deployment.json'), 'utf8'));
+      if (typeof metadata?.commit === 'string' && /^[a-f0-9]{40}$/.test(metadata.commit)) {
+        return { commit: metadata.commit };
+      }
+    } catch {
+      // Desarrollo local o imágenes antiguas: no se consideran desplegadas.
+    }
+    return { commit: 'development' };
   }
 
   @Get('info')

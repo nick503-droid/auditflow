@@ -6,25 +6,37 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+
+SERVICE_NAME = "auditflow-pc-publisher.service"
+TIMER_NAME = "auditflow-pc-publisher.timer"
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "pc-app"))
 from core.pc_updates import atomic_json, read_json
 
 
-def install_timer():
-    import shutil
-    if not shutil.which("systemctl"):
-        raise RuntimeError("No hay systemd; instalar sólo hooks o configurar un servicio equivalente")
-    directory = Path.home() / ".config" / "systemd" / "user"
-    directory.mkdir(parents=True, exist_ok=True)
-    def quote(value):
-        return '"' + str(value).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+def systemd_path(value):
+    # WorkingDirectory es un path escalar: NO utiliza el parser de ExecStart.
+    # Sus espacios interiores, comillas y barras son literales, no shell escapes.
+    value = str(value)
+    if not value.startswith("/") or value != value.strip() or value.endswith("\\") or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError("Ruta systemd absoluta no representable de forma segura")
+    return value.replace("%", "%%")
+
+
+def systemd_argument(value):
+    systemd_path(value)
+    return '"' + str(value).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_units(root, executable):
     service = (
         "[Unit]\nDescription=Publicar actualizaciones AuditFlow pendientes de pull\n"
         "[Service]\nType=oneshot\n"
-        f"WorkingDirectory={quote(ROOT)}\n"
-        f"ExecStart={quote(sys.executable)} {quote(ROOT / 'deploy' / 'publish_pc_update.py')} --worker\n"
+        f"WorkingDirectory={systemd_path(root)}\n"
+        # ':' impide expandir $VAR en argumentos. %% conserva porcentajes.
+        f"ExecStart=:{systemd_argument(executable)} {systemd_argument(str(root).rstrip('/') + '/deploy/publish_pc_update.py')} --worker\n"
         "TimeoutStartSec=75min\n"
     )
     timer = (
@@ -32,13 +44,33 @@ def install_timer():
         "[Timer]\nOnBootSec=1min\nOnUnitInactiveSec=5min\n"
         "Unit=auditflow-pc-publisher.service\n[Install]\nWantedBy=timers.target\n"
     )
-    for name, content in (("auditflow-pc-publisher.service", service), ("auditflow-pc-publisher.timer", timer)):
+    return {SERVICE_NAME: service, TIMER_NAME: timer}
+
+
+def install_timer():
+    import shutil
+    if not shutil.which("systemctl") or not shutil.which("systemd-analyze"):
+        raise RuntimeError("Se requieren systemctl y systemd-analyze para validar e instalar el timer")
+    units = render_units(ROOT, sys.executable)
+    directory = Path.home() / ".config" / "systemd" / "user"
+    directory.mkdir(parents=True, exist_ok=True)
+    # Revisar TODOS los destinos antes de reemplazar ninguno.
+    for name in units:
         path = directory / name
         if path.exists() and "AuditFlow" not in path.read_text(encoding="utf-8"):
             raise RuntimeError(f"Ya existe {path}; no se reemplaza")
-        path.write_text(content, encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="auditflow-units-") as temporary:
+        files = []
+        for name, content in units.items():
+            path = Path(temporary) / name
+            path.write_text(content, encoding="utf-8")
+            files.append(str(path))
+        # verify NO inicia los servicios. Una unidad inválida no se instala.
+        subprocess.run(["systemd-analyze", "--user", "verify", *files], check=True)
+    for name, content in units.items():
+        (directory / name).write_text(content, encoding="utf-8")
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", "--now", "auditflow-pc-publisher.timer"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", TIMER_NAME], check=True)
 
 
 def install(sudo_docker=False, with_timer=False):

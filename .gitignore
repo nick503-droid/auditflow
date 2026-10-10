@@ -29,6 +29,7 @@ build/
 pc-releases/
 pc_updates/
 .auditflow-deploy/
+backend/deployment.json
 pc-app/third-party/
 
 # ─── Node.js (Backend NestJS y Mobile App Vue 3) ──────────────────────────

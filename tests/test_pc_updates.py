@@ -257,7 +257,7 @@ class PublisherTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_publish_after_backend_confirmed(self):
-        with patch.object(publisher, "deploy_backend") as backend:
+        with patch.object(publisher, "deploy_backend") as backend, patch.object(publisher, "deployment_ready", side_effect=[False, True]):
             self.assertTrue(publisher.publish_once(self.config, self.revision))
         backend.assert_called_once()
         manifest = updates.read_json(self.public / "manifest.json")
@@ -307,16 +307,41 @@ class PublisherTests(unittest.TestCase):
                     handle.writestr("docker-compose.yml", "services: {}")
             else:
                 calls.append((arguments, kwargs))
+                if "config" in arguments:
+                    return types.SimpleNamespace(returncode=0, stdout=json.dumps({"name": "auditflow", "services": {"backend": {"container_name": "auditflow-api"}}}))
+                if "image" in arguments:
+                    return types.SimpleNamespace(returncode=0, stdout=json.dumps([{"Id": "sha256:new", "Config": {"Labels": {"org.opencontainers.image.revision": self.revision}}}]))
             return types.SimpleNamespace(returncode=0)
         snapshot = self.root / "isolated-snapshot"
-        with patch.object(publisher.subprocess, "run", side_effect=run), patch.object(publisher, "deployment_ready", return_value=True):
+        old = {"Id": "old-container", "Image": "sha256:old"}
+        with patch.object(publisher.subprocess, "run", side_effect=run), patch.object(publisher, "inspect_container", return_value=old), patch.object(publisher, "recovery_model", return_value={}), patch.object(publisher, "deployment_commit", return_value="development"), patch.object(publisher, "wait_backend", return_value=True):
             publisher.deploy_backend(self.config, self.revision, snapshot)
-        command, kwargs = calls[0]
+        command, kwargs = next((c, k) for c, k in calls if "up" in c)
         self.assertIn("--no-deps", command)
+        self.assertIn("--no-build", command)
+        self.assertNotIn("--build", command)
         self.assertEqual(command[-1], "backend")
         self.assertEqual(kwargs["env"]["AUDITFLOW_DEPLOY_COMMIT"], self.revision)
         override = updates.read_json(snapshot / "override.json")
         self.assertEqual(override["services"]["backend"]["build"]["context"], str(snapshot / "backend"))
+        self.assertEqual(override["services"]["backend"]["build"]["args"]["AUDITFLOW_DEPLOY_COMMIT"], self.revision)
+
+    def test_final_backend_check_prevents_publication(self):
+        with patch.object(publisher, "deploy_backend"), self.assertRaises(publisher.DeploymentError):
+            publisher.publish_once(self.config, self.revision)
+        self.assertFalse((self.public / "manifest.json").exists())
+
+    def test_dirty_backend_including_staged_change_never_downloads(self):
+        with patch.object(publisher.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)) as git_diff, patch.object(publisher, "github_release") as release:
+            with self.assertRaisesRegex(ValueError, "cambios locales"):
+                publisher.publish_once(self.config, self.revision)
+        self.assertIn("HEAD", git_diff.call_args.args[0])
+        release.assert_not_called()
+
+    def test_interrupted_recovery_blocks_all_revisions(self):
+        publisher.record_deployment(self.revision, "replacing")
+        with self.assertRaises(publisher.DeploymentError):
+            publisher.publish_once(self.config, "3" * 40)
 
 
 if __name__ == "__main__":

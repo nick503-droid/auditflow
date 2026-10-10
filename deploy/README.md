@@ -13,6 +13,9 @@ del commit que el servidor recibió. Android no se modifica.
    el release "latest" ni actualizaciones de otros commits.
 4. Descarga y verifica ZIP + instalador. Construye el backend desde un snapshot
    de ese SHA, conservando MySQL, MinIO, storage y configuración `.env`.
+   Comprueba el entrypoint en un contenedor aislado sin red ni montajes antes
+   de sustituir el backend. El SHA queda incluido en la imagen, no sólo en el
+   entorno del proceso. Conserva una receta privada de recuperación del backend.
 5. Sólo cuando `/system/deployment` confirma el SHA publica el manifiesto LAN.
 6. Las PC descargan en segundo plano. Al cerrar y volver a abrir **AuditFlow.exe**,
    el lanzador activa la nueva versión. No fuerza cierres ni detiene grabaciones.
@@ -127,6 +130,22 @@ con la siguiente versión.
 - El despliegue reinicia **sólo** el backend (puede haber una breve desconexión).
   `--no-deps` evita volver a descargar MinIO y no recrea DB/MinIO. No soluciona
   dependencias que estén detenidas. No usa `down -v` ni elimina volúmenes.
+- Si falla la activación, intenta recuperar la imagen y configuración anteriores
+  del backend. Verifica misma topología de montajes, puertos y red antes de
+  reemplazarlo; cambios avanzados requieren recuperación manual. El rollback
+  **no revierte modificaciones de esquema/datos** (MySQL `DB_SYNC=true` sigue
+  existiendo). Hacer respaldos de DB/evidencias antes de desplegar.
+- El estado se guarda en `.auditflow-deploy/deployment-state.json`. Un fallo de
+  preflight o una recuperación exitosa bloquean reintentos automáticos del mismo
+  SHA; revisar y solicitar de nuevo con `--request` conscientemente. Un corte
+  mientras figura `replacing`, o `recovery_failed`, bloquea cualquier nuevo
+  despliegue hasta revisar la recuperación. `--request` NO borra ese bloqueo.
+- Las recetas `.auditflow-deploy/recovery/<SHA>/compose.json` contienen el entorno
+  del backend: directorios 0700/archivos 0600. No compartirlas ni subirlas a Git.
+  No borrar ni editar journals de recuperación sin comprobar el backend.
+- `/system/deployment` devuelve la identidad incluida en la imagen. Imágenes
+  antiguas o builds manuales sin SHA informan `development`; exportar un SHA al
+  recrear un contenedor **no convierte código distinto en esa versión**.
 - LAN controlada: SHA-256 detecta corrupción, **no autentica al editor** si un
   atacante controla el servidor/tráfico HTTP. Antes de usar redes no confiables:
   HTTPS y firma verificable de releases/ejecutables. No exponer el actualizador
@@ -163,9 +182,16 @@ Git ni detener las PC. Los logs PC están en `%LOCALAPPDATA%/AuditFlowClient/upd
 10. Actualización de prueba que falla al arrancar antes de la UI: vuelve al binario
     anterior. Realizar en perfil de prueba, no sobre reportes de producción.
 
-Pruebas unitarias: `python -m unittest discover -s tests -p 'test_pc_updates.py' -v`.
+Pruebas unitarias: `python -m unittest discover -s tests -p 'test_pc*.py' -v`.
+El workflow ahora exige validación Linux del backend/systemd antes del release.
+`npm run build` incluye el smoke test `npm run verify:prod`, sin DB ni listener.
+La prueba real de sintaxis systemd sólo se ejecuta cuando hay Linux/systemd-analyze.
 Compilación manual Windows: `tools/build_pc_release.ps1 -Commit <SHA40> -Build <numero>`.
 No publicar una compilación manual con un SHA que no describa realmente su código.
+
+Para recuperar el despliegue observado el 9 de octubre, ver
+[RECUPERACION_ACTUALIZADOR.md](RECUPERACION_ACTUALIZADOR.md). No seguir la guía
+antigua sin preservar primero la reparación local de `backend/package.json`.
 
 Referencias: [hooks de Git](https://git-scm.com/docs/githooks),
 [PyInstaller por plataforma](https://pyinstaller.org/en/stable/operating-mode.html),

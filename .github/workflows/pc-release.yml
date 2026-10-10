@@ -13,7 +13,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          package-manager-cache: false
+      - name: Pruebas aisladas de despliegue y sintaxis systemd (no inicia servicios)
+        run: python -m unittest discover -s tests -p 'test_pc*.py' -v
+      - name: Compilar y verificar entrypoint backend sin DB
+        working-directory: backend
+        run: |
+          npm ci
+          npm run build
+          npm test -- --runInBand --runTestsByPath src/modules/system/system.controller.spec.ts src/modules/bitacoras/bitacoras.service.spec.ts
   build:
+    needs: validation
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -47,7 +70,7 @@ jobs:
           foreach ($license in $licenses) { Copy-Item -LiteralPath $license.FullName -Destination pc-app/third-party }
           Set-Content pc-app/third-party/FFmpeg-SOURCE.txt "Build: $url`nSHA256: $checksum`nSource: https://www.gyan.dev/ffmpeg/builds/"
       - name: Pruebas del actualizador
-        run: python -m unittest discover -s tests -p "test_pc_updates.py" -v
+        run: python -m unittest discover -s tests -p "test_pc*.py" -v
       - name: Compilar y empaquetar
         shell: pwsh
         run: ./tools/build_pc_release.ps1 -Commit '${{ github.sha }}' -Build ${{ github.run_number }}
