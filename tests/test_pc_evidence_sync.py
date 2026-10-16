@@ -46,12 +46,13 @@ def load_methods(filename, class_name, method_names, extra=None):
     source = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == class_name)
     definition = ast.ClassDef(name="Probe", bases=[], keywords=[], decorator_list=[],
         body=[n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in method_names])
-    namespace = {"ctk": CTK, "ListaEvidencias": ListaEvidencias,
+    namespace = {"ctk": CTK, "IconButton": Widget, "IconLabel": Widget, "ListaEvidencias": ListaEvidencias,
         "firma_evidencias": firma_evidencias, "ordenar_evidencias": ordenar_evidencias,
         "get_font": lambda **kwargs: None, "os": __import__("os"),
         "get_icon": lambda *args, **kwargs: None,
-        "SURFACE_SECONDARY": "#eee", "BORDER": "#ddd", "TEXT_SECONDARY": "#777", "TEXT_MUTED": "#777",
-        "STATUS": {name: {"text": "#333", "bg": "#fff", "border": "#ddd"} for name in ("error", "success", "info")},
+        "SURFACE_SECONDARY": "#eee", "BORDER": "#ddd", "TEXT_PRIMARY": "#333", "TEXT_SECONDARY": "#777", "TEXT_MUTED": "#777",
+        "PRIMARY": "#047857", "PRIMARY_HOVER": "#065F46",
+        "STATUS": {name: {"text": "#333", "bg": "#fff", "border": "#ddd", "solid": "#333", "hover": "#222", "hover_bg": "#eee"} for name in ("error", "success", "info")},
         "URGENCIA_LEGACY": {}, "threading": threading}
     namespace.update(extra or {})
     exec(compile(ast.fix_missing_locations(ast.Module(body=[definition], type_ignores=[])), filename, "exec"), namespace)

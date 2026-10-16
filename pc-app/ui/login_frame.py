@@ -1,3 +1,4 @@
+from ui.visual_widgets import IconButton, IconLabel
 import customtkinter as ctk
 from tkinter import messagebox
 import threading
@@ -38,20 +39,20 @@ class LoginFrame(ctk.CTkFrame):
         inner.pack(padx=50, pady=50, fill="both")
 
         # Logo / Título
-        ctk.CTkLabel(
+        IconLabel(
             inner,
             text="🔒",
             font=get_font(size=52)
         ).pack(pady=(0, 10))
 
-        ctk.CTkLabel(
+        IconLabel(
             inner,
             text="AuditFlow",
             font=get_font(size=28, weight="bold"),
             text_color=TEXT_PRIMARY
         ).pack()
 
-        ctk.CTkLabel(
+        IconLabel(
             inner,
             text="Inicia sesión para continuar",
             font=get_font(size=13),
@@ -59,7 +60,7 @@ class LoginFrame(ctk.CTkFrame):
         ).pack(pady=(2, 30))
 
         # Campo usuario
-        ctk.CTkLabel(inner, text="Usuario", font=get_font(size=13, weight="bold"),
+        IconLabel(inner, text="Usuario", font=get_font(size=13, weight="bold"),
                      text_color=TEXT_SECONDARY, anchor="w").pack(fill="x")
         self.entry_user = ctk.CTkEntry(
             inner,
@@ -75,7 +76,7 @@ class LoginFrame(ctk.CTkFrame):
         self.entry_user.bind("<Return>", lambda e: self.entry_pass.focus())
 
         # Campo contraseña
-        ctk.CTkLabel(inner, text="Contraseña", font=get_font(size=13, weight="bold"),
+        IconLabel(inner, text="Contraseña", font=get_font(size=13, weight="bold"),
                      text_color=TEXT_SECONDARY, anchor="w").pack(fill="x")
         self.entry_pass = ctk.CTkEntry(
             inner,
@@ -92,7 +93,7 @@ class LoginFrame(ctk.CTkFrame):
         self.entry_pass.bind("<Return>", lambda e: self._on_login())
 
         # Mensaje de error (oculto por defecto)
-        self.lbl_error = ctk.CTkLabel(
+        self.lbl_error = IconLabel(
             inner,
             text="",
             font=get_font(size=12),
@@ -101,7 +102,7 @@ class LoginFrame(ctk.CTkFrame):
         self.lbl_error.pack(pady=(0, 10))
 
         # Botón de login
-        self.btn_login = ctk.CTkButton(
+        self.btn_login = IconButton(
             inner,
             text="Ingresar →",
             command=self._on_login,
@@ -118,14 +119,14 @@ class LoginFrame(ctk.CTkFrame):
         footer_frame = ctk.CTkFrame(inner, fg_color="transparent")
         footer_frame.pack(fill="x", pady=(24, 0))
         
-        ctk.CTkLabel(
+        IconLabel(
             footer_frame,
             text="AuditFlow v1.0",
             font=get_font(size=11),
             text_color=TEXT_MUTED
         ).pack(side="left")
         
-        btn_config = ctk.CTkButton(
+        btn_config = IconButton(
             footer_frame,
             text="⚙ Configurar Servidor",
             width=20,
@@ -201,12 +202,12 @@ class LoginFrame(ctk.CTkFrame):
         
         win.protocol("WM_DELETE_WINDOW", _on_close)
         
-        ctk.CTkLabel(
+        IconLabel(
             win, text="Cambio Requerido", 
             font=get_font(size=22, weight="bold"), text_color=TEXT_PRIMARY
         ).pack(pady=(30, 5))
         
-        ctk.CTkLabel(
+        IconLabel(
             win, text="Por razones de seguridad, debes cambiar tu\ncontraseña temporal para continuar.", 
             font=get_font(size=12), text_color=TEXT_SECONDARY
         ).pack(pady=(0, 20))
@@ -220,7 +221,7 @@ class LoginFrame(ctk.CTkFrame):
         entry_conf.pack(pady=10)
         
         # Error Label
-        lbl_err = ctk.CTkLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
+        lbl_err = IconLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
         lbl_err.pack(pady=5)
         
         def _on_guardar():
@@ -251,7 +252,7 @@ class LoginFrame(ctk.CTkFrame):
                 self.after(0, _ui)
             threading.Thread(target=_task, daemon=True).start()
             
-        btn_guardar = ctk.CTkButton(
+        btn_guardar = IconButton(
             win, text="Actualizar Contraseña", width=300, height=40,
             fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
             text_color="#FFFFFF", font=get_font(size=14, weight="bold"),
@@ -274,12 +275,12 @@ class LoginFrame(ctk.CTkFrame):
         win.configure(fg_color=APP_BACKGROUND)
         win.grab_set()
         
-        ctk.CTkLabel(
+        IconLabel(
             win, text="⚙ Dirección del Servidor", 
             font=get_font(size=18, weight="bold"), text_color=TEXT_PRIMARY
         ).pack(pady=(20, 5))
         
-        ctk.CTkLabel(
+        IconLabel(
             win, text="Asegúrate de incluir http:// o https://", 
             font=get_font(size=12), text_color=TEXT_SECONDARY
         ).pack(pady=(0, 15))
@@ -288,7 +289,7 @@ class LoginFrame(ctk.CTkFrame):
         entry_url.pack(pady=5)
         entry_url.insert(0, client.API_BASE_URL)
         
-        lbl_err = ctk.CTkLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
+        lbl_err = IconLabel(win, text="", text_color=STATUS["error"]["text"], font=get_font(size=12))
         lbl_err.pack(pady=2)
         
         def _on_guardar():
@@ -320,7 +321,7 @@ class LoginFrame(ctk.CTkFrame):
             
             threading.Thread(target=_test_connection, daemon=True).start()
             
-        btn_guardar = ctk.CTkButton(
+        btn_guardar = IconButton(
             win, text="Guardar Cambios", width=350, height=40,
             fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
             text_color="#FFFFFF", font=get_font(size=14, weight="bold"),

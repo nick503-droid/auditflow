@@ -1,3 +1,4 @@
+from ui.visual_widgets import IconButton, IconLabel
 """
 BitacorasFrame — Módulo de bitácoras para AuditFlow PC App.
 
@@ -76,7 +77,7 @@ ACCENT_HOVER = PRIMARY_HOVER
 SUCCESS_COLOR = STATUS["success"]["text"]
 WARN_COLOR = STATUS["warning"]["text"]
 DANGER_COLOR = STATUS["error"]["text"]
-DANGER_HOVER = "#991B1B"
+DANGER_HOVER = STATUS["error"]["hover"]
 
 URGENCIA_COLORES = {
     "comentar": {"bg": STATUS["info"]["bg"],    "fg": STATUS["info"]["text"],    "tarjeta_par": SURFACE, "tarjeta_impar": SURFACE_SECONDARY},
@@ -108,7 +109,7 @@ COLOR_BOTON_EV_OK      = SUCCESS_COLOR
 COLOR_BOTON_EV_ADD     = ACCENT_COLOR
 COLOR_SYNC_OK          = SUCCESS_COLOR
 COLOR_SYNC_OFFLINE     = WARN_COLOR
-COLOR_SYNC_WORKING     = "#3b82f6"
+COLOR_SYNC_WORKING     = STATUS["info"]["text"]
 
 ANCHO_REST     = 160
 ANCHO_HORA     = 70
@@ -221,29 +222,29 @@ class BitacorasFrame(ctk.CTkFrame):
         self.top_bar = ctk.CTkFrame(self, fg_color="transparent")
         self.top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 4))
 
-        ctk.CTkLabel(
+        IconLabel(
             self.top_bar,
             text=f"📋  Bitácoras: {self.fecha_actual}",
             font=get_font(size=18, weight="bold"),
         ).pack(side="left", padx=10)
 
-        ctk.CTkLabel(
+        IconLabel(
             self.top_bar, text="Vigilante a cargo:", font=get_font(size=12)
         ).pack(side="left", padx=(20, 5))
 
         # Texto estático ahora que el login es centralizado
-        ctk.CTkLabel(
+        IconLabel(
             self.top_bar, text=self.usuario_activo["nombre"], font=get_font(size=12, weight="bold")
         ).pack(side="left", padx=5)
 
         # Indicador de conexión
-        self.label_sync = ctk.CTkLabel(
+        self.label_sync = IconLabel(
             self.top_bar, text="⬤ Conectado",
             text_color=COLOR_SYNC_OK, font=get_font(size=11),
         )
         self.label_sync.pack(side="left", padx=(16, 0))
 
-        ctk.CTkButton(
+        IconButton(
             self.top_bar, text="\u2190 Volver", width=80,
             fg_color="transparent", hover_color=SURFACE_SECONDARY,
             border_width=1, border_color=BORDER, text_color=TEXT_PRIMARY,
@@ -251,16 +252,16 @@ class BitacorasFrame(ctk.CTkFrame):
             command=self._on_volver,
         ).pack(side="right", padx=10)
 
-        ctk.CTkButton(
+        IconButton(
             self.top_bar, text="+ Nueva fila", width=110,
             fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
             text_color="#FFFFFF", font=get_font(size=12, weight="bold"),
             command=self._agregar_fila_vacia,
         ).pack(side="right", padx=5)
 
-        ctk.CTkButton(
+        IconButton(
             self.top_bar, text="\U0001F512 Cerrar día", width=120,
-            fg_color=DANGER_COLOR, hover_color=DANGER_HOVER,
+            fg_color=STATUS["error"]["solid"], hover_color=DANGER_HOVER,
             text_color="#FFFFFF", font=get_font(size=12, weight="bold"),
             command=self._on_cerrar_bitacora_dia,
         ).pack(side="right", padx=5)
@@ -292,7 +293,7 @@ class BitacorasFrame(ctk.CTkFrame):
         ]
         for col_idx, (texto, ancho, expandir) in enumerate(headers):
             kw = {} if expandir else {"width": ancho}
-            lbl = ctk.CTkLabel(
+            lbl = IconLabel(
                 hdr, text=texto,
                 font=get_font(size=12, weight="bold"),
                 text_color="#FFFFFF", **kw,
@@ -374,7 +375,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # ── Col 1 — Hora (texto libre) ────────────────────────────────────────
         hora_entry = ctk.CTkEntry(card, placeholder_text="HH:MM", width=ANCHO_HORA, height=28,
-                                  font=get_font(size=11, weight="bold"), text_color=SECONDARY)
+                                  font=get_font(size=11, weight="bold"), text_color=STATUS["info"]["text"])
         hora_val = fila.get("hora", "")
         if hora_val:
             hora_entry.insert(0, hora_val)
@@ -414,7 +415,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # ── Col 3 — Badge de código (solo lectura) ────────────────────────────
         codigo = fila.get("codigo", "")
         if codigo:
-            cod_btn = ctk.CTkButton(
+            cod_btn = IconButton(
                 card,
                 text=codigo,
                 width=ANCHO_COD, height=28,
@@ -426,7 +427,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 command=lambda c=codigo: self._copiar_codigo(c),
             )
         else:
-            cod_btn = ctk.CTkLabel(
+            cod_btn = IconLabel(
                 card, text="—", width=ANCHO_COD, height=28,
                 text_color=TEXT_MUTED, font=get_font(size=11),
             )
@@ -443,15 +444,15 @@ class BitacorasFrame(ctk.CTkFrame):
             ev_icon  = get_icon("check", size=(16, 16), color=STATUS["success"]["text"])
             ev_color = STATUS["success"]["bg"]
             ev_text_color = STATUS["success"]["text"]
-            ev_hover = STATUS["success"]["border"]
+            ev_hover = STATUS["success"]["hover_bg"]
         else:
             ev_text  = " Adjuntar"
             ev_icon  = get_icon("paperclip", size=(16, 16), color=STATUS["info"]["text"])
             ev_color = STATUS["info"]["bg"]
             ev_text_color = STATUS["info"]["text"]
-            ev_hover = STATUS["info"]["border"]
+            ev_hover = STATUS["info"]["hover_bg"]
 
-        ev_btn = ctk.CTkButton(
+        ev_btn = IconButton(
             card,
             text=ev_text,
             image=ev_icon,
@@ -483,7 +484,7 @@ class BitacorasFrame(ctk.CTkFrame):
         urg_menu.grid(row=0, column=5, padx=(2, 6), pady=3)
 
         # ── Col 6 — Eliminar ──────────────────────────────────────────────────
-        btn_eliminar = ctk.CTkButton(
+        btn_eliminar = IconButton(
             card, text="🗑️", width=32, height=28,
             fg_color="transparent", hover_color=STATUS["error"]["bg"],
             text_color=STATUS["error"]["text"], font=get_font(size=14),
@@ -533,7 +534,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 text=f" {cantidad} ev.",
                 image=get_icon("check", size=(16, 16), color=STATUS["success"]["text"]),
                 fg_color=STATUS["success"]["bg"],
-                hover_color=STATUS["success"]["border"],
+                hover_color=STATUS["success"]["hover_bg"],
                 text_color=STATUS["success"]["text"],
             )
         else:
@@ -541,7 +542,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 text=" Adjuntar",
                 image=get_icon("paperclip", size=(16, 16), color=STATUS["info"]["text"]),
                 fg_color=STATUS["info"]["bg"],
-                hover_color=STATUS["info"]["border"],
+                hover_color=STATUS["info"]["hover_bg"],
                 text_color=STATUS["info"]["text"],
             )
 
@@ -825,9 +826,9 @@ class BitacorasFrame(ctk.CTkFrame):
             pass
 
     def _mostrar_toast(self, mensaje: str):
-        toast = ctk.CTkLabel(
+        toast = IconLabel(
             self.top_bar, text=mensaje,
-            fg_color="#1e3a2e", text_color="#4ade80",
+            fg_color=STATUS["success"]["bg"], text_color=STATUS["success"]["text"],
             corner_radius=6, font=get_font(size=11),
             padx=10, pady=4,
         )
@@ -1058,7 +1059,7 @@ class BitacorasFrame(ctk.CTkFrame):
         if actual and actual.winfo_exists():
             actual.destroy()
 
-        boton = ctk.CTkButton(
+        boton = IconButton(
             card,
             text=codigo,
             width=ANCHO_COD,
@@ -1598,20 +1599,20 @@ class BitacorasFrame(ctk.CTkFrame):
         header = ctk.CTkFrame(self.frame_evidencia, fg_color=PRIMARY, corner_radius=0)
         header.pack(fill="x")
 
-        self.label_panel_titulo = ctk.CTkLabel(
+        self.label_panel_titulo = IconLabel(
             header, text="\u25A3  Evidencias",
             font=get_font(size=14, weight="bold"), text_color="#FFFFFF",
         )
         self.label_panel_titulo.pack(side="left", padx=12, pady=10)
 
-        ctk.CTkButton(
+        IconButton(
             header, text="\u2715", width=30, height=30,
             fg_color="transparent", hover_color=PRIMARY_HOVER, text_color="#FFFFFF",
             command=self._ocultar_panel_evidencia,
         ).pack(side="right", padx=8, pady=6)
 
         # Código (solo lectura)
-        ctk.CTkLabel(
+        IconLabel(
             self.frame_evidencia, text="Código de bitácora",
             text_color=TEXT_MUTED, font=get_font(size=11),
         ).pack(pady=(14, 2), padx=16, anchor="w")
@@ -1619,7 +1620,7 @@ class BitacorasFrame(ctk.CTkFrame):
         frame_cod = ctk.CTkFrame(self.frame_evidencia, fg_color="transparent")
         frame_cod.pack(padx=16, fill="x", pady=(0, 2))
 
-        self.label_codigo = ctk.CTkLabel(
+        self.label_codigo = IconLabel(
             frame_cod,
             text="——————",
             font=get_font(family="Consolas", size=20, weight="bold"),
@@ -1630,7 +1631,7 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self.label_codigo.pack(side="left", fill="x", expand=True)
 
-        ctk.CTkButton(
+        IconButton(
             frame_cod, text="\u2399", width=32, height=32,
             fg_color="transparent", hover_color=SURFACE_SECONDARY,
             text_color=TEXT_SECONDARY,
@@ -1640,7 +1641,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # ── Área de lista de evidencias existentes ────────────────────────
         ctk.CTkFrame(self.frame_evidencia, height=1, fg_color=BORDER).pack(fill="x", padx=16, pady=10)
 
-        ctk.CTkLabel(
+        IconLabel(
             self.frame_evidencia, text="Evidencias vinculadas",
             text_color=TEXT_MUTED, font=get_font(size=11),
         ).pack(padx=16, anchor="w")
@@ -1649,23 +1650,23 @@ class BitacorasFrame(ctk.CTkFrame):
         self.frame_lista_ev.pack(fill="x", padx=16, pady=(4, 0))
 
         # ── Agregar nueva evidencia ───────────────────────────────────────
-        ctk.CTkFrame(self.frame_evidencia, height=1, fg_color="gray25").pack(fill="x", padx=16, pady=10)
+        ctk.CTkFrame(self.frame_evidencia, height=1, fg_color=BORDER).pack(fill="x", padx=16, pady=10)
 
         self.switch_audio = ctk.CTkSwitch(self.frame_evidencia, text="Grabar con audio")
         self.switch_audio.pack(pady=(0, 8), padx=16, anchor="w")
         self.switch_audio.deselect()
 
-        self.boton_grabar = ctk.CTkButton(
+        self.boton_grabar = IconButton(
             self.frame_evidencia,
             text="\u25CF  Grabar pantalla  (Ctrl+K+L)",
             command=self._toggle_grabacion,
-            fg_color=STATUS["error"]["text"], hover_color="#b91c1c",
+            fg_color=STATUS["error"]["solid"], hover_color=STATUS["error"]["hover"],
             text_color="#FFFFFF",
             font=get_font(size=12, weight="bold"),
         )
         self.boton_grabar.pack(pady=(0, 5), padx=16, fill="x")
 
-        self.boton_detener = ctk.CTkButton(
+        self.boton_detener = IconButton(
             self.frame_evidencia,
             text="\u25A0  Detener y Adjuntar",
             command=self._detener_grabacion,
@@ -1674,7 +1675,7 @@ class BitacorasFrame(ctk.CTkFrame):
             font=get_font(size=12),
         )
 
-        self.boton_adjuntar = ctk.CTkButton(
+        self.boton_adjuntar = IconButton(
             self.frame_evidencia,
             text="\u21A5  Adjuntar archivo",
             command=self._on_adjuntar,
@@ -1684,7 +1685,7 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self.boton_adjuntar.pack(pady=(0, 4), padx=16, fill="x")
 
-        self.boton_screenshot_bit = ctk.CTkButton(
+        self.boton_screenshot_bit = IconButton(
             self.frame_evidencia,
             text="\u25A4  Tomar Captura",
             command=self._tomar_screenshot,
@@ -1694,7 +1695,7 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self.boton_screenshot_bit.pack(pady=(0, 8), padx=16, fill="x")
 
-        self.label_archivo = ctk.CTkLabel(
+        self.label_archivo = IconLabel(
             self.frame_evidencia, text="Sin evidencia adjunta",
             text_color=TEXT_MUTED, font=get_font(size=10), wraplength=230,
         )
@@ -1704,7 +1705,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # Por defecto no se muestra hasta que haya evidencias locales
         # self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
 
-        self.boton_subir = ctk.CTkButton(
+        self.boton_subir = IconButton(
             self.frame_evidencia,
             text="\u2713  Subir y Vincular",
             command=self._on_subir_evidencia,
@@ -1768,9 +1769,9 @@ class BitacorasFrame(ctk.CTkFrame):
         ]
         self._lista_ev_tarjetas.actualizar(
             items_nube, self._agregar_chip_evidencia,
-            vacio=lambda: ctk.CTkLabel(
+            vacio=lambda: IconLabel(
                 self.frame_lista_ev, text="Sin evidencias aún",
-                text_color="gray50", font=get_font(size=10),
+                text_color=TEXT_MUTED, font=get_font(size=10),
             ),
         )
         self._checkboxes_desc_bit = [card._descarga for card in self._lista_ev_tarjetas.widgets()
@@ -1859,15 +1860,15 @@ class BitacorasFrame(ctk.CTkFrame):
         top_row = ctk.CTkFrame(chip, fg_color="transparent")
         top_row.pack(fill="x", padx=4, pady=2)
         
-        chip._label_etiqueta = ctk.CTkLabel(top_row, text=f"Ev. Local {idx}", font=get_font(size=10, weight="bold"), text_color="#38bdf8")
+        chip._label_etiqueta = IconLabel(top_row, text=f"Ev. Local {idx}", font=get_font(size=10, weight="bold"), text_color=STATUS["info"]["text"])
         chip._label_etiqueta.pack(side="left")
         
-        ctk.CTkButton(
-            top_row, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
+        IconButton(
+            top_row, text="🗑️", width=26, height=18, fg_color=STATUS["error"]["solid"], hover_color=STATUS["error"]["hover"],
             command=lambda evidencia_id=evidencia["id"]: self._eliminar_evidencia_local(evidencia_id)
         ).pack(side="right")
         
-        ctk.CTkLabel(chip, text=nombre, font=get_font(size=10), text_color="#94a3b8", justify="left").pack(side="left", padx=4, pady=(0,4))
+        IconLabel(chip, text=nombre, font=get_font(size=10), text_color=TEXT_MUTED, justify="left").pack(side="left", padx=4, pady=(0,4))
         return chip
 
     def _agregar_chip_evidencia(self, ev: dict):
@@ -1878,13 +1879,13 @@ class BitacorasFrame(ctk.CTkFrame):
         url = ev.get("evidencia_url", "")
         ext = url.rsplit(".", 1)[-1].lower() if "." in url else ""
 
-        chip = ctk.CTkFrame(self.frame_lista_ev, fg_color="#1e3a5e", corner_radius=6)
+        chip = ctk.CTkFrame(self.frame_lista_ev, fg_color=STATUS["info"]["bg"], corner_radius=6)
 
         es_imagen = ext in ("jpg", "jpeg", "png", "webp")
         es_video  = ext in ("mp4", "avi", "mov", "mkv", "webm")
 
         # Configurar UI Inicial (Cargando)
-        ico = ctk.CTkLabel(chip, text="🖼" if es_imagen else "🎬", font=get_font(size=18), cursor="hand2")
+        ico = IconLabel(chip, text="🖼" if es_imagen else "🎬", font=get_font(size=18), cursor="hand2")
         ico.pack(side="left", padx=8)
         ico.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
 
@@ -1892,9 +1893,9 @@ class BitacorasFrame(ctk.CTkFrame):
         nombre_crudo = url.rsplit("/", 1)[-1] if "/" in url else url
         nombre_limpio = re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_?', '', nombre_crudo)
         nombre_corto = (nombre_limpio[:24] + "…") if len(nombre_limpio) > 24 else nombre_limpio
-        lbl_nombre = ctk.CTkLabel(
+        lbl_nombre = IconLabel(
             chip, text=nombre_corto,
-            text_color="gray80", font=get_font(size=10), cursor="hand2",
+            text_color=TEXT_PRIMARY, font=get_font(size=10), cursor="hand2",
         )
         lbl_nombre.pack(side="left", padx=4)
         lbl_nombre.bind("<Button-1>", lambda e, u=url: __import__("api.client").client.descargar_y_abrir_evidencia(u))
@@ -1918,8 +1919,8 @@ class BitacorasFrame(ctk.CTkFrame):
                 fecha_str = dt.strftime("%d/%m %H:%M")
             except ValueError:
                 fecha_str = ""
-            ctk.CTkLabel(
-                chip, text=fecha_str, text_color="gray50", font=get_font(size=9),
+            IconLabel(
+                chip, text=fecha_str, text_color=TEXT_MUTED, font=get_font(size=9),
             ).pack(side="right", padx=8)
 
         # Checkbox para descarga múltiple y botón de eliminar (lado derecho)
@@ -1930,8 +1931,8 @@ class BitacorasFrame(ctk.CTkFrame):
             
             ev_id = ev.get("id")
             if ev_id:
-                ctk.CTkButton(
-                    chip, text="🗑️", width=26, height=18, fg_color="#ef4444", hover_color="#dc2626",
+                IconButton(
+                    chip, text="🗑️", width=26, height=18, fg_color=STATUS["error"]["solid"], hover_color=STATUS["error"]["hover"],
                     command=lambda id=ev_id: self._eliminar_evidencia_nube(id)
                 ).pack(side="right", padx=(4, 8))
                 
@@ -2148,11 +2149,11 @@ class BitacorasFrame(ctk.CTkFrame):
         def _finalizar():
             self.boton_descargar_ev.configure(state="normal")
             if errores:
-                self.lbl_progreso_desc_bit.configure(text=f"⚠️ {exitos}/{total} descargados", text_color="#f59e0b")
+                self.lbl_progreso_desc_bit.configure(text=f"⚠️ {exitos}/{total} descargados", text_color=STATUS["warning"]["text"])
                 messagebox.showwarning("Descarga parcial",
                     f"Se descargaron {exitos} de {total}.\n\nErrores:\n" + "\n".join(errores))
             else:
-                self.lbl_progreso_desc_bit.configure(text=f"✅ {exitos} archivos descargados", text_color="#4ade80")
+                self.lbl_progreso_desc_bit.configure(text=f"✅ {exitos} archivos descargados", text_color=STATUS["success"]["text"])
                 messagebox.showinfo("Descarga completa", f"✅ {exitos} archivos guardados en:\n{carpeta}")
 
         self.after(0, _finalizar)
@@ -2189,14 +2190,14 @@ class BitacorasFrame(ctk.CTkFrame):
         if estado == "detenido":
             self.boton_grabar.configure(
                 text="\u25CF  Grabar pantalla  (Ctrl+K+L)",
-                fg_color=STATUS["error"]["text"], hover_color="#b91c1c",
+                fg_color=STATUS["error"]["solid"], hover_color=STATUS["error"]["hover"],
                 text_color="#FFFFFF", state="normal"
             )
             self.boton_detener.pack_forget()
         elif estado == "grabando":
             self.boton_grabar.configure(
                 text="\u23F8  Pausar",
-                fg_color=STATUS["warning"]["text"], hover_color="#b45309",
+                fg_color=STATUS["warning"]["solid"], hover_color=STATUS["warning"]["hover"],
                 text_color="#FFFFFF", state="normal"
             )
             self.boton_detener.configure(state="normal")
@@ -2204,7 +2205,7 @@ class BitacorasFrame(ctk.CTkFrame):
         elif estado == "pausado":
             self.boton_grabar.configure(
                 text="\u25B6  Reanudar",
-                fg_color=STATUS["success"]["text"], hover_color=PRIMARY_HOVER,
+                fg_color=STATUS["success"]["solid"], hover_color=PRIMARY_HOVER,
                 text_color="#FFFFFF", state="normal"
             )
             self.boton_detener.configure(state="normal")
@@ -2230,14 +2231,14 @@ class BitacorasFrame(ctk.CTkFrame):
         self.grabador.pausar()
         if getattr(self, "indicador", None):
             # Cambiar dot a ámbar y texto del botón a ▶️ (indica "click para reanudar")
-            self.lbl_dot.configure(text="⏸️", text_color="#facc15")
+            self.lbl_dot.configure(text="⏸️", text_color=STATUS["warning"]["text"])
             self.btn_pausa_float.configure(
                 text="▶️  Reanudar", 
-                fg_color=SUCCESS_COLOR, hover_color=PRIMARY_HOVER,
+                fg_color=STATUS["success"]["solid"], hover_color=PRIMARY_HOVER,
                 width=85
             )
             # Cambiar fondo del panel y hotkey label
-            self.lbl_hotkeys.configure(text="En Pausa — Ctrl+K+L para reanudar", text_color="#facc15")
+            self.lbl_hotkeys.configure(text="En Pausa — Ctrl+K+L para reanudar", text_color=STATUS["warning"]["text"])
             # Detener el cronómetro
             if getattr(self, "_timer_id_rec", None):
                 self.after_cancel(self._timer_id_rec)
@@ -2248,15 +2249,15 @@ class BitacorasFrame(ctk.CTkFrame):
         self.grabador.reanudar()
         if getattr(self, "indicador", None):
             # Restaurar estado visual a "Grabando"
-            self.lbl_dot.configure(text="🔴", text_color="#ef4444")
+            self.lbl_dot.configure(text="🔴", text_color=STATUS["error"]["text"])
             self.btn_pausa_float.configure(
                 text="⏸️",
-                fg_color="#eab308", hover_color="#ca8a04",
+                fg_color=STATUS["warning"]["solid"], hover_color=STATUS["warning"]["hover"],
                 width=35
             )
             self.lbl_hotkeys.configure(
                 text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8",
-                text_color="gray"
+                text_color=TEXT_MUTED
             )
             # Reanudar el cronómetro
             self._actualizar_crono_rec()
@@ -2304,7 +2305,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self.indicador = ctk.CTkToplevel(self.controlador)
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
-        self.indicador.configure(fg_color=INVERTED_BG)
+        self.indicador.configure(fg_color=SURFACE)
         
         try:
             import ctypes
@@ -2319,31 +2320,31 @@ class BitacorasFrame(ctk.CTkFrame):
 
         self.indicador.grid_columnconfigure(1, weight=1)
 
-        self.lbl_dot = ctk.CTkLabel(self.indicador, text="🔴", text_color="#ef4444", font=get_font(size=14))
+        self.lbl_dot = IconLabel(self.indicador, text="🔴", text_color=STATUS["error"]["text"], font=get_font(size=14))
         self.lbl_dot.grid(row=0, column=0, padx=(15, 5), pady=(15, 0))
 
-        self.lbl_crono = ctk.CTkLabel(self.indicador, text="00:00", text_color="white",
+        self.lbl_crono = IconLabel(self.indicador, text="00:00", text_color=TEXT_PRIMARY,
                                        font=get_font(size=16, weight="bold", family="Consolas"))
         self.lbl_crono.grid(row=0, column=1, sticky="w", pady=(15, 0))
 
-        self.btn_pausa_float = ctk.CTkButton(
+        self.btn_pausa_float = IconButton(
             self.indicador, text="⏸️", width=35, height=30,
-            fg_color="#eab308", hover_color="#ca8a04",
+            fg_color=STATUS["warning"]["solid"], hover_color=STATUS["warning"]["hover"],
             command=self._toggle_grabacion
         )
         self.btn_pausa_float.grid(row=0, column=2, padx=5, pady=(15, 0))
 
-        self.btn_stop_float = ctk.CTkButton(
+        self.btn_stop_float = IconButton(
             self.indicador, text="⏹️", width=35, height=30,
-            fg_color="#ef4444", hover_color="#dc2626",
+            fg_color=STATUS["error"]["solid"], hover_color=STATUS["error"]["hover"],
             command=self._detener_grabacion
         )
         self.btn_stop_float.grid(row=0, column=3, padx=(0, 15), pady=(15, 0))
 
-        self.lbl_hotkeys = ctk.CTkLabel(
+        self.lbl_hotkeys = IconLabel(
             self.indicador,
             text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8",
-            text_color="gray", font=get_font(size=11)
+            text_color=TEXT_MUTED, font=get_font(size=11)
         )
         self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
 

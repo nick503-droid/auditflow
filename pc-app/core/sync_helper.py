@@ -12,11 +12,12 @@ Estados soportados:
 """
 
 import customtkinter as ctk
+from ui.theme import STATUS, TEXT_MUTED
 
 # ─── Paleta de colores de sincronización ──────────────────────────────────────
-COLOR_SYNC_OK      = "#4ade80"   # verde
-COLOR_SYNC_OFFLINE = "#facc15"   # ámbar/amarillo
-COLOR_SYNC_WORKING = "#60a5fa"   # azul
+COLOR_SYNC_OK      = STATUS["success"]["text"]
+COLOR_SYNC_OFFLINE = STATUS["warning"]["text"]
+COLOR_SYNC_WORKING = STATUS["info"]["text"]
 
 
 def actualizar_indicador_sync(label: ctk.CTkLabel, estado: str, pendientes: int = 0):
@@ -72,7 +73,7 @@ def actualizar_indicador_reporte(label: ctk.CTkLabel, estado: str):
         elif estado == "syncing":
             label.configure(text="↻ Sincronizando…", text_color=COLOR_SYNC_WORKING)
         elif estado == "writing":
-            label.configure(text="Escribiendo…", text_color="gray50")
+            label.configure(text="Escribiendo…", text_color=TEXT_MUTED)
         elif estado == "conflict":
             label.configure(text="⚠ Integrar cambios", text_color=COLOR_SYNC_OFFLINE)
     except Exception:

@@ -1,3 +1,4 @@
+from ui.visual_widgets import IconButton, IconLabel
 import customtkinter as ctk
 from tkinter import messagebox
 from datetime import datetime, timedelta
@@ -7,7 +8,7 @@ import session
 
 from ui.theme import (
     APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS,
-    PRIMARY, PRIMARY_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+    PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
     RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 )
 
@@ -28,7 +29,7 @@ class SelectionFrame(ctk.CTkFrame):
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.grid(row=0, column=0, sticky="nsew", padx=40, pady=40)
         self.main_container.grid_columnconfigure(0, weight=1)
-        
+
         # ─── HEADER (Título y Selector de Usuario) ───
         header_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
         header_frame.pack(fill="x", pady=(0, 40))
@@ -38,16 +39,16 @@ class SelectionFrame(ctk.CTkFrame):
         # Izquierda: Título y Subtítulo
         title_box = ctk.CTkFrame(header_frame, fg_color="transparent")
         title_box.grid(row=0, column=0, sticky="w")
-        
-        ctk.CTkLabel(
-            title_box, 
-            text="AuditFlow", 
+
+        IconLabel(
+            title_box,
+            text="AuditFlow",
             font=get_font(size=32, weight="bold"),
             text_color=TEXT_PRIMARY
         ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_box, 
-            text="Selecciona tu perfil de auditor para comenzar", 
+        IconLabel(
+            title_box,
+            text="Selecciona tu perfil de auditor para comenzar",
             font=get_font(size=14),
             text_color=TEXT_SECONDARY
         ).pack(anchor="w")
@@ -58,7 +59,7 @@ class SelectionFrame(ctk.CTkFrame):
 
         # Saludo del usuario logueado
         nombre_activo = session.get_nombre()
-        ctk.CTkLabel(
+        IconLabel(
             user_box,
             text=f"Hola, {nombre_activo}",
             font=get_font(size=12),
@@ -67,7 +68,7 @@ class SelectionFrame(ctk.CTkFrame):
 
         # Botón de Administración del Sistema (SOLO para ADMIN)
         if session.get_role() == 'ADMIN':
-            ctk.CTkButton(
+            IconButton(
                 user_box,
                 text="⚙️ Administrar Sistema",
                 command=self._abrir_system_admin,
@@ -83,7 +84,7 @@ class SelectionFrame(ctk.CTkFrame):
             ).pack(side="left", padx=(0, 10))
 
         # Botón Cerrar Sesión
-        ctk.CTkButton(
+        IconButton(
             user_box,
             text="🚪 Salir",
             command=self._cerrar_sesion,
@@ -115,10 +116,10 @@ class SelectionFrame(ctk.CTkFrame):
         )
         self.seg_fecha = ctk.CTkSegmentedButton(
             self.card_bitacoras,
-            values=["Hoy", "Ayer", "📅 Otra"],
+            values=["Hoy", "Ayer", "Otra"],
             command=self._on_fecha_cambiada,
-            selected_color=PRIMARY,
-            selected_hover_color=PRIMARY_HOVER,
+            selected_color=PRIMARY_SOFT,
+            selected_hover_color=STATUS["success"]["border"],
             unselected_color=APP_BACKGROUND,
             unselected_hover_color=SURFACE_SECONDARY,
             text_color=TEXT_PRIMARY,
@@ -126,8 +127,8 @@ class SelectionFrame(ctk.CTkFrame):
         )
         self.seg_fecha.set("Hoy")
         self.seg_fecha.pack(fill="x", padx=24, pady=(0, 24), side="bottom")
-        
-        self.lbl_fecha = ctk.CTkLabel(
+
+        self.lbl_fecha = IconLabel(
             self.card_bitacoras,
             text=f"Fecha de la jornada: {self.fecha_bitacora}",
             font=get_font(size=11),
@@ -163,10 +164,11 @@ class SelectionFrame(ctk.CTkFrame):
         elif valor == "Ayer":
             self.fecha_bitacora = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             self.lbl_fecha.configure(text=f"Fecha de la jornada: {self.fecha_bitacora}")
-        elif valor == "📅 Otra":
+        elif valor == "Otra":
             self._abrir_calendario()
 
     def _abrir_calendario(self):
+        from ui.theme import calendar_colors, follow_calendar_appearance
         cal_window = ctk.CTkToplevel(self)
         cal_window.title("Seleccionar Fecha")
         cal_window.geometry("320x340")
@@ -175,20 +177,12 @@ class SelectionFrame(ctk.CTkFrame):
 
         from tkcalendar import Calendar
         cal = Calendar(
-            cal_window, 
-            selectmode="day", 
+            cal_window,
+            selectmode="day",
             date_pattern="y-mm-dd",
-            background=APP_BACKGROUND,
-            foreground=TEXT_PRIMARY,
-            headersbackground=SURFACE_SECONDARY,
-            headersforeground=TEXT_PRIMARY,
-            normalbackground=SURFACE,
-            normalforeground=TEXT_PRIMARY,
-            weekendbackground=SURFACE,
-            weekendforeground=TEXT_PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="#FFFFFF"
+            **calendar_colors()
         )
+        follow_calendar_appearance(cal)
         cal.pack(pady=15, padx=15, fill="both", expand=True)
 
         def _on_aceptar():
@@ -202,20 +196,20 @@ class SelectionFrame(ctk.CTkFrame):
             self.seg_fecha.set("Hoy")
             self._on_fecha_cambiada("Hoy")
             cal_window.destroy()
-            
+
         cal_window.protocol("WM_DELETE_WINDOW", _on_cancelar)
 
         btn_frame = ctk.CTkFrame(cal_window, fg_color="transparent")
         btn_frame.pack(pady=(0, 15))
-        
-        ctk.CTkButton(btn_frame, text="Cancelar", command=_on_cancelar, width=100, fg_color="transparent", border_width=1, text_color=TEXT_PRIMARY, corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
-        ctk.CTkButton(btn_frame, text="Aceptar", command=_on_aceptar, width=100, fg_color=PRIMARY, hover_color=PRIMARY_HOVER, text_color="#FFFFFF", corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
+
+        IconButton(btn_frame, text="Cancelar", command=_on_cancelar, width=100, fg_color="transparent", border_width=1, text_color=TEXT_PRIMARY, corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
+        IconButton(btn_frame, text="Aceptar", command=_on_aceptar, width=100, fg_color=PRIMARY, hover_color=PRIMARY_HOVER, text_color="#FFFFFF", corner_radius=RADIUS_BUTTON).pack(side="left", padx=10)
 
     def _crear_tarjeta_modulo(self, parent, col, icono, titulo, descripcion, comando):
         """Crea una tarjeta interactiva con hover effects."""
         card = ctk.CTkFrame(
-            parent, 
-            fg_color=SURFACE, 
+            parent,
+            fg_color=SURFACE,
             corner_radius=RADIUS_PANEL,
             cursor="hand2",
             border_width=1,
@@ -229,26 +223,26 @@ class SelectionFrame(ctk.CTkFrame):
         inner.pack(expand=True, fill="both", padx=24, pady=32)
 
         # Icono gigante
-        lbl_icon = ctk.CTkLabel(
-            inner, 
-            text=icono, 
+        lbl_icon = IconLabel(
+            inner,
+            text=icono,
             font=get_font(size=48)
         )
         lbl_icon.pack(pady=(0, 16))
 
         # Título
-        lbl_title = ctk.CTkLabel(
-            inner, 
-            text=titulo, 
+        lbl_title = IconLabel(
+            inner,
+            text=titulo,
             font=get_font(size=18, weight="bold"),
             text_color=TEXT_PRIMARY
         )
         lbl_title.pack(pady=(0, 8))
 
         # Descripción
-        lbl_desc = ctk.CTkLabel(
-            inner, 
-            text=descripcion, 
+        lbl_desc = IconLabel(
+            inner,
+            text=descripcion,
             font=get_font(size=13),
             text_color=TEXT_SECONDARY,
             wraplength=220,
@@ -257,7 +251,7 @@ class SelectionFrame(ctk.CTkFrame):
         lbl_desc.pack(pady=(0, 24))
 
         # Botón de acción principal
-        btn = ctk.CTkButton(
+        btn = IconButton(
             inner,
             text="Abrir Módulo  →",
             command=comando,
@@ -273,7 +267,7 @@ class SelectionFrame(ctk.CTkFrame):
         # Efectos Hover
         def _hover_in(e):
             card.configure(fg_color=SURFACE_SECONDARY)
-        
+
         def _hover_out(e):
             card.configure(fg_color=SURFACE)
 
@@ -331,4 +325,4 @@ class SelectionFrame(ctk.CTkFrame):
             AdminFrame,
             usuario=perfil
         )
-
+
