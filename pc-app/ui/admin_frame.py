@@ -1,7 +1,7 @@
 from ui.visual_widgets import IconButton, IconLabel
 from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 import customtkinter as ctk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, TclError
 from datetime import datetime
 import os
 import threading
@@ -72,6 +72,14 @@ class AdminFrame(ctk.CTkFrame):
         self.filtro_restaurante = ctk.StringVar(value="Todos")
         self.filtro_urgencia = ctk.StringVar(value="Todas")
         self.filtro_evidencia = ctk.StringVar(value="Evidencias")
+        self.filtro_fecha_bitacoras = ctk.StringVar(value="")
+        self._fechas_bitacoras = []
+        self._fechas_visibles = None
+        self._cargando_fechas = False
+        self._filtro_fecha_after = None
+        self._filtro_fecha_trace = self.filtro_fecha_bitacoras.trace_add(
+            "write", self._programar_filtro_fechas
+        )
         
         self.filas_bitacora = [] # Almacena las filas de la fecha seleccionada
 
@@ -127,8 +135,19 @@ class AdminFrame(ctk.CTkFrame):
         self.lbl_titulo.configure(text=titulo)
         
     def _limpiar_container(self):
+        self._cancelar_filtro_fecha()
         for widget in self.container.winfo_children():
             widget.destroy()
+
+    def _cancelar_filtro_fecha(self):
+        if self._filtro_fecha_after is not None:
+            self.after_cancel(self._filtro_fecha_after)
+            self._filtro_fecha_after = None
+
+    def destroy(self):
+        self._cancelar_filtro_fecha()
+        self.filtro_fecha_bitacoras.trace_remove("write", self._filtro_fecha_trace)
+        super().destroy()
 
     def _on_back(self):
         if self.vista_actual == "ROOT":
@@ -325,27 +344,172 @@ class AdminFrame(ctk.CTkFrame):
         self.vista_actual = "BITACORAS"
         self._actualizar_top_bar("📁 Directorio de Bitácoras")
         self._limpiar_container()
-        
+        self._cargando_fechas = True
+        self._fechas_visibles = None
+
+        barra = ctk.CTkFrame(
+            self.container, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS,
+            border_width=1, border_color=BORDER
+        )
+        barra.pack(fill="x", pady=(0, 12))
+        barra.grid_columnconfigure(0, weight=1)
+        IconLabel(
+            barra, text="Buscar por fecha", text_color=TEXT_MAIN,
+            font=get_font(size=13, weight="bold"), anchor="w"
+        ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=14, pady=(10, 4))
+        self.entry_fecha_bitacoras = ctk.CTkEntry(
+            barra, textvariable=self.filtro_fecha_bitacoras,
+            placeholder_text="DD/MM/AAAA o AAAA-MM-DD", height=36,
+            fg_color=BG_COLOR, border_color=BORDER, text_color=TEXT_MAIN,
+            placeholder_text_color=TEXT_MUTED, font=get_font(size=13)
+        )
+        self.entry_fecha_bitacoras.grid(row=1, column=0, sticky="ew", padx=(14, 8))
+        self.entry_fecha_bitacoras.bind("<Return>", lambda _: self._aplicar_filtro_fechas())
+        self.entry_fecha_bitacoras.bind("<Escape>", lambda _: self._limpiar_fecha_bitacoras())
+        IconButton(
+            barra, text="📅 Calendario", command=self._elegir_fecha_bitacoras,
+            width=120, height=36, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+            text_color="#FFFFFF", font=get_font(size=12, weight="bold")
+        ).grid(row=1, column=1, padx=(0, 8))
+        IconButton(
+            barra, text="Limpiar", command=self._limpiar_fecha_bitacoras,
+            width=74, height=36, fg_color="transparent", hover_color=CARD_HOVER,
+            border_width=1, border_color=BORDER, text_color=TEXT_MAIN,
+            font=get_font(size=12)
+        ).grid(row=1, column=2, padx=(0, 14))
+        IconLabel(
+            barra, text="También puedes buscar un mes (10/2026) o un año (2026).",
+            text_color=TEXT_SEC, font=get_font(size=12), anchor="w"
+        ).grid(row=2, column=0, columnspan=3, sticky="ew", padx=14, pady=(4, 0))
+        self.lbl_resultados_fechas = IconLabel(
+            barra, text="Cargando fechas...", text_color=TEXT_SEC,
+            font=get_font(size=12), anchor="w"
+        )
+        self.lbl_resultados_fechas.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=(0, 10))
+
         scroll = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
         scroll.pack(fill="both", expand=True)
+        self.scroll_fechas = scroll
+        for col in range(4):
+            scroll.grid_columnconfigure(col, weight=1, uniform="fecha")
         
         lbl_cargando = IconLabel(scroll, text="Cargando fechas de bitácoras...", text_color=TEXT_SEC)
-        lbl_cargando.pack(pady=40)
+        lbl_cargando.grid(row=0, column=0, columnspan=4, pady=40)
         
         def _fetch():
             bitacoras = obtener_bitacoras_todas()
-            fechas = sorted(list(set(b["fecha"] for b in bitacoras if b.get("fecha"))), reverse=True)
-            self.after(0, lambda: self._mostrar_lista_fechas(scroll, fechas, lbl_cargando))
+            fechas = [b["fecha"] for b in (bitacoras or []) if b.get("fecha")]
+            try:
+                self.after(0, lambda: self._mostrar_lista_fechas(scroll, fechas, lbl_cargando))
+            except (RuntimeError, TclError):
+                pass  # La ventana pudo cerrarse mientras se consultaba el servidor.
             
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _mostrar_lista_fechas(self, parent, fechas, lbl_cargando):
-        lbl_cargando.destroy()
-        
-        if not fechas:
-            IconLabel(parent, text="No hay bitácoras disponibles.", text_color=TEXT_SEC).pack(pady=40)
+        # No aplicar una respuesta tardía a otra vista ni a una búsqueda nueva.
+        if self.vista_actual != "BITACORAS" or parent is not self.scroll_fechas or not parent.winfo_exists():
             return
-            
+        lbl_cargando.destroy()
+        self._fechas_bitacoras = sorted({str(f)[:10] for f in fechas if f}, reverse=True)
+        self._cargando_fechas = False
+        self._aplicar_filtro_fechas()
+
+    @staticmethod
+    def _fecha_coincide(fecha, consulta):
+        """Buscar por día, mes o año sin convertir la fecha de jornada a UTC."""
+        try:
+            dia = datetime.strptime(fecha, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return False
+        consulta = "".join(consulta.split()).replace("/", "-")
+        partes = consulta.split("-")
+        if len(partes) == 3 and (len(partes[0]) == 4 or len(partes[2]) == 4):
+            formato = "%Y-%m-%d" if len(partes[0]) == 4 else "%d-%m-%Y"
+            try:
+                return dia == datetime.strptime(consulta, formato)
+            except ValueError:
+                return False
+        if len(partes) == 2 and (len(partes[0]) == 4 or len(partes[1]) == 4):
+            formato = "%Y-%m" if len(partes[0]) == 4 else "%m-%Y"
+            try:
+                mes = datetime.strptime(consulta, formato)
+                return (dia.year, dia.month) == (mes.year, mes.month)
+            except ValueError:
+                return False
+        return consulta in dia.strftime("%Y-%m-%d") or consulta in dia.strftime("%d-%m-%Y")
+
+    def _programar_filtro_fechas(self, *_):
+        self._cancelar_filtro_fecha()
+        if self.vista_actual == "BITACORAS" and not self._cargando_fechas:
+            # Agrupar pulsaciones; sólo se filtra en memoria, sin más HTTP.
+            self._filtro_fecha_after = self.after(180, self._aplicar_filtro_fechas)
+
+    def _limpiar_fecha_bitacoras(self):
+        self.filtro_fecha_bitacoras.set("")
+        self._aplicar_filtro_fechas()
+        self.entry_fecha_bitacoras.focus_set()
+
+    def _elegir_fecha_bitacoras(self):
+        from tkcalendar import Calendar
+        from ui.theme import calendar_colors, follow_calendar_appearance
+
+        ventana = ctk.CTkToplevel(self.entry_fecha_bitacoras)
+        ventana.title("Buscar bitácoras por fecha")
+        ventana.geometry("350x360")
+        ventana.resizable(False, False)
+        ventana.transient(self.winfo_toplevel())
+        ventana.grab_set()
+        calendario = Calendar(
+            ventana, selectmode="day", date_pattern="y-mm-dd", **calendar_colors()
+        )
+        follow_calendar_appearance(calendario)
+        calendario.pack(padx=14, pady=14, fill="both", expand=True)
+        consulta = self.filtro_fecha_bitacoras.get().strip()
+        for formato in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                calendario.selection_set(datetime.strptime(consulta, formato).date())
+                break
+            except ValueError:
+                continue
+
+        def elegir():
+            self.filtro_fecha_bitacoras.set(calendario.selection_get().strftime("%d/%m/%Y"))
+            self._aplicar_filtro_fechas()
+            ventana.destroy()
+            self.entry_fecha_bitacoras.focus_set()
+
+        botones = ctk.CTkFrame(ventana, fg_color="transparent")
+        botones.pack(pady=(0, 14))
+        IconButton(
+            botones, text="Cancelar", command=ventana.destroy, width=110,
+            fg_color="transparent", hover_color=CARD_HOVER, text_color=TEXT_MAIN,
+            border_width=1, border_color=BORDER
+        ).pack(side="left", padx=6)
+        IconButton(
+            botones, text="Buscar", command=elegir, width=110,
+            fg_color=PRIMARY, hover_color=PRIMARY_HOVER, text_color="#FFFFFF"
+        ).pack(side="left", padx=6)
+
+    def _aplicar_filtro_fechas(self):
+        self._cancelar_filtro_fecha()
+        if self.vista_actual != "BITACORAS" or self._cargando_fechas:
+            return
+        consulta = self.filtro_fecha_bitacoras.get()
+        fechas = [f for f in self._fechas_bitacoras if self._fecha_coincide(f, consulta)]
+        total = len(self._fechas_bitacoras)
+        self.lbl_resultados_fechas.configure(text=f"Fechas: {len(fechas)} de {total}")
+        if fechas == self._fechas_visibles:
+            return  # No recrear tarjetas si el resultado no cambió.
+        self._fechas_visibles = fechas
+        parent = self.scroll_fechas
+        for widget in parent.winfo_children():
+            widget.destroy()
+        if not fechas:
+            mensaje = "No hay bitácoras para esa fecha." if total else "No hay bitácoras disponibles."
+            IconLabel(parent, text=mensaje, text_color=TEXT_SEC).grid(row=0, column=0, columnspan=4, pady=40)
+            return
+
         # Grid layout for dates
         row, col = 0, 0
         for f in fechas:

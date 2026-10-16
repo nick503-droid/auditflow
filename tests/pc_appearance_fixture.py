@@ -7,7 +7,7 @@ import ast
 from pathlib import Path
 import sys
 import types
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "pc-app"))
@@ -137,6 +137,71 @@ def admin():
     for i in range(4):
         frame._crear_item_bitacora(frame.scroll_filas, {"id": str(i), "hora": "10:02", "descripcion": "Se revisa el área de atención. Anotación y evidencias de prueba.", "urgencia": ("comentar", "leve", "medio", "grave")[i], "restaurante": restaurant, "usuario": user, "evidencias": evidence})
 
+def admin_dates():
+    app.mostrar_frame(AdminFrame, usuario=user)
+    frame = app.frame_actual
+    # Recibir respuestas de forma determinista, sin threads ni mainloop.
+    dates = ["2026-10-16", "2026-10-15T00:00:00.000Z", "2026-10-16", "2026-09-30", "2025-10-16"]
+    with patch.object(admin_module.threading, "Thread"):
+        frame._abrir_vista_bitacoras()
+        original_entry = frame.entry_fecha_bitacoras
+        original_scroll = frame.scroll_fechas
+        frame.filtro_fecha_bitacoras.set("10/2026")  # Se puede escribir durante la carga.
+        frame._mostrar_lista_fechas(original_scroll, dates, original_scroll.winfo_children()[0])
+        assert frame._fechas_visibles == ["2026-10-16", "2026-10-15"]
+        assert frame.lbl_resultados_fechas.cget("text") == "Fechas: 2 de 4"
+        cards = tuple(frame.scroll_fechas.winfo_children())
+        frame.filtro_fecha_bitacoras.set("2026-10")
+        frame._aplicar_filtro_fechas()
+        assert tuple(frame.scroll_fechas.winfo_children()) == cards  # Sin parpadeo.
+        for query, expected in (("16/10/2026", ["2026-10-16"]), ("2025", ["2025-10-16"]), ("31/02/2026", [])):
+            frame.entry_fecha_bitacoras.delete(0, "end")
+            frame.entry_fecha_bitacoras.insert(0, query)
+            assert frame._filtro_fecha_after is not None
+            frame._aplicar_filtro_fechas()
+            assert frame._fechas_visibles == expected, (query, frame._fechas_visibles)
+            assert frame.entry_fecha_bitacoras is original_entry
+        frame._limpiar_fecha_bitacoras()
+        assert len(frame._fechas_visibles) == 4
+        frame.filtro_fecha_bitacoras.set("10/2026")
+        frame._aplicar_filtro_fechas()
+        calls = admin_module.obtener_bitacoras_todas.call_count
+        # Simular un clic en la fecha: el filtro no altera el ISO enviado al API.
+        frame._abrir_bitacora_dia("2026-10-16")
+        assert frame.fecha_seleccionada == "2026-10-16"
+        frame._on_back()
+        loading = frame.scroll_fechas.winfo_children()[0]
+        # Una respuesta de una visita anterior no debe borrar el estado actual.
+        frame._mostrar_lista_fechas(original_scroll, [], Mock())
+        assert frame._cargando_fechas
+        frame._mostrar_lista_fechas(frame.scroll_fechas, dates, loading)
+        assert frame.filtro_fecha_bitacoras.get() == "10/2026"
+        assert frame._fechas_visibles == ["2026-10-16", "2026-10-15"]
+        assert admin_module.obtener_bitacoras_todas.call_count == calls
+
+def admin_date_calendar():
+    admin_dates()
+    frame = app.frame_actual
+    frame.filtro_fecha_bitacoras.set("15/10/2026")
+    frame._aplicar_filtro_fechas()
+    frame._elegir_fecha_bitacoras()
+    import tkcalendar
+    def descendants(widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from descendants(child)
+    app._qa_calendar = next(c for c in descendants(frame) if isinstance(c, tkcalendar.Calendar))
+    assert str(app._qa_calendar.selection_get()) == "2026-10-15"
+    # Probar selección y botón Buscar, no sólo la construcción del diálogo.
+    from datetime import date
+    app._qa_calendar.selection_set(date(2026, 9, 30))
+    button = next(c for c in descendants(frame) if isinstance(c, ctk.CTkButton) and c.cget("text") == "Buscar")
+    button.invoke()
+    assert frame.filtro_fecha_bitacoras.get() == "30/09/2026"
+    assert frame._fechas_visibles == ["2026-09-30"]
+    frame._elegir_fecha_bitacoras()
+    app._qa_calendar = next(c for c in descendants(frame) if isinstance(c, tkcalendar.Calendar))
+
 def viewer():
     if not isinstance(app.frame_actual, AdminFrame):
         app.mostrar_frame(AdminFrame, usuario=user)
@@ -157,28 +222,36 @@ def calendar():
 
 toolbar = ctk.CTkFrame(app.appearance_bar, fg_color="transparent")
 toolbar.pack(side="left", padx=10)
-for name, callback in (("Inicio QA", home), ("Reportes QA", report), ("Bitácoras QA", logs), ("Administrar QA", admin), ("Visor QA", viewer)):
+for name, callback in (("Inicio QA", home), ("Reportes QA", report), ("Bitácoras QA", logs), ("Administrar QA", admin_dates), ("Visor QA", viewer)):
     ctk.CTkButton(toolbar, text=name, command=callback, width=100, height=24).pack(side="left", padx=2)
 if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
-    screens = [home, report, logs, admin, viewer, system_admin]
+    screens = [home, report, logs, admin, admin_dates, viewer, system_admin]
     try:
         import tkcalendar
-        screens.append(calendar)
+        screens.extend([calendar, admin_date_calendar])
     except ImportError:
         pass
     for screen in screens:
         screen()
         original_frame = app.frame_actual
-        selected_date = app._qa_calendar.selection_get() if screen is calendar else None
+        has_calendar = screen in (calendar, admin_date_calendar)
+        selected_date = app._qa_calendar.selection_get() if has_calendar else None
+        has_date_filter = screen in (admin_dates, admin_date_calendar)
+        if has_date_filter:
+            date_query = original_frame.filtro_fecha_bitacoras.get()
+            date_cards = tuple(original_frame.scroll_fechas.winfo_children())
         for mode in ("Light", "Dark", "Light", "Dark"):
             ctk.set_appearance_mode(mode)
             app._toggle_appearance()
             app._toggle_appearance()
             assert app.frame_actual is original_frame
-            if screen is calendar:
+            if has_calendar:
                 assert app._qa_calendar.selection_get() == selected_date
+            if has_date_filter:
+                assert original_frame.filtro_fecha_bitacoras.get() == date_query
+                assert tuple(original_frame.scroll_fechas.winfo_children()) == date_cards
             app.update_idletasks()
             if "--contrast" in sys.argv:
                 from test_pc_appearance import contrast
