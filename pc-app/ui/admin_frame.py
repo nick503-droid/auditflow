@@ -23,6 +23,9 @@ from db.local_db import (
     obtener_reportes_pendientes
 )
 from core.thumbnailer import generar_miniatura
+from ui.report_filter import (
+    TODOS_RESTAURANTES, filtrar_reportes_admin, nombre_restaurante_reporte, normalizar_busqueda,
+)
 
 # ─── SISTEMA DE DISEÑO ───────────────────────────────────────────────────────
 BG_COLOR = APP_BACKGROUND
@@ -80,6 +83,18 @@ class AdminFrame(ctk.CTkFrame):
         self._filtro_fecha_trace = self.filtro_fecha_bitacoras.trace_add(
             "write", self._programar_filtro_fechas
         )
+
+        # Filtros independientes del directorio de reportes (incluye borradores).
+        self.filtro_nombre_reporte = ctk.StringVar(value="")
+        self.filtro_restaurante_reporte = ctk.StringVar(value=TODOS_RESTAURANTES)
+        self._reportes_admin = []
+        self._reportes_visibles = None
+        self._cargando_reportes = False
+        self._filtro_reportes_after = None
+        self._filtros_reportes_traces = [
+            (variable, variable.trace_add("write", self._programar_filtros_reportes))
+            for variable in (self.filtro_nombre_reporte, self.filtro_restaurante_reporte)
+        ]
         
         self.filas_bitacora = [] # Almacena las filas de la fecha seleccionada
 
@@ -136,6 +151,7 @@ class AdminFrame(ctk.CTkFrame):
         
     def _limpiar_container(self):
         self._cancelar_filtro_fecha()
+        self._cancelar_filtros_reportes()
         for widget in self.container.winfo_children():
             widget.destroy()
 
@@ -146,7 +162,10 @@ class AdminFrame(ctk.CTkFrame):
 
     def destroy(self):
         self._cancelar_filtro_fecha()
+        self._cancelar_filtros_reportes()
         self.filtro_fecha_bitacoras.trace_remove("write", self._filtro_fecha_trace)
+        for variable, trace in self._filtros_reportes_traces:
+            variable.trace_remove("write", trace)
         super().destroy()
 
     def _on_back(self):
@@ -220,9 +239,51 @@ class AdminFrame(ctk.CTkFrame):
         self.vista_actual = "REPORTES"
         self._actualizar_top_bar("📁 Directorio de Reportes")
         self._limpiar_container()
-        
+        self._cargando_reportes = True
+        self._reportes_visibles = None
+
+        barra = ctk.CTkFrame(
+            self.container, fg_color=CARD_COLOR, corner_radius=CORNER_RADIUS,
+            border_width=1, border_color=BORDER,
+        )
+        barra.pack(fill="x", pady=(0, 12))
+        barra.grid_columnconfigure(0, weight=3)
+        barra.grid_columnconfigure(1, weight=2)
+        for columna, texto in enumerate(("Nombre del reporte", "Restaurante")):
+            IconLabel(barra, text=texto, text_color=TEXT_MAIN, anchor="w",
+                      font=get_font(size=13, weight="bold")).grid(
+                row=0, column=columna, sticky="ew", padx=(14 if columna == 0 else 0, 8), pady=(10, 4)
+            )
+        self.entry_nombre_reporte = ctk.CTkEntry(
+            barra, textvariable=self.filtro_nombre_reporte, height=36,
+            placeholder_text="Escribe parte del nombre...", fg_color=BG_COLOR,
+            border_color=BORDER, text_color=TEXT_MAIN, placeholder_text_color=TEXT_MUTED,
+            font=get_font(size=13),
+        )
+        self.entry_nombre_reporte.grid(row=1, column=0, sticky="ew", padx=(14, 8))
+        self.entry_nombre_reporte.bind("<Return>", lambda _: self._aplicar_filtros_reportes())
+        self.entry_nombre_reporte.bind("<Escape>", lambda _: self._limpiar_filtros_reportes())
+        self.menu_restaurante_reporte = ctk.CTkOptionMenu(
+            barra, variable=self.filtro_restaurante_reporte, values=[TODOS_RESTAURANTES],
+            height=36, dynamic_resizing=False, fg_color=CARD_HOVER,
+            button_color=CARD_HOVER, button_hover_color=BORDER, text_color=TEXT_MAIN,
+            font=get_font(size=12),
+        )
+        self.menu_restaurante_reporte.grid(row=1, column=1, sticky="ew", padx=(0, 8))
+        IconButton(
+            barra, text="Limpiar", command=self._limpiar_filtros_reportes,
+            width=74, height=36, fg_color="transparent", hover_color=CARD_HOVER,
+            border_width=1, border_color=BORDER, text_color=TEXT_MAIN, font=get_font(size=12),
+        ).grid(row=1, column=2, padx=(0, 14))
+        self.lbl_resultados_reportes = IconLabel(
+            barra, text="Cargando reportes...", text_color=TEXT_SEC,
+            font=get_font(size=12), anchor="w",
+        )
+        self.lbl_resultados_reportes.grid(row=2, column=0, columnspan=3, sticky="ew", padx=14, pady=(4, 10))
+
         scroll = ctk.CTkScrollableFrame(self.container, fg_color="transparent")
         scroll.pack(fill="both", expand=True)
+        self.scroll_reportes = scroll
         
         lbl_cargando = IconLabel(scroll, text="Cargando reportes...", text_color=TEXT_SEC)
         lbl_cargando.pack(pady=40)
@@ -230,24 +291,66 @@ class AdminFrame(ctk.CTkFrame):
         def _fetch():
             nube = obtener_reportes()
             locales = obtener_reportes_pendientes()
-            self.after(0, lambda: self._mostrar_lista_reportes(scroll, nube, locales, lbl_cargando))
+            try:
+                self.after(0, lambda: self._mostrar_lista_reportes(scroll, nube, locales, lbl_cargando))
+            except (RuntimeError, TclError):
+                pass  # La vista pudo cerrarse durante la consulta.
             
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _mostrar_lista_reportes(self, parent, reportes_nube, reportes_locales, lbl_cargando):
-        lbl_cargando.destroy()
-        
-        if not reportes_nube and not reportes_locales:
-            IconLabel(parent, text="No hay reportes disponibles.", text_color=TEXT_SEC).pack(pady=40)
+        if self.vista_actual != "REPORTES" or parent is not self.scroll_reportes or not parent.winfo_exists():
             return
-            
-        # Mostrar locales primero
-        for r in reportes_locales:
-            self._crear_item_reporte(parent, r, es_local=True)
-            
-        # Mostrar de la nube
-        for r in reportes_nube:
-            self._crear_item_reporte(parent, r, es_local=False)
+        lbl_cargando.destroy()
+        self._reportes_admin = [
+            *((r, True) for r in (reportes_locales or [])),
+            *((r, False) for r in (reportes_nube or [])),
+        ]
+        nombres = {nombre_restaurante_reporte(r, self.restaurantes_dict) for r, _ in self._reportes_admin}
+        seleccionado = self.filtro_restaurante_reporte.get()
+        if seleccionado and seleccionado != TODOS_RESTAURANTES:
+            nombres.add(seleccionado)  # Conservar la selección aunque ahora no tenga resultados.
+        self.menu_restaurante_reporte.configure(values=[TODOS_RESTAURANTES] + sorted(nombres - {TODOS_RESTAURANTES}, key=normalizar_busqueda))
+        self._cargando_reportes = False
+        self._aplicar_filtros_reportes()
+
+    def _cancelar_filtros_reportes(self):
+        if self._filtro_reportes_after is not None:
+            self.after_cancel(self._filtro_reportes_after)
+            self._filtro_reportes_after = None
+
+    def _programar_filtros_reportes(self, *_):
+        self._cancelar_filtros_reportes()
+        if self.vista_actual == "REPORTES" and not self._cargando_reportes:
+            self._filtro_reportes_after = self.after(180, self._aplicar_filtros_reportes)
+
+    def _limpiar_filtros_reportes(self):
+        self.filtro_nombre_reporte.set("")
+        self.filtro_restaurante_reporte.set(TODOS_RESTAURANTES)
+        self._aplicar_filtros_reportes()
+        self.entry_nombre_reporte.focus_set()
+
+    def _aplicar_filtros_reportes(self):
+        self._cancelar_filtros_reportes()
+        if self.vista_actual != "REPORTES" or self._cargando_reportes:
+            return
+        resultados = filtrar_reportes_admin(
+            self._reportes_admin, self.filtro_nombre_reporte.get(),
+            self.filtro_restaurante_reporte.get(), self.restaurantes_dict,
+        )
+        self.lbl_resultados_reportes.configure(text=f"Reportes: {len(resultados)} de {len(self._reportes_admin)}")
+        firma = tuple((local, r.get("id") or id(r)) for r, local in resultados)
+        if firma == self._reportes_visibles:
+            return  # No recrear tarjetas por cambios de mayúsculas/acentos del filtro.
+        self._reportes_visibles = firma
+        for widget in self.scroll_reportes.winfo_children():
+            widget.destroy()
+        if not resultados:
+            mensaje = "No hay reportes que coincidan con la búsqueda." if self._reportes_admin else "No hay reportes disponibles."
+            IconLabel(self.scroll_reportes, text=mensaje, text_color=TEXT_SEC).pack(pady=40)
+        for reporte, es_local in resultados:
+            self._crear_item_reporte(self.scroll_reportes, reporte, es_local)
+        self.scroll_reportes._parent_canvas.yview_moveto(0)
 
     def _crear_item_reporte(self, parent, reporte: dict, es_local: bool):
         card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, corner_radius=10)
@@ -272,7 +375,7 @@ class AdminFrame(ctk.CTkFrame):
         
         IconLabel(
             info_frame, 
-            text=f"{icono}   ·   Fecha: {fecha}", 
+            text=f"{icono}   ·   {nombre_restaurante_reporte(reporte, self.restaurantes_dict)}   ·   Fecha: {fecha}",
             font=get_font(size=12), 
             text_color=TEXT_SEC, 
             anchor="w"

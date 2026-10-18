@@ -36,8 +36,9 @@ for package, child in (("api", "client"), ("db", "local_db")):
 api = sys.modules["api.client"]
 user = {"id": "qa-user", "nombre": "Auditor de prueba", "role": "ADMIN"}
 restaurant = {"id": "qa-store", "nombre": "Restaurante de prueba"}
+restaurant_other = {"id": "qa-store-2", "nombre": "Norco"}
 api.obtener_usuarios.return_value = [user]
-api.obtener_restaurantes.return_value = [restaurant]
+api.obtener_restaurantes.return_value = [restaurant, restaurant_other]
 keyboard = types.ModuleType("keyboard")
 keyboard.add_hotkey = lambda *a, **k: None
 keyboard.remove_hotkey = lambda *a, **k: None
@@ -95,9 +96,10 @@ main_module.set_appearance = theme.set_appearance
 
 evidence = [{"id": str(i), "evidencia_url": f"http://fixture.invalid/evidencia_{i}." + ("jpg" if i % 2 == 0 else "mp4"), "creado_en": "2026-10-16T10:02:00"} for i in range(4)]
 sample_reports = [
-    {"id": "qa-report", "titulo": "Auditoría de prueba — revisión del área de atención", "fecha_jornada": "2026-10-17", "evidencias": evidence},
-    {"id": "qa-report-2", "titulo": "Inspección de cierre — ejemplo sin datos reales", "fecha_jornada": "2026-10-16", "evidencias": evidence[:2]},
+    {"id": "qa-report", "titulo": "Auditoría de prueba — revisión del área de atención", "fecha_jornada": "2026-10-17", "restaurante": restaurant, "evidencias": evidence},
+    {"id": "qa-report-2", "titulo": "Inspección de cierre — ejemplo sin datos reales", "fecha_jornada": "2026-10-16", "restaurante": restaurant_other, "evidencias": evidence[:2]},
 ]
+sample_local_reports = [{"id": 7, "titulo": "Auditoría pendiente — revisión", "restaurante_id": restaurant["id"], "fecha_jornada": "2026-10-17"}]
 api.obtener_reportes.return_value = sample_reports
 
 def descendants(widget):
@@ -154,7 +156,42 @@ def admin_reports():
     with patch.object(admin_module.threading, "Thread"):
         frame._abrir_vista_reportes()
     scroll = next(w for w in descendants(frame.container) if isinstance(w, ctk.CTkScrollableFrame))
-    frame._mostrar_lista_reportes(scroll, sample_reports, [], scroll.winfo_children()[0])
+    frame._mostrar_lista_reportes(scroll, sample_reports, sample_local_reports, scroll.winfo_children()[0])
+
+def admin_report_search():
+    admin_reports()
+    frame = app.frame_actual
+    entry = frame.entry_nombre_reporte
+    scroll = frame.scroll_reportes
+    frame.filtro_nombre_reporte.set("REVISION")
+    frame._aplicar_filtros_reportes()
+    assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 2 de 3"
+    cards = tuple(scroll.winfo_children())
+    frame.filtro_nombre_reporte.set("Revisión")
+    frame._aplicar_filtros_reportes()
+    assert tuple(scroll.winfo_children()) == cards
+    frame.filtro_restaurante_reporte.set("Norco")
+    frame._aplicar_filtros_reportes()
+    assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 0 de 3"
+    assert scroll.winfo_children()[0].cget("text") == "No hay reportes que coincidan con la búsqueda."
+    frame.filtro_nombre_reporte.set("cierre")
+    frame._aplicar_filtros_reportes()
+    assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 1 de 3"
+    assert frame.entry_nombre_reporte is entry
+    calls = admin_module.obtener_reportes.call_count
+    frame._abrir_reporte_detalle({**sample_reports[1], "evidencias": []}, False)
+    with patch.object(admin_module.threading, "Thread"):
+        frame._on_back()
+    loading = frame.scroll_reportes.winfo_children()[0]
+    frame._mostrar_lista_reportes(scroll, [], [], Mock())  # Respuesta de la vista anterior.
+    assert frame._cargando_reportes
+    frame._mostrar_lista_reportes(frame.scroll_reportes, sample_reports, sample_local_reports, loading)
+    assert frame.filtro_nombre_reporte.get() == "cierre"
+    assert frame.filtro_restaurante_reporte.get() == "Norco"
+    assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 1 de 3"
+    frame._limpiar_filtros_reportes()
+    assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 3 de 3"
+    assert admin_module.obtener_reportes.call_count == calls  # Ninguna petición por filtrar.
 
 def admin_dates():
     app.mostrar_frame(AdminFrame, usuario=user)
@@ -245,7 +282,7 @@ ctk.CTkLabel(toolbar, text="Datos ficticios · sin API", font=("Segoe UI", 11)).
 if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
-    screens = [home, report, logs, admin, admin_reports, admin_dates, viewer, system_admin]
+    screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin]
     try:
         import tkcalendar
         screens.extend([calendar, admin_date_calendar])
@@ -260,6 +297,10 @@ if "--smoke" in sys.argv:
         if has_date_filter:
             date_query = original_frame.filtro_fecha_bitacoras.get()
             date_cards = tuple(original_frame.scroll_fechas.winfo_children())
+        has_report_filters = screen in (admin_reports, admin_report_search)
+        if has_report_filters:
+            report_query = (original_frame.filtro_nombre_reporte.get(), original_frame.filtro_restaurante_reporte.get())
+            report_cards = tuple(original_frame.scroll_reportes.winfo_children())
         for mode in ("Light", "Dark", "Light", "Dark"):
             ctk.set_appearance_mode(mode)
             app._toggle_appearance()
@@ -270,6 +311,9 @@ if "--smoke" in sys.argv:
             if has_date_filter:
                 assert original_frame.filtro_fecha_bitacoras.get() == date_query
                 assert tuple(original_frame.scroll_fechas.winfo_children()) == date_cards
+            if has_report_filters:
+                assert (original_frame.filtro_nombre_reporte.get(), original_frame.filtro_restaurante_reporte.get()) == report_query
+                assert tuple(original_frame.scroll_reportes.winfo_children()) == report_cards
             app.update_idletasks()
             if "--contrast" in sys.argv:
                 from test_pc_appearance import contrast
