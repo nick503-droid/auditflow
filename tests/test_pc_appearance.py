@@ -119,6 +119,8 @@ class WidgetThemeTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        for job in cls.root.tk.call("after", "info"):
+            cls.root.after_cancel(job)
         cls.root.destroy()
         _cached_icon.cache_clear()
         gc.collect()

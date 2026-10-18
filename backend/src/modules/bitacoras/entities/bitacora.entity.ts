@@ -8,6 +8,7 @@ import {
   DeleteDateColumn,
   Index,
   UpdateDateColumn,
+  CreateDateColumn,
   VersionColumn,
 } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity';
@@ -29,6 +30,7 @@ export enum NivelUrgencia {
 
 @Entity('bitacoras')
 @Index('uq_bitacoras_client_id', ['client_id'], { unique: true })
+@Index('idx_bitacoras_fecha_creacion', ['fecha', 'created_at', 'id'])
 export class Bitacora {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -90,6 +92,14 @@ export class Bitacora {
 
   @DeleteDateColumn({ name: 'deleted_at' })
   deleted_at: Date;
+
+  /** Instante de inserción en el servidor; nunca viene del reloj del cliente. */
+  // Milisegundos, igual que Date/JSON: servidor y PC comparan la misma clave.
+  @CreateDateColumn({
+    name: 'created_at', type: 'datetime', precision: 3,
+    default: () => 'CURRENT_TIMESTAMP(3)', update: false,
+  })
+  created_at: Date;
 
   /**
    * Se actualiza automáticamente por TypeORM cada vez que se hace save().

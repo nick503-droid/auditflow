@@ -781,7 +781,8 @@ def obtener_bitacoras_pendientes() -> list[dict]:
     """
     with db_session() as conexion:
         filas = conexion.execute(
-            "SELECT * FROM bitacora_pendiente WHERE pendiente=1 ORDER BY actualizado_en"
+            # Una edición o un reloj PC desajustado no cambia el orden de alta.
+            "SELECT * FROM bitacora_pendiente WHERE pendiente=1 ORDER BY id ASC"
         ).fetchall()
         return [dict(f) for f in filas]
 

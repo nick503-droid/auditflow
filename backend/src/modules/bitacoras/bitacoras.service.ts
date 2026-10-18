@@ -25,7 +25,7 @@ export class BitacorasService {
   findAll() {
     return this.bitacorasRepo.find({
       relations: { usuario: true, restaurante: true, evidencias: true },
-      order: { fecha: 'DESC', hora: 'DESC' },
+      order: { fecha: 'DESC', created_at: 'ASC', id: 'ASC' },
     });
   }
 
@@ -41,7 +41,8 @@ export class BitacorasService {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       where: { fecha: fecha as any },
       relations: { usuario: true, restaurante: true, evidencias: true },
-      order: { hora: 'ASC' },
+      // La hora del evento es texto libre (p. ej. California). No ordena filas.
+      order: { created_at: 'ASC', id: 'ASC' },
     });
   }
 
@@ -56,7 +57,7 @@ export class BitacorasService {
       withDeleted: true,          // incluir soft-deletes para que el cliente los retire
       where: { fecha: fecha as any, updated_at: MoreThan(desde) },
       relations: { usuario: true, restaurante: true, evidencias: true },
-      order: { hora: 'ASC' },
+      order: { created_at: 'ASC', id: 'ASC' },
     });
   }
 
@@ -101,9 +102,13 @@ export class BitacorasService {
     // Normalizar campos opcionales: si no vienen, usar valores neutros
     // para que el registro sea válido y el código quede generado de inmediato.
     const nueva = this.bitacorasRepo.create({
-      descripcion: '',
-      hora: '',
-      ...dto,
+      restaurante_id: dto.restaurante_id,
+      usuario_id: dto.usuario_id,
+      descripcion: dto.descripcion ?? '',
+      hora: dto.hora ?? '',
+      urgencia: dto.urgencia,
+      evidencia_url: dto.evidencia_url,
+      con_audio: dto.con_audio,
       client_id: clientId,
       // Pasamos el string de la fecha directamente si existe para evitar desfases de zona horaria
       fecha: dto.fecha ? (dto.fecha) : new Date(),

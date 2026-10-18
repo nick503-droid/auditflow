@@ -43,7 +43,9 @@ from api.client import (
 from core.recorder import GrabadorPantalla
 from core.sync_helper import actualizar_indicador_sync
 from core.thumbnail_service import MiniaturasUI
+from core.bitacora_order import clave_orden_bitacora, cursor_bitacoras_servidor
 from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
+from ui.auto_height_textbox import AutoHeightTextbox
 from db.local_db import (
     inicializar_db,
     guardar_bitacora_local,
@@ -141,9 +143,8 @@ class BitacorasFrame(ctk.CTkFrame):
         self.stop_event = threading.Event()
         self._hilo_polling: threading.Thread | None = None
         self.ultimo_hash_bd = None
-        # Timestamp Unix (ms) del último full-fetch exitoso.
-        # El polling lo usa como cursor para pedir solo los deltas.
-        # None = aún no se hizo ningún fetch exitoso.
+        # Cursor de updated_at del servidor, nunca del reloj local.
+        # None = todavía no se recibió ningún registro con metadatos de sync.
         self.timestamp_ultimo_sync: int | None = None
 
         # Evidencia
@@ -391,8 +392,8 @@ class BitacorasFrame(ctk.CTkFrame):
         # ── Col 2 — Descripción (CTkTextbox responsivo) ───────────────────────
         desc_val = fila.get("descripcion", "")
 
-        desc_box = ctk.CTkTextbox(
-            card, height=ALTURA_DESC, font=get_font(size=13),
+        desc_box = AutoHeightTextbox(
+            card, min_height=ALTURA_DESC, font=get_font(size=13),
             fg_color=BG_COLOR, border_width=1, border_color=BORDER, wrap="word"
         )
         if desc_val:
@@ -410,7 +411,7 @@ class BitacorasFrame(ctk.CTkFrame):
         desc_box.bind("<FocusIn>",   lambda e=None, i=idx: self._marcar_editando(i, True, "descripcion"))
         desc_box.bind("<FocusOut>",  lambda e=None, i=idx: self._marcar_editando(i, False, "descripcion"))
         # Ajustar altura inicial al contenido ya cargado
-        self.after(50, lambda w=desc_box: self._ajustar_altura_textbox(w))
+        self._ajustar_altura_textbox(desc_box)
 
         # ── Col 3 — Badge de código (solo lectura) ────────────────────────────
         codigo = fila.get("codigo", "")
@@ -595,65 +596,12 @@ class BitacorasFrame(ctk.CTkFrame):
         # Reconstruir las filas siguientes para actualizar sus índices
         for i in range(idx, len(self.filas)):
             self._reconstruir_tarjeta(i)
+        self._ordenar_tarjetas_por_creacion()
+
     def _ajustar_altura_textbox(self, widget: ctk.CTkTextbox):
-        """Ajusta la altura del CTkTextbox al número de líneas VISUALES.
-
-        Estrategia principal: dlineinfo("end-1c") — lee la posición Y del
-        último carácter ya renderizado (post word-wrap) y divide entre la
-        altura de una línea para obtener el conteo visual real.
-        Esto funciona con wrap="word" y activate_scrollbars=False.
-
-        Requiere update_idletasks() para que tkinter calcule el layout y
-        el word-wrap antes de consultar dlineinfo.
-        """
-        try:
-            if not widget.winfo_exists():
-                return
-
-            # Forzar que tkinter calcule el layout y el word-wrap
-            widget.update_idletasks()
-
-            # Acceder al tk.Text interno de CTkTextbox
-            tk_text = widget._textbox
-
-            # --- Método 1: dlineinfo (más portable y preciso con word-wrap) ---
-            # dlineinfo devuelve (x, y, width, height, baseline) de la
-            # display-line que contiene el índice, o None si no está calculada.
-            # Comparar Y de la última línea con Y de la primera da la altura
-            # real del contenido ya envuelto por word-wrap.
-            info_last  = tk_text.dlineinfo("end-1c")
-            info_first = tk_text.dlineinfo("1.0")
-
-            if info_last is not None and info_first is not None:
-                line_height = info_last[3]          # altura px de esa línea
-                y_last      = info_last[1]          # posición Y de la última línea
-                y_first     = info_first[1]         # posición Y de la primera
-                if line_height and line_height > 0:
-                    n_display = max(1, round((y_last - y_first) / line_height) + 1)
-                    nueva_altura = max(ALTURA_DESC, n_display * line_height + 10)
-                    widget.configure(height=nueva_altura)
-                    return
-
-            # --- Método 2: count("displaylines") — tkinter >= 8.6 ---
-            result = tk_text.count("1.0", "end", "displaylines")
-            if isinstance(result, (list, tuple)):
-                n_display = result[0] if result else 1
-            else:
-                n_display = result if result else 1
-            n_display = max(1, n_display)
-            widget.configure(height=max(ALTURA_DESC, n_display * 18 + 10))
-
-        except Exception as exc:
-            # --- Método 3 (fallback): contar \n literales ---
-            # Menos preciso con wrap="word", pero nunca lanza excepción.
-            print(f"[desc_resize] Fallback a conteo de \\n: {exc}")
-            try:
-                contenido = widget.get("1.0", "end-1c")
-                n_lineas = max(1, contenido.count("\n") + 1)
-                widget.configure(height=max(ALTURA_DESC, n_lineas * 18 + 10))
-            except Exception:
-                pass
-
+        """Coalescer cambios de texto/ancho; medir sin reentrar al mainloop."""
+        if widget.winfo_exists():
+            widget.programar_ajuste()
 
     def _on_keyrelease_textbox(self, idx: int, widget: ctk.CTkTextbox):
         """Callback de tecla para CTkTextbox: guarda texto y ajusta altura."""
@@ -688,6 +636,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self.filas.append(nueva_fila)
         idx = len(self.filas) - 1
         self._construir_tarjeta(idx)
+        self._ordenar_tarjetas_por_creacion()
         self.after(50, lambda: self.scroll_frame._parent_canvas.yview_moveto(1.0))
         if enfocar_restaurante:
             self.after_idle(lambda i=idx: self._enfocar_selector_restaurante(i, abrir=True))
@@ -1018,7 +967,7 @@ class BitacorasFrame(ctk.CTkFrame):
                     if not b_id:
                         raise Exception("El servidor no devolvió el ID de la bitácora creada")
                     marcar_bitacora_sincronizada(local_id, b_id, codigo)
-                    self.after(0, self._aplicar_resultado_creacion, b_id, codigo, local_id)
+                    self.after(0, self._aplicar_resultado_creacion, b_id, codigo, local_id, resultado.get("created_at"))
                 else:
                     resultado = actualizar_bitacora(b_id, dto, version=datos_locales.get("version"))
                     if resultado and isinstance(resultado, dict) and resultado.get("__conflict__"):
@@ -1074,7 +1023,7 @@ class BitacorasFrame(ctk.CTkFrame):
         boton.grid(row=0, column=3, padx=2, pady=3)
         widgets["codigo"] = boton
 
-    def _aplicar_resultado_creacion(self, b_id: str, codigo: str, local_id: int):
+    def _aplicar_resultado_creacion(self, b_id: str, codigo: str, local_id: int, created_at=None):
         """Vincula el ID sin reconstruir la fila ni quitar el foco al usuario."""
         idx = next(
             (i for i, fila in enumerate(self.filas) if fila.get("local_id") == local_id),
@@ -1092,28 +1041,32 @@ class BitacorasFrame(ctk.CTkFrame):
             if i != idx and fila.get("b_id") == b_id
         ]
         for duplicado in reversed(duplicados):
+            created_at = created_at or self.filas[duplicado].get("created_at")
             card = self.filas[duplicado].get("_card_frame")
             if card and card.winfo_exists():
                 card.destroy()
             self.filas.pop(duplicado)
             if duplicado < idx:
                 idx -= 1
-        self._reindexar_tarjetas_desde(min(duplicados, default=idx))
-
         fila = self.filas[idx]
         fila["b_id"] = b_id
         fila["codigo"] = codigo
+        if created_at:
+            fila["created_at"] = created_at
         fila["_creando_en_nube"] = False
         self._actualizar_codigo_fila(idx)
         self.ultimo_hash_bd = None
         self._liberar_creacion(local_id)
+        self._ordenar_tarjetas_por_creacion()
 
-    def _reindexar_tarjetas_desde(self, inicio: int):
-        """Mueve tarjetas existentes sin recrear sus entradas ni quitarles foco."""
-        for i in range(max(0, inicio), len(self.filas)):
-            card = self.filas[i].get("_card_frame")
+    def _ordenar_tarjetas_por_creacion(self):
+        """Sólo cambia la posición visual; índices/callbacks y foco siguen vivos."""
+        ordenadas = sorted(enumerate(self.filas), key=lambda item: clave_orden_bitacora(item[1], item[0]))
+        for posicion, (_, fila) in enumerate(ordenadas):
+            card = fila.get("_card_frame")
             if card and card.winfo_exists():
-                card.grid_configure(row=i)
+                if int(card.grid_info().get("row", -1)) != posicion:
+                    card.grid_configure(row=posicion)
 
     def _asegurar_bitacora_local(self, fila: dict) -> int | None:
         """Asegura un ID local estable para guardar evidencias sin conexión."""
@@ -1209,13 +1162,10 @@ class BitacorasFrame(ctk.CTkFrame):
     def _carga_inicial(self):
         """Full-fetch al arrancar. Establece el cursor de timestamp para los deltas posteriores."""
         def _worker():
-            import time
             try:
-                # Restar 1 segundo al timestamp para cubrir cualquier desfase de reloj del servidor
-                ts_antes = int(time.time() * 1000) - 1000
                 bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
                 if bitacoras is not None:
-                    self.timestamp_ultimo_sync = ts_antes
+                    self.timestamp_ultimo_sync = cursor_bitacoras_servidor(bitacoras)
                     self.after(0, self._reconciliar_con_datos, bitacoras)
                 else:
                     self.after(0, self._agregar_fila_vacia)
@@ -1235,7 +1185,6 @@ class BitacorasFrame(ctk.CTkFrame):
         self._hilo_polling.start()
 
     def _polling_worker(self):
-        import time
         while not self.stop_event.is_set():
             # Intentar sincronizar pendientes offline antes de consultar
             try:
@@ -1247,19 +1196,17 @@ class BitacorasFrame(ctk.CTkFrame):
                 ts_cursor = self.timestamp_ultimo_sync
                 if ts_cursor is None:
                     # Sin full-fetch previo, hacemos uno completo ahora
-                    ts_antes = int(time.time() * 1000) - 1000
                     bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
                     if self.stop_event.is_set():
                         break
                     if bitacoras is not None:
-                        self.timestamp_ultimo_sync = ts_antes
+                        self.timestamp_ultimo_sync = cursor_bitacoras_servidor(bitacoras)
                         self.after(0, self._reconciliar_con_datos, bitacoras)
                         self.after(0, self._actualizar_indicador_sync, "ok")
                     else:
                         self.after(0, self._actualizar_indicador_sync, "offline")
                 else:
                     # Delta-fetch: solo pedir lo que cambio desde el cursor
-                    ts_antes = int(time.time() * 1000) - 1000
                     deltas = obtener_bitacoras_delta(self.fecha_actual, ts_cursor)
                     if self.stop_event.is_set():
                         break
@@ -1268,12 +1215,11 @@ class BitacorasFrame(ctk.CTkFrame):
                         self.after(0, self._actualizar_indicador_sync, "offline")
                     elif len(deltas) > 0:
                         # Hay cambios: aplicarlos in-place y avanzar cursor
-                        self.timestamp_ultimo_sync = ts_antes
+                        self.timestamp_ultimo_sync = cursor_bitacoras_servidor(deltas, ts_cursor)
                         self.after(0, self._aplicar_deltas, deltas)
                         self.after(0, self._actualizar_indicador_sync, "ok")
                     else:
-                        # Sin cambios: solo avanzar cursor y actualizar indicador
-                        self.timestamp_ultimo_sync = ts_antes
+                        # Sin cambios: conservar el cursor DEL SERVIDOR, no el reloj PC.
                         self.after(0, self._actualizar_indicador_sync, "ok")
             except Exception as e:
                 print(f"[polling] Error: {e}")
@@ -1345,7 +1291,7 @@ class BitacorasFrame(ctk.CTkFrame):
                         },
                     )
                     # Actualizar fila en memoria si existe
-                    self.after(0, self._actualizar_fila_por_local_id, p["id"], b_id, codigo)
+                    self.after(0, self._actualizar_fila_por_local_id, p["id"], b_id, codigo, resultado.get("created_at"))
                     # El callback libera la reserva cuando ya enlazó el b_id.
                     reserva_creacion = None
             except Exception as e:
@@ -1359,19 +1305,14 @@ class BitacorasFrame(ctk.CTkFrame):
         # no haya registros padre pendientes.
         self._solicitar_sincronizacion_evidencias()
 
-    def _actualizar_fila_por_local_id(self, local_id: int, b_id: str, codigo: str):
-        for i, f in enumerate(self.filas):
+    def _actualizar_fila_por_local_id(self, local_id: int, b_id: str, codigo: str, created_at=None):
+        for f in self.filas:
             if f.get("local_id") == local_id:
-                f["b_id"]   = b_id
-                f["codigo"] = codigo
-                f["_creando_en_nube"] = False
-                self._actualizar_codigo_fila(i)
+                self._aplicar_resultado_creacion(b_id, codigo, local_id, created_at)
                 if self._bitacora_local_id_panel == local_id:
                     self._mostrar_panel_evidencia(codigo, f.get("evidencias", []), fila=f)
-                self._liberar_creacion(local_id)
-                break
-        else:
-            self._liberar_creacion(local_id)
+                return
+        self._liberar_creacion(local_id)
 
     def _actualizar_fila_remota(self, idx: int, datos_nuevos: dict):
         """Fusiona un delta sin tocar los campos que el usuario está editando."""
@@ -1416,7 +1357,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 textbox.delete("1.0", "end")
                 if datos["descripcion"]:
                     textbox.insert("1.0", datos["descripcion"])
-                self.after(50, lambda w=textbox: self._ajustar_altura_textbox(w))
+                self._ajustar_altura_textbox(textbox)
 
         if "urgencia" in datos and "urgencia" not in protegidos:
             urgencia = URGENCIA_LEGACY.get(datos["urgencia"], datos["urgencia"])
@@ -1463,6 +1404,7 @@ class BitacorasFrame(ctk.CTkFrame):
         if self._cerrado:
             return
         ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
+        ids_cliente = {f["client_id"]: i for i, f in enumerate(self.filas) if f.get("client_id")}
 
         for b in deltas:
             b_id       = b.get("id")
@@ -1480,6 +1422,7 @@ class BitacorasFrame(ctk.CTkFrame):
                         self._reconstruir_tarjeta(j)
                     # Actualizar mapa local después de pop
                     ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
+                    ids_cliente = {f["client_id"]: i for i, f in enumerate(self.filas) if f.get("client_id")}
                 continue
 
             rest  = b.get("restaurante", {}).get("nombre", "") if isinstance(b.get("restaurante"), dict) else ""
@@ -1499,11 +1442,14 @@ class BitacorasFrame(ctk.CTkFrame):
                 "evidencias":  evids,
                 "evidencia":   "Sí" if (evids or b.get("evidencia_url")) else "",
                 "version":     b.get("version"),
+                "created_at":  b.get("created_at"),
+                "client_id":   b.get("client_id") or "",
             }
 
-            if b_id in ids_local:
-                idx = ids_local[b_id]
+            idx = ids_local.get(b_id, ids_cliente.get(b.get("client_id")))
+            if idx is not None:
                 self._actualizar_fila_remota(idx, datos_nuevos)
+                ids_local[b_id] = idx
 
                 if self._codigo_panel_activo and self._codigo_panel_activo == datos_nuevos["codigo"]:
                     self._mostrar_panel_evidencia(datos_nuevos["codigo"], evids)
@@ -1514,7 +1460,10 @@ class BitacorasFrame(ctk.CTkFrame):
                 nuevo_idx = len(self.filas) - 1
                 self._construir_tarjeta(nuevo_idx)
                 ids_local[b_id] = nuevo_idx
+                if b.get("client_id"):
+                    ids_cliente[b["client_id"]] = nuevo_idx
 
+        self._ordenar_tarjetas_por_creacion()
         if not self.filas:
             self._agregar_fila_vacia()
 
@@ -1533,6 +1482,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
         ids_bd    = {b.get("id"): b for b in bitacoras}
         ids_local = {f["b_id"]: i for i, f in enumerate(self.filas) if f.get("b_id")}
+        ids_cliente = {f["client_id"]: i for i, f in enumerate(self.filas) if f.get("client_id")}
 
         for b_id, b in ids_bd.items():
             rest  = b.get("restaurante", {}).get("nombre", "") if isinstance(b.get("restaurante"), dict) else ""
@@ -1554,9 +1504,11 @@ class BitacorasFrame(ctk.CTkFrame):
                 "evidencias":  evids,
                 "evidencia":   "Sí" if (evids or b.get("evidencia_url")) else "",
                 "version":     b.get("version"),
+                "created_at":  b.get("created_at"),
+                "client_id":   b.get("client_id") or "",
             }
-            if b_id in ids_local:
-                local_idx = ids_local[b_id]
+            local_idx = ids_local.get(b_id, ids_cliente.get(b.get("client_id")))
+            if local_idx is not None:
                 
                 # Performance fix (Diffing): Solo reconstruir la tarjeta si los datos
                 # relevantes de renderizado cambiaron.
@@ -1580,11 +1532,16 @@ class BitacorasFrame(ctk.CTkFrame):
                 self.filas.append(datos_nuevos)
                 self._construir_tarjeta(len(self.filas) - 1)
 
+            ids_local[b_id] = local_idx if local_idx is not None else len(self.filas) - 1
+            if b.get("client_id"):
+                ids_cliente[b["client_id"]] = ids_local[b_id]
+
         # Borradores locales: asegurar que tienen tarjeta
         for i, f in enumerate(self.filas):
             if not f.get("b_id") and not f.get("_card_frame"):
                 self._construir_tarjeta(i)
 
+        self._ordenar_tarjetas_por_creacion()
         if not self.filas:
             self._agregar_fila_vacia()
 
