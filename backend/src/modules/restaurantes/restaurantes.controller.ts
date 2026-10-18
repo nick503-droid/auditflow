@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Delete, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Delete,
+  Patch,
+} from '@nestjs/common';
 import { RestaurantesService } from './restaurantes.service';
 import { CreateRestauranteDto } from './dto/create-restaurante.dto';
 import { UpdateRestauranteDto } from './dto/update-restaurante.dto';
@@ -10,6 +18,11 @@ export class RestaurantesController {
   @Get()
   findAll() {
     return this.restaurantesService.findAll();
+  }
+
+  @Get('admin')
+  findAllAdmin() {
+    return this.restaurantesService.findAll(true);
   }
 
   @Get(':id')

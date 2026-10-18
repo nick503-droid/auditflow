@@ -19,8 +19,7 @@ export class AuthService implements OnModuleInit {
    * crea el superusuario admin / admin123 de forma automática.
    */
   async onModuleInit() {
-    const todos = await this.usuariosService.findAll();
-    const tieneAdmin = todos.some((u) => u.username !== null);
+    const tieneAdmin = await this.usuariosService.tieneCuentasRegistradas();
 
     if (!tieneAdmin) {
       await this.usuariosService.create({
@@ -29,14 +28,16 @@ export class AuthService implements OnModuleInit {
         password: 'admin123',
         role: RolUsuario.ADMIN,
       });
-      this.logger.log('✅ Seeder: Usuario admin por defecto creado (admin/admin123)');
+      this.logger.log(
+        '✅ Seeder: Usuario admin por defecto creado (admin/admin123)',
+      );
     }
   }
 
   async login(username: string, password: string) {
     const usuario = await this.usuariosService.findByUsername(username);
 
-    if (!usuario || !usuario.password) {
+    if (!usuario || !usuario.password || usuario.activo !== 1) {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
