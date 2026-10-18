@@ -1,7 +1,7 @@
 """QA aislada: módulos reales con API/DB/audio reemplazados por fixtures.
 
---smoke construye las vistas sin mainloop ni tráfico de red. Sin argumentos
-abre una ventana de prueba con datos ficticios, nunca la instalación real.
+--smoke construye las vistas sin mainloop ni tráfico de red. --inspect deja
+abierta Administración con datos ficticios; nunca abre la instalación real.
 """
 import ast
 from pathlib import Path
@@ -58,6 +58,7 @@ from ui.reportes_frame import ReportesFrame
 from ui.bitacoras_frame import BitacorasFrame
 from ui.admin_frame import AdminFrame
 from ui.system_admin_frame import SystemAdminFrame
+from ui.visual_widgets import IconLabel
 import ui.admin_frame as admin_module
 from core.thumbnail_service import MiniaturasUI
 import session
@@ -93,6 +94,16 @@ import ui.main_window as main_module
 main_module.set_appearance = theme.set_appearance
 
 evidence = [{"id": str(i), "evidencia_url": f"http://fixture.invalid/evidencia_{i}." + ("jpg" if i % 2 == 0 else "mp4"), "creado_en": "2026-10-16T10:02:00"} for i in range(4)]
+sample_reports = [
+    {"id": "qa-report", "titulo": "Auditoría de prueba — revisión del área de atención", "fecha_jornada": "2026-10-17", "evidencias": evidence},
+    {"id": "qa-report-2", "titulo": "Inspección de cierre — ejemplo sin datos reales", "fecha_jornada": "2026-10-16", "evidencias": evidence[:2]},
+]
+api.obtener_reportes.return_value = sample_reports
+
+def descendants(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from descendants(child)
 
 def home():
     app.mostrar_frame(SelectionFrame)
@@ -136,6 +147,14 @@ def admin():
     frame.scroll_filas.pack(fill="both", expand=True)
     for i in range(4):
         frame._crear_item_bitacora(frame.scroll_filas, {"id": str(i), "hora": "10:02", "descripcion": "Se revisa el área de atención. Anotación y evidencias de prueba.", "urgencia": ("comentar", "leve", "medio", "grave")[i], "restaurante": restaurant, "usuario": user, "evidencias": evidence})
+
+def admin_reports():
+    app.mostrar_frame(AdminFrame, usuario=user)
+    frame = app.frame_actual
+    with patch.object(admin_module.threading, "Thread"):
+        frame._abrir_vista_reportes()
+    scroll = next(w for w in descendants(frame.container) if isinstance(w, ctk.CTkScrollableFrame))
+    frame._mostrar_lista_reportes(scroll, sample_reports, [], scroll.winfo_children()[0])
 
 def admin_dates():
     app.mostrar_frame(AdminFrame, usuario=user)
@@ -186,10 +205,6 @@ def admin_date_calendar():
     frame._aplicar_filtro_fechas()
     frame._elegir_fecha_bitacoras()
     import tkcalendar
-    def descendants(widget):
-        for child in widget.winfo_children():
-            yield child
-            yield from descendants(child)
     app._qa_calendar = next(c for c in descendants(frame) if isinstance(c, tkcalendar.Calendar))
     assert str(app._qa_calendar.selection_get()) == "2026-10-15"
     # Probar selección y botón Buscar, no sólo la construcción del diálogo.
@@ -214,20 +229,23 @@ def calendar():
     home()
     app.frame_actual._abrir_calendario()
     import tkcalendar
-    def descendants(widget):
-        for child in widget.winfo_children():
-            yield child
-            yield from descendants(child)
     app._qa_calendar = next(c for c in descendants(app) if isinstance(c, tkcalendar.Calendar))
 
 toolbar = ctk.CTkFrame(app.appearance_bar, fg_color="transparent")
 toolbar.pack(side="left", padx=10)
-for name, callback in (("Inicio QA", home), ("Reportes QA", report), ("Bitácoras QA", logs), ("Administrar QA", admin_dates), ("Visor QA", viewer)):
-    ctk.CTkButton(toolbar, text=name, command=callback, width=100, height=24).pack(side="left", padx=2)
+qa_views = {
+    "Inicio": home, "Editor de reportes": report, "Editor de bitácoras": logs,
+    "Administrar reportes": admin_reports, "Buscar bitácoras": admin_dates,
+    "Detalle de bitácoras": admin, "Visor de evidencias": viewer, "Sistema": system_admin,
+}
+ctk.CTkLabel(toolbar, text="Vista de prueba:", font=("Segoe UI", 11)).pack(side="left", padx=(0, 6))
+selector_qa = ctk.CTkOptionMenu(toolbar, values=list(qa_views), command=lambda value: qa_views[value](), width=192, height=24)
+selector_qa.pack(side="left")
+ctk.CTkLabel(toolbar, text="Datos ficticios · sin API", font=("Segoe UI", 11)).pack(side="left", padx=12)
 if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
-    screens = [home, report, logs, admin, admin_dates, viewer, system_admin]
+    screens = [home, report, logs, admin, admin_reports, admin_dates, viewer, system_admin]
     try:
         import tkcalendar
         screens.extend([calendar, admin_date_calendar])
@@ -258,6 +276,8 @@ if "--smoke" in sys.argv:
                 def inspect_colors(widget):
                     if isinstance(widget, (ctk.CTkLabel, ctk.CTkButton)) and widget.winfo_manager():
                         text = widget.cget("text")
+                        if isinstance(widget, IconLabel) and text and widget.cget("image"):
+                            assert widget.cget("compound") != "center", (screen.__name__, text, "icon/text overlap")
                         if text or getattr(widget, "_visual_icon", None):
                             color = theme.resolve_color(widget.cget("text_color"))
                             parent = widget
@@ -286,6 +306,13 @@ if "--smoke" in sys.argv:
     app.destroy()
     print("Full UI smoke OK:", len(screens), "screens; both themes.")
 else:
-    home()
-    app.after(900000, app.destroy)
+    if "--inspect" in sys.argv:
+        app.title("AuditFlow — Inspección visual (DATOS DE PRUEBA)")
+        ctk.set_appearance_mode("Light")
+        app._update_appearance_button()
+        selector_qa.set("Administrar reportes")
+        admin_reports()
+    else:
+        home()
+        app.after(900000, app.destroy)
     app.mainloop()

@@ -302,7 +302,7 @@ class AdminFrame(ctk.CTkFrame):
         # Botón Eliminar
         IconButton(
             btn_frame, text="🗑️ Eliminar", width=80, height=32,
-            fg_color=STATUS["error"]["bg"], hover_color=STATUS["error"]["border"],
+            fg_color=STATUS["error"]["bg"], hover_color=STATUS["error"]["hover_bg"],
             border_width=0, text_color=STATUS["error"]["text"],
             font=get_font(size=12, weight="bold"),
             command=lambda r=reporte, l=es_local: self._eliminar_reporte(r, l)

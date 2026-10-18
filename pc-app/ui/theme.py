@@ -37,6 +37,7 @@ STATUS = {
 }
 STATUS["success"]["hover_bg"] = ("#D1FAE5", "#204738")
 STATUS["info"]["hover_bg"] = ("#E0F2FE", "#1D3D51")
+STATUS["error"]["hover_bg"] = ("#FEE2E2", "#4A2930")
 RADIUS_PANEL = 12
 RADIUS_BUTTON = 8
 FONT_FAMILY = "Segoe UI"

@@ -69,6 +69,9 @@ class _IconMixin:
         if "font" in kwargs:
             self._visual_font = kwargs["font"]
             refresh_icon = True
+        if "height" in kwargs:
+            self._visual_height = kwargs["height"]
+            refresh_icon = True
         if "image" in kwargs:
             # Las fotos/vídeos se muestran sin cambiar ni tintar sus píxeles.
             self._visual_icon = None
@@ -109,3 +112,19 @@ class IconButton(_IconMixin, ctk.CTkButton):
 
 class IconLabel(_IconMixin, ctk.CTkLabel):
     _default_icon_color = TEXT_PRIMARY
+
+    def __init__(self, *args, **kwargs):
+        # CTkLabel usa compound="center": eso superpone imagen y letras.
+        # Reservar espacio real para ambos, también en actualizaciones dinámicas.
+        kwargs.setdefault("compound", "left")
+        kwargs.setdefault("padx", 4)
+        super().__init__(*args, **kwargs)
+
+    def configure(self, require_redraw=False, **kwargs):
+        previous_image = getattr(self, "_image", None)
+        result = super().configure(require_redraw=require_redraw, **kwargs)
+        # CTk 6 no limpia el Label Tk cuando image pasa a None. Evitar iconos
+        # fantasma al pasar de "Sincronizando" a texto plano o quitar una foto.
+        if previous_image is not None and self._image is None:
+            self._label.configure(image="")
+        return result

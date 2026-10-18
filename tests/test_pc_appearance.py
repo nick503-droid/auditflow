@@ -40,6 +40,8 @@ class PaletteTests(unittest.TestCase):
             for name, state in theme.STATUS.items():
                 with self.subTest(mode=mode, state=name):
                     self.assertGreaterEqual(contrast(theme.resolve_color(state["text"], mode), theme.resolve_color(state["bg"], mode)), 4.5)
+                    if "hover_bg" in state:
+                        self.assertGreaterEqual(contrast(theme.resolve_color(state["text"], mode), theme.resolve_color(state["hover_bg"], mode)), 4.5)
                     self.assertGreaterEqual(contrast("#FFFFFF", theme.resolve_color(state["solid"], mode)), 4.5)
                     for surface in (theme.APP_BACKGROUND, theme.SURFACE, theme.SURFACE_SECONDARY):
                         self.assertGreaterEqual(contrast(theme.resolve_color(state["text"], mode), theme.resolve_color(surface, mode)), 4.5)
@@ -166,6 +168,61 @@ class WidgetThemeTests(unittest.TestCase):
         button = IconButton(self.root, text="Adjuntar archivo", fg_color="transparent")
         self.assertEqual(button.cget("hover_color"), theme.SURFACE_SECONDARY)
         self.assertEqual(button.cget("text_color"), theme.TEXT_PRIMARY)
+        button.destroy()
+
+    def test_label_reserves_separate_space_for_icon_and_text_at_all_scales(self):
+        label = IconLabel(self.root, text="📁 Directorio de Reportes",
+                          font=theme.get_font(size=24, weight="bold"), anchor="w")
+        plain = ctk.CTkLabel(self.root, text=label.cget("text"), font=label.cget("font"), padx=0)
+        label.pack()
+        plain.pack()
+        try:
+            for scale in (1, 1.25, 1.5, 2):
+                ctk.set_widget_scaling(scale)
+                for mode in ("Light", "Dark"):
+                    ctk.set_appearance_mode(mode)
+                    self.root.update_idletasks()
+                    native = label._label
+                    image_width = int(native.tk.call("image", "width", native.cget("image")))
+                    self.assertEqual(label.cget("compound"), "left")
+                    self.assertGreaterEqual(native.winfo_reqwidth(), plain._label.winfo_reqwidth() + image_width + 4)
+        finally:
+            label.destroy()
+            plain.destroy()
+            ctk.set_widget_scaling(1)
+
+    def test_dynamic_label_removes_old_icon_pixels_and_can_add_a_new_icon(self):
+        label = IconLabel(self.root, text="☁ En la nube")
+        self.assertTrue(str(label._label.cget("image")))
+        label.configure(text="Guardado local")
+        self.assertIsNone(label.cget("image"))
+        self.assertEqual(str(label._label.cget("image")), "")
+        with patch.object(label._label, "configure", wraps=label._label.configure) as native_configure:
+            label.configure(text="Guardado local", text_color=theme.TEXT_SECONDARY)
+            self.assertFalse(any("image" in call.kwargs for call in native_configure.call_args_list))
+        label.configure(text="📁 Directorio de Bitácoras")
+        self.assertTrue(str(label._label.cget("image")))
+        self.assertEqual(label.cget("compound"), "left")
+        label.destroy()
+
+    def test_explicit_image_layout_is_preserved_and_removal_is_not_ghosted(self):
+        photo = ctk.CTkImage(light_image=Image.new("RGB", (24, 24), "red"), size=(24, 24))
+        label = IconLabel(self.root, text="Fotografía", image=photo, compound="top", padx=8)
+        self.assertEqual(label.cget("compound"), "top")
+        self.assertEqual(int(label.cget("padx")), 8)
+        label.configure(text="", image=None)
+        self.assertEqual(str(label._label.cget("image")), "")
+        label.destroy()
+
+    def test_icon_only_labels_and_dynamic_button_sizes_still_work(self):
+        label = IconLabel(self.root, text="📁", font=theme.get_font(size=48))
+        self.assertEqual(label.cget("text"), "")
+        self.assertIsNotNone(label.cget("image"))
+        button = IconButton(self.root, text="📷 Captura", font=theme.get_font(size=24), height=40)
+        self.assertEqual(button.cget("image").cget("size"), (24, 24))
+        button.configure(height=24)
+        self.assertEqual(button.cget("image").cget("size"), (18, 18))
+        label.destroy()
         button.destroy()
 
     def test_destroyed_widgets_do_not_accumulate_icon_callbacks(self):
