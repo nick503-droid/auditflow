@@ -7,6 +7,7 @@ import ast
 from pathlib import Path
 import sys
 import types
+from copy import deepcopy
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,11 +35,65 @@ for package, child in (("api", "client"), ("db", "local_db")):
     module.limpiar_borradores_fantasma = lambda: None
 
 api = sys.modules["api.client"]
-user = {"id": "qa-user", "nombre": "Auditor de prueba", "role": "ADMIN"}
+user = {"id": "qa-user", "nombre": "Administrador de prueba", "username": "admin.demo", "role": "ADMIN", "activo": 1, "require_password_change": False}
 restaurant = {"id": "qa-store", "nombre": "Restaurante de prueba"}
 restaurant_other = {"id": "qa-store-2", "nombre": "Norco"}
 api.obtener_usuarios.return_value = [user]
 api.obtener_restaurantes.return_value = [restaurant, restaurant_other]
+
+# CRUD de demostración exclusivamente en memoria. No importa API/SQLite reales.
+qa_users = [deepcopy(user), {"id": "qa-walter", "nombre": "Walter de prueba", "username": "walter.demo", "role": "EMPLEADO", "activo": 1, "require_password_change": False},
+            {"id": "qa-inactive", "nombre": "Auditor que regresa", "username": "regreso.demo", "role": "EMPLEADO", "activo": 0, "require_password_change": True}]
+qa_restaurants = [{**restaurant, "activo": 1}, {**restaurant_other, "activo": 1}, {"id": "qa-closed", "nombre": "Sucursal temporalmente cerrada", "activo": 0}]
+qa_passwords = {"qa-user": "demo123", "qa-walter": "demo123", "qa-inactive": "temporal123"}
+
+def qa_save(rows, dto, identifier=None):
+    row = next((r for r in rows if r["id"] == identifier), None) if identifier else None
+    if identifier and row is None:
+        raise RuntimeError("Registro de prueba no encontrado.")
+    if rows is qa_users:
+        username = dto.get("username", (row or {}).get("username"))
+        if username and any(r["id"] != identifier and (r.get("username") or "").casefold() == username.casefold() for r in rows):
+            raise RuntimeError("Ese usuario de inicio de sesión ya existe, incluso si está inactivo.")
+        next_row = {**(row or {}), **dto}
+        if row and row.get("role") == "ADMIN" and row.get("activo", 1) and (not next_row.get("activo", 1) or next_row.get("role") != "ADMIN"):
+            if not any(r["id"] != identifier and r.get("role") == "ADMIN" and r.get("activo", 1) for r in rows):
+                raise RuntimeError("No puedes desactivar al último administrador activo.")
+    if row is None:
+        row = {"id": f"qa-new-{len(rows)}", "activo": 1, "role": "EMPLEADO", "require_password_change": True}
+        rows.append(row)
+    changes = dict(dto)
+    password = changes.pop("password", None)
+    row.update(changes)
+    if password:
+        qa_passwords[row["id"]] = password
+        row["require_password_change"] = True
+    return deepcopy(row)
+
+def qa_reset(identifier, password):
+    return qa_save(qa_users, {"password": password}, identifier)
+
+def qa_login(username, password):
+    return next((deepcopy(r) for r in qa_users if r.get("activo", 1) and r.get("username") == username and qa_passwords.get(r["id"]) == password), None)
+
+def qa_change_password(identifier, password):
+    row = next(r for r in qa_users if r["id"] == identifier)
+    if not row.get("activo", 1):
+        raise RuntimeError("Cuenta de prueba inactiva.")
+    if row.get("require_password_change") and qa_passwords.get(identifier) == password:
+        raise RuntimeError("La contraseña nueva debe ser diferente de la temporal.")
+    qa_passwords[identifier] = password
+    row["require_password_change"] = False
+    return True
+
+api.obtener_usuarios_admin.side_effect = lambda: deepcopy(qa_users)
+api.obtener_restaurantes_admin.side_effect = lambda: deepcopy(qa_restaurants)
+api.guardar_usuario_admin.side_effect = lambda dto, identifier=None: qa_save(qa_users, dto, identifier)
+api.guardar_restaurante_admin.side_effect = lambda dto, identifier=None: qa_save(qa_restaurants, dto, identifier)
+api.restablecer_password_admin.side_effect = qa_reset
+# login_frame importa estos nombres dentro de métodos: la recolección AST los incluye.
+api.login.side_effect = qa_login
+api.cambiar_password_con_mensaje.side_effect = qa_change_password
 keyboard = types.ModuleType("keyboard")
 keyboard.add_hotkey = lambda *a, **k: None
 keyboard.remove_hotkey = lambda *a, **k: None
@@ -76,7 +131,15 @@ ReportesFrame._polling_directorio_worker = lambda self: None
 BitacorasFrame._registrar_hotkeys = lambda self: None
 BitacorasFrame._carga_inicial = lambda self: None
 BitacorasFrame._iniciar_polling = lambda self: None
-SystemAdminFrame._cargar_metricas = lambda self: None
+SystemAdminFrame._cargar_metricas = lambda self: self._actualizar_dashboard("Servidor de prueba · sin API", "48 GB", "256 GB", "208 GB", .19)
+def qa_submit(self, operation, success, failure):
+    try:
+        result = operation()
+    except Exception as error:
+        failure(str(error))
+    else:
+        success(result)
+SystemAdminFrame._submit = qa_submit
 
 def synthetic_preview(self, source, label):
     image = ctk.CTkImage(light_image=sample.copy(), dark_image=sample.copy(), size=(128, 72))
@@ -260,7 +323,73 @@ def viewer():
     app.frame_actual._mostrar_popup_evidencias([{"url": e["evidencia_url"], "id": e["id"]} for e in evidence], "2026-10-16", "Prueba")
 
 def system_admin():
+    session.set_session(deepcopy(user))
     app.mostrar_frame(SystemAdminFrame)
+
+def demo_login():
+    from ui.login_frame import LoginFrame
+    app.mostrar_frame(LoginFrame)
+
+def system_admin_dialogs():
+    system_admin()
+    frame = app.frame_actual
+    # Construir formularios reales, sin peticiones ni tocar preferencias/datos reales.
+    for tipo, row in (("usuarios", None), ("usuarios", qa_users[1]), ("restaurantes", None), ("restaurantes", qa_restaurants[0])):
+        dialog = frame._popup_editar(tipo, row)
+        app.update_idletasks()
+        assert dialog.winfo_exists()
+        dialog.destroy()
+    dialog = frame._popup_password(qa_users[1])
+    app.update_idletasks()
+    dialog.destroy()
+    for state, count in (("Todos", 3), ("Activos", 2), ("Inactivos", 1)):
+        frame._vistas["usuarios"]["estado"].set(state)
+        frame._render_catalogo("usuarios")
+        assert frame._vistas["usuarios"]["count"].cget("text") == f"{count} de 3 registros"
+    frame._vistas["usuarios"]["estado"].set("Todos")
+    frame._render_catalogo("usuarios")
+
+def system_admin_mutations():
+    backup = deepcopy((qa_users, qa_restaurants, qa_passwords))
+    try:
+        system_admin()
+        frame = app.frame_actual
+        def fill_and_save(dialog, values):
+            entries = [c for c in descendants(dialog) if isinstance(c, ctk.CTkEntry)]
+            assert len(entries) == len(values)
+            for entry, value in zip(entries, values):
+                entry.delete(0, "end"); entry.insert(0, value)
+            save = next(c for c in descendants(dialog) if isinstance(c, ctk.CTkButton) and c.cget("text") == "Guardar")
+            save.invoke()
+            assert not dialog.winfo_exists(), "El formulario válido debe cerrar después de guardar"
+        fill_and_save(frame._popup_editar("usuarios"), ["Auditor nuevo", "nuevo.demo", "temporal123"])
+        created = deepcopy(qa_users[-1])
+        assert created["require_password_change"] and created["username"] == "nuevo.demo"
+        fill_and_save(frame._popup_editar("usuarios", created), ["Nombre editado", "editado.demo"])
+        assert qa_users[-1]["id"] == created["id"] and qa_users[-1]["nombre"] == "Nombre editado"
+        with patch("ui.system_admin_frame.messagebox.askyesno", return_value=True):
+            frame._confirmar_estado("usuarios", qa_users[-1])
+        assert qa_users[-1]["activo"] == 0
+        with patch("ui.system_admin_frame.messagebox.askyesno", return_value=True):
+            frame._confirmar_estado("usuarios", qa_users[-1])
+        assert qa_users[-1]["activo"] == 1
+        with patch("ui.system_admin_frame.messagebox.showinfo"):
+            fill_and_save(frame._popup_password(qa_users[-1]), ["otraTemporal123", "otraTemporal123"])
+        assert qa_login("editado.demo", "temporal123") is None
+        assert qa_login("editado.demo", "otraTemporal123")["require_password_change"]
+        qa_change_password(created["id"], "definitiva456")
+        assert not qa_login("editado.demo", "definitiva456")["require_password_change"]
+        fill_and_save(frame._popup_editar("restaurantes"), ["Sucursal nueva"])
+        new_restaurant = deepcopy(qa_restaurants[-1])
+        fill_and_save(frame._popup_editar("restaurantes", new_restaurant), ["Sucursal renombrada"])
+        assert qa_restaurants[-1]["id"] == new_restaurant["id"]
+        with patch("ui.system_admin_frame.messagebox.askyesno", return_value=True):
+            frame._confirmar_estado("restaurantes", qa_restaurants[-1])
+        assert qa_restaurants[-1]["activo"] == 0
+    finally:
+        qa_users[:] = backup[0]; qa_restaurants[:] = backup[1]
+        qa_passwords.clear(); qa_passwords.update(backup[2])
+        system_admin()
 
 def calendar():
     home()
@@ -274,15 +403,17 @@ qa_views = {
     "Inicio": home, "Editor de reportes": report, "Editor de bitácoras": logs,
     "Administrar reportes": admin_reports, "Buscar bitácoras": admin_dates,
     "Detalle de bitácoras": admin, "Visor de evidencias": viewer, "Sistema": system_admin,
+    "Probar acceso temporal": demo_login,
 }
 ctk.CTkLabel(toolbar, text="Vista de prueba:", font=("Segoe UI", 11)).pack(side="left", padx=(0, 6))
 selector_qa = ctk.CTkOptionMenu(toolbar, values=list(qa_views), command=lambda value: qa_views[value](), width=192, height=24)
 selector_qa.pack(side="left")
 ctk.CTkLabel(toolbar, text="Datos ficticios · sin API", font=("Segoe UI", 11)).pack(side="left", padx=12)
+ctk.CTkLabel(toolbar, text="Demo: walter.demo / demo123", font=("Segoe UI", 11)).pack(side="left")
 if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
-    screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin]
+    screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin, system_admin_dialogs, system_admin_mutations]
     try:
         import tkcalendar
         screens.extend([calendar, admin_date_calendar])
@@ -351,11 +482,11 @@ if "--smoke" in sys.argv:
     print("Full UI smoke OK:", len(screens), "screens; both themes.")
 else:
     if "--inspect" in sys.argv:
-        app.title("AuditFlow — Inspección visual (DATOS DE PRUEBA)")
+        app.title("AuditFlow — Inspección v7 (DATOS DE PRUEBA)")
         ctk.set_appearance_mode("Light")
         app._update_appearance_button()
-        selector_qa.set("Administrar reportes")
-        admin_reports()
+        selector_qa.set("Sistema")
+        system_admin()
     else:
         home()
         app.after(900000, app.destroy)

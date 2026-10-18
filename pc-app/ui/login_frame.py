@@ -237,10 +237,17 @@ class LoginFrame(ctk.CTkFrame):
                 
             btn_guardar.configure(state="disabled", text="Guardando...")
             
-            from api.client import cambiar_password
+            from api.client import cambiar_password_con_mensaje
             def _task():
-                res = cambiar_password(perfil["id"], p1)
+                error = None
+                try:
+                    res = cambiar_password_con_mensaje(perfil["id"], p1)
+                except Exception as exc:
+                    res = False
+                    error = str(exc)
                 def _ui():
+                    if not win.winfo_exists():
+                        return
                     if res:
                         messagebox.showinfo("Éxito", "Contraseña actualizada. Bienvenido.")
                         win.destroy()
@@ -248,7 +255,7 @@ class LoginFrame(ctk.CTkFrame):
                         self._finalizar_login(perfil)
                     else:
                         btn_guardar.configure(state="normal", text="Actualizar Contraseña")
-                        lbl_err.configure(text="Error de conexión.")
+                        lbl_err.configure(text=error or "No se pudo actualizar la contraseña.", wraplength=350)
                 self.after(0, _ui)
             threading.Thread(target=_task, daemon=True).start()
             

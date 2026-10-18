@@ -262,6 +262,87 @@ def cambiar_password(user_id: str, new_password: str) -> bool:
         return False
 
 
+def _peticion_catalogo_admin(method, endpoint, dto=None):
+    """Gestión online: jamás guardar contraseñas ni catálogos inactivos en caché."""
+    try:
+        response = requests.request(method, f"{API_BASE_URL}/{endpoint}", json=dto, timeout=10)
+    except requests.exceptions.RequestException:
+        raise RuntimeError("No se pudo conectar al servidor. No se confirmó ningún cambio; verifica la conexión y actualiza la lista.") from None
+    if not response.ok:
+        message = "No se pudo completar la operación."
+        if response.status_code in (400, 404, 409):
+            try:
+                detail = response.json().get("message")
+                if isinstance(detail, list):
+                    detail = "; ".join(str(item) for item in detail)
+                if isinstance(detail, str):
+                    message = detail
+            except (ValueError, AttributeError):
+                pass
+        raise RuntimeError(message)
+    try:
+        return response.json()
+    except ValueError:
+        raise RuntimeError("Respuesta no válida del servidor.") from None
+
+
+def _lista_catalogo_admin(endpoint):
+    data = _peticion_catalogo_admin("GET", endpoint)
+    if not isinstance(data, list):
+        raise RuntimeError("Actualiza el backend: esta versión no ofrece la gestión de catálogos.")
+    return data
+
+
+def obtener_usuarios_admin():
+    return _lista_catalogo_admin("usuarios/admin")
+
+
+def obtener_restaurantes_admin():
+    return _lista_catalogo_admin("restaurantes/admin")
+
+
+def _refrescar_cache_admin(*callbacks):
+    # La escritura remota ya fue confirmada: un fallo de caché NO debe inducir
+    # al administrador a repetir una creación que ya se guardó en el servidor.
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:
+            pass  # El sincronizador de catálogos vuelve a intentarlo al minuto.
+
+
+def guardar_usuario_admin(dto, usuario_id=None):
+    data = _peticion_catalogo_admin("PATCH" if usuario_id else "POST", f"usuarios/{usuario_id}" if usuario_id else "usuarios", dto)
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("El servidor no confirmó el usuario. Actualiza la lista antes de reintentar.")
+    _refrescar_cache_admin(sincronizar_directorio_offline, obtener_usuarios)
+    return data
+
+
+def guardar_restaurante_admin(dto, restaurante_id=None):
+    data = _peticion_catalogo_admin("PATCH" if restaurante_id else "POST", f"restaurantes/{restaurante_id}" if restaurante_id else "restaurantes", dto)
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("El servidor no confirmó el restaurante. Actualiza la lista antes de reintentar.")
+    _refrescar_cache_admin(obtener_restaurantes)
+    return data
+
+
+def restablecer_password_admin(usuario_id, password_temporal):
+    data = _peticion_catalogo_admin("PATCH", f"usuarios/{usuario_id}/reset-password", {"newPassword": password_temporal})
+    if not isinstance(data, dict) or data.get("require_password_change") is not True:
+        raise RuntimeError("El servidor no confirmó el cambio obligatorio. Actualiza el backend y consulta la cuenta.")
+    _refrescar_cache_admin(sincronizar_directorio_offline)
+    return data
+
+
+def cambiar_password_con_mensaje(usuario_id, new_password):
+    data = _peticion_catalogo_admin("PATCH", f"usuarios/{usuario_id}/password", {"newPassword": new_password})
+    if not isinstance(data, dict) or data.get("success") is not True:
+        raise RuntimeError("El servidor no confirmó el cambio de contraseña.")
+    _refrescar_cache_admin(sincronizar_directorio_offline)
+    return True
+
+
 # ─── Bitácoras ────────────────────────────────────────────────────────────────
 
 def crear_bitacora(dto):

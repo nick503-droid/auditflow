@@ -670,6 +670,7 @@ class BitacorasFrame(ctk.CTkFrame):
         self._marcar_campo_pendiente(idx, campo)
         self._programar_guardado(idx)
         if campo == "restaurante":
+            self.filas[idx]["restaurante_id"] = self.mapa_restaurantes.get(valor)
             widgets = self.filas[idx].get("_widgets", {})
             hora_entry = widgets.get("hora")
             if hora_entry and hora_entry.winfo_exists() and valor in self.mapa_restaurantes:
@@ -892,7 +893,7 @@ class BitacorasFrame(ctk.CTkFrame):
         fila["_debounce_id"] = None
 
         rest_nombre = fila.get("restaurante", "").strip()
-        rest_id = self.mapa_restaurantes.get(rest_nombre)
+        rest_id = fila.get("restaurante_id") or self.mapa_restaurantes.get(rest_nombre)
 
         # Vigilante siempre del selector global — no del campo por fila
         vig_nombre = self.usuario_activo["nombre"].strip()
@@ -1083,7 +1084,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 return fila["local_id"]
 
         rest_nombre = fila.get("restaurante", "").strip()
-        rest_id = self.mapa_restaurantes.get(rest_nombre)
+        rest_id = fila.get("restaurante_id") or self.mapa_restaurantes.get(rest_nombre)
         vig_nombre = self.usuario_activo["nombre"].strip()
         usr_id = self.mapa_usuarios.get(vig_nombre, self.usuario_activo["id"])
         if not rest_id or not usr_id:
@@ -1111,7 +1112,7 @@ class BitacorasFrame(ctk.CTkFrame):
         fila = self.filas[idx]
         rest_nombre = fila.get("restaurante", "").strip()
 
-        if not rest_nombre or rest_nombre not in self.mapa_restaurantes:
+        if not rest_nombre or (not fila.get("restaurante_id") and rest_nombre not in self.mapa_restaurantes):
             messagebox.showwarning(
                 "Restaurante requerido",
                 "Selecciona un restaurante antes de agregar evidencia.\n"
@@ -1323,6 +1324,8 @@ class BitacorasFrame(ctk.CTkFrame):
             campos_activos = set(self.campos_editando.get(idx, set()))
         campos_pendientes = set(fila.get("_campos_pendientes", set()))
         campos_protegidos = campos_activos | campos_pendientes
+        if "restaurante" in campos_protegidos:
+            campos_protegidos.add("restaurante_id")
         cambios = {k: v for k, v in datos_nuevos.items()
                    if k not in campos_protegidos and fila.get(k) != v}
         if "evidencias" in cambios and firma_evidencias(fila.get("evidencias", [])) == firma_evidencias(cambios["evidencias"]):
@@ -1436,6 +1439,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "codigo":      b.get("codigo", ""),
                 "hora":        b.get("hora", ""),
                 "restaurante": rest,
+                "restaurante_id": b.get("restaurante_id") or (b.get("restaurante") if isinstance(b.get("restaurante"), dict) else {}).get("id"),
                 "vigilante":   vig,
                 "descripcion": b.get("descripcion", ""),
                 "urgencia":    urgencia,
@@ -1498,6 +1502,7 @@ class BitacorasFrame(ctk.CTkFrame):
                 "codigo":      b.get("codigo", ""),
                 "hora":        b.get("hora", ""),
                 "restaurante": rest,
+                "restaurante_id": b.get("restaurante_id") or (b.get("restaurante") if isinstance(b.get("restaurante"), dict) else {}).get("id"),
                 "vigilante":   vig,
                 "descripcion": b.get("descripcion", ""),
                 "urgencia":    urgencia,
@@ -1982,7 +1987,7 @@ class BitacorasFrame(ctk.CTkFrame):
             return False
 
         rest_nombre = fila.get("restaurante", "").strip()
-        if not rest_nombre or rest_nombre not in self.mapa_restaurantes:
+        if not rest_nombre or (not fila.get("restaurante_id") and rest_nombre not in self.mapa_restaurantes):
             messagebox.showwarning("Restaurante requerido", "Selecciona el restaurante de la bitácora antes de guardar evidencia.")
             return False
         if not ruta_origen or not os.path.isfile(ruta_origen):
