@@ -517,7 +517,7 @@ else:
         ctk.set_appearance_mode("Light")
         app._update_appearance_button()
         if "--loading" in sys.argv:
-            app.title("AuditFlow — Carga animada (DATOS DE PRUEBA)")
+            app.title("AuditFlow — Carga progresiva (DATOS DE PRUEBA)")
             selector_qa.set("Carga de bitácoras")
             loading_logs()
         else:

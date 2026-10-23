@@ -1163,16 +1163,17 @@ class BitacorasFrame(ctk.CTkFrame):
         """Full-fetch al arrancar. Establece el cursor de timestamp para los deltas posteriores."""
         self._carga_overlay = ctk.CTkFrame(self, fg_color=SURFACE)
         self._carga_overlay.grid(row=2, column=0, sticky="nsew", padx=12, pady=(2, 10))
-        ctk.CTkLabel(self._carga_overlay, text="Cargando bitácoras…",
-                     text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=12)
-        # Una única animación para toda la carga; no depende del número de filas.
+        self._texto_carga = ctk.CTkLabel(self._carga_overlay, text="Consultando bitácoras…",
+                                        text_color=TEXT_MUTED)
+        self._texto_carga.pack(anchor="w", padx=16, pady=12)
+        # Avance real: filas preparadas + un último paso de ajuste del layout.
         self._barra_carga = ctk.CTkProgressBar(
             self._carga_overlay, height=8, corner_radius=4,
-            mode="indeterminate", indeterminate_speed=0.7,
+            mode="determinate",
             fg_color=SURFACE_SECONDARY, progress_color=PRIMARY,
         )
         self._barra_carga.pack(fill="x", padx=16, pady=(0, 12))
-        self._barra_carga.start()
+        self._barra_carga.set(0)
         for _ in range(7):
             ctk.CTkFrame(self._carga_overlay, height=48,
                          fg_color=SURFACE_SECONDARY, corner_radius=8).pack(fill="x", padx=12, pady=5)
@@ -1192,13 +1193,38 @@ class BitacorasFrame(ctk.CTkFrame):
     def _presentar_carga_inicial(self, bitacoras):
         if self._cerrado:
             return
+        self._carga_datos = bitacoras
+        self._carga_total = len(bitacoras) if bitacoras is not None else 0
+        self._carga_preparadas = 0
+        # Como máximo veinte lotes: ceder a Tk sin reconstruir toda la lista
+        # por cada fila ni añadir peticiones al servidor.
+        self._carga_tamano_lote = max(1, (self._carga_total + 19) // 20)
+        self._cargar_lote_inicial()
+
+    def _cargar_lote_inicial(self):
+        if self._cerrado:
+            return
         try:
-            if bitacoras is not None:
-                self._reconciliar_con_datos(bitacoras)
-            else:
+            if self._carga_datos is None:
+                self._texto_carga.configure(text="Sin conexión. Preparando la vista local…")
                 self._agregar_fila_vacia()
-        finally:
+            elif not self._carga_total:
+                self._texto_carga.configure(text="No hay bitácoras para esta fecha.")
+                self._reconciliar_con_datos([])
+            else:
+                fin = min(self._carga_total, self._carga_preparadas + self._carga_tamano_lote)
+                self._reconciliar_con_datos(self._carga_datos[self._carga_preparadas:fin])
+                self._carga_preparadas = fin
+                self._barra_carga.set(fin / (self._carga_total + 1))
+                self._texto_carga.configure(text=f"Preparando bitácoras: {fin} de {self._carga_total}")
+                if fin < self._carga_total:
+                    self.after(10, self._cargar_lote_inicial)
+                    return
+            self._carga_datos = None  # Liberar la respuesta después del último lote.
             self.after(50, self._terminar_carga_inicial, 0)
+        except Exception as exc:
+            self._revelar_carga_inicial()
+            messagebox.showerror("No se pudo preparar la lista", str(exc))
 
     def _terminar_carga_inicial(self, estable):
         if self._cerrado:
@@ -1209,6 +1235,13 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         if pendientes or estable < 2:
             self.after(50, self._terminar_carga_inicial, 0 if pendientes else estable + 1)
+            return
+        self._barra_carga.set(1)
+        # La barra sólo llega al final cuando las filas y sus alturas están listas.
+        self.after(120, self._revelar_carga_inicial)
+
+    def _revelar_carga_inicial(self):
+        if self._cerrado:
             return
         self._detener_animacion_carga()
         self._carga_overlay.destroy()

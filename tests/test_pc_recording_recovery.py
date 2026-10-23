@@ -84,7 +84,7 @@ class RecordingRecoveryTests(unittest.TestCase):
                            check=True, capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
 
     def test_initial_loading_waits_for_layout_before_starting_polling(self):
-        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame", {"_terminar_carga_inicial", "_detener_animacion_carga"})
+        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame", {"_terminar_carga_inicial", "_revelar_carga_inicial", "_detener_animacion_carga"})
         frame = klass()
         frame._cerrado = False
         description = types.SimpleNamespace(_resize_job="pending")
@@ -98,6 +98,9 @@ class RecordingRecoveryTests(unittest.TestCase):
         barra.stop.assert_not_called()
         description._resize_job = None
         frame._terminar_carga_inicial(2)
+        barra.set.assert_called_once_with(1)
+        frame._carga_overlay.destroy.assert_not_called()
+        frame._revelar_carga_inicial()
         frame._carga_overlay.destroy.assert_called_once()
         frame._iniciar_polling.assert_called_once()
         barra.stop.assert_called_once()
@@ -105,6 +108,32 @@ class RecordingRecoveryTests(unittest.TestCase):
         frame._cerrado = True
         frame._terminar_carga_inicial(2)
         frame._iniciar_polling.assert_called_once()
+
+    def test_progress_counts_completed_batches_and_never_reaches_full_before_layout(self):
+        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame",
+                                {"_presentar_carga_inicial", "_cargar_lote_inicial"})
+        frame = klass()
+        frame._cerrado = False
+        frame._barra_carga = Mock()
+        frame._texto_carga = Mock()
+        frame._terminar_carga_inicial = Mock()
+        frame._reconciliar_con_datos = Mock()
+        pending = []
+        frame.after = lambda delay, callback, *args: pending.append((callback, args))
+        records = [{"id": str(i)} for i in range(240)]
+        frame._presentar_carga_inicial(records)
+        self.assertLess(frame._carga_preparadas, 240)
+        while pending:
+            callback, args = pending.pop(0)
+            callback(*args)
+        values = [call.args[0] for call in frame._barra_carga.set.call_args_list]
+        self.assertEqual(values, sorted(values))
+        self.assertLess(max(values), 1)
+        self.assertEqual(frame._carga_preparadas, 240)
+        self.assertEqual([r for call in frame._reconciliar_con_datos.call_args_list for r in call.args[0]], records)
+        self.assertLessEqual(len(values), 20)
+        frame._terminar_carga_inicial.assert_called_once_with(0)
+        self.assertIsNone(frame._carga_datos)
 
     def test_stop_worker_recovers_buttons_in_both_modules_on_failure(self):
         for filename, klassname in (("bitacoras_frame.py", "BitacorasFrame"), ("reportes_frame.py", "ReportesFrame")):

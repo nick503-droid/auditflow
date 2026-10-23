@@ -30,7 +30,8 @@ def remote(identifier, created, hora="10:00", **extra):
 
 class CreationOrderTests(unittest.TestCase):
     def frame(self):
-        methods = {"_ordenar_tarjetas_por_creacion", "_aplicar_deltas", "_reconciliar_con_datos", "_actualizar_fila_remota"}
+        methods = {"_ordenar_tarjetas_por_creacion", "_aplicar_deltas", "_reconciliar_con_datos", "_actualizar_fila_remota",
+                   "_presentar_carga_inicial", "_cargar_lote_inicial"}
         klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame", methods,
                                 {"clave_orden_bitacora": clave_orden_bitacora})
         frame = klass()
@@ -44,6 +45,23 @@ class CreationOrderTests(unittest.TestCase):
         frame._actualizar_widgets_fila_in_place = Mock()
         frame._construir_tarjeta = lambda idx: frame.filas[idx].update(_card_frame=Card(idx))
         return frame
+
+    def test_progressive_loading_keeps_all_rows_in_creation_order_without_duplicates(self):
+        frame = self.frame()
+        frame._barra_carga = Mock()
+        frame._texto_carga = Mock()
+        frame._terminar_carga_inicial = Mock()
+        queue = []
+        frame.after = lambda delay, callback, *args: queue.append((callback, args))
+        records = [remote(f"id-{i}", f"2026-10-23T14:00:{i:02d}Z") for i in range(30)]
+        frame._presentar_carga_inicial(records[::-1])
+        while queue:
+            callback, args = queue.pop(0)
+            callback(*args)
+        self.assertEqual(len(frame.filas), 30)
+        visible = sorted(frame.filas, key=lambda row: row["_card_frame"].row)
+        self.assertEqual([r["b_id"] for r in visible], [r["id"] for r in records])
+        frame._terminar_carga_inicial.assert_called_once_with(0)
 
     def test_sort_ignores_entered_hour_and_last_edit_time(self):
         rows = [remote("new", "2026-10-17T20:00:01Z", "8:55 AM"),
@@ -262,7 +280,7 @@ class FlexibleDescriptionTests(unittest.TestCase):
         self.assertIsNone(self.box.after(50, self.box._check_if_scrollbars_needed))
         self.assertFalse(any("_check_if_scrollbars_needed" in command for command in self.box._tclCommands))
 
-    def test_loading_bar_animates_in_both_themes_and_releases_timer(self):
+    def test_loading_bar_stays_at_real_progress_in_both_themes_without_timer(self):
         import types
         klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame",
                                 {"_carga_inicial", "_detener_animacion_carga"},
@@ -275,18 +293,18 @@ class FlexibleDescriptionTests(unittest.TestCase):
         try:
             frame._carga_inicial()
             bar = frame._barra_carga
+            self.assertEqual(bar.get(), 0)
             for mode in ("Light", "Dark"):
                 ctk.set_appearance_mode(mode)
-                initial = bar._indeterminate_value
+                bar.set(0.5)
                 self.root.after(120, self.root.quit)
                 self.root.mainloop()
-                self.assertGreater(bar._indeterminate_value, initial)
-                self.assertTrue(bar._loop_running)
-            job = bar._loop_after_id
+                self.assertEqual(bar.get(), 0.5)
+                self.assertFalse(bar._loop_running)
+            self.assertIsNone(bar._loop_after_id)
             frame._detener_animacion_carga()
             frame._detener_animacion_carga()  # Cerrar tras completar debe ser seguro.
             self.assertFalse(bar._loop_running)
-            self.assertNotIn(job, self.root.tk.call("after", "info"))
             self.assertFalse(self.errors, self.errors)
         finally:
             frame._detener_animacion_carga()
