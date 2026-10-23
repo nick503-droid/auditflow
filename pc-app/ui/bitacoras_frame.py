@@ -1165,6 +1165,14 @@ class BitacorasFrame(ctk.CTkFrame):
         self._carga_overlay.grid(row=2, column=0, sticky="nsew", padx=12, pady=(2, 10))
         ctk.CTkLabel(self._carga_overlay, text="Cargando bitácoras…",
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=12)
+        # Una única animación para toda la carga; no depende del número de filas.
+        self._barra_carga = ctk.CTkProgressBar(
+            self._carga_overlay, height=8, corner_radius=4,
+            mode="indeterminate", indeterminate_speed=0.7,
+            fg_color=SURFACE_SECONDARY, progress_color=PRIMARY,
+        )
+        self._barra_carga.pack(fill="x", padx=16, pady=(0, 12))
+        self._barra_carga.start()
         for _ in range(7):
             ctk.CTkFrame(self._carga_overlay, height=48,
                          fg_color=SURFACE_SECONDARY, corner_radius=8).pack(fill="x", padx=12, pady=5)
@@ -1202,8 +1210,15 @@ class BitacorasFrame(ctk.CTkFrame):
         if pendientes or estable < 2:
             self.after(50, self._terminar_carga_inicial, 0 if pendientes else estable + 1)
             return
+        self._detener_animacion_carga()
         self._carga_overlay.destroy()
         self._iniciar_polling()
+
+    def _detener_animacion_carga(self):
+        barra = getattr(self, "_barra_carga", None)
+        if barra is not None:
+            barra.stop()
+            self._barra_carga = None
 
     # ─── Polling ──────────────────────────────────────────────────────────────
 
@@ -2165,6 +2180,7 @@ class BitacorasFrame(ctk.CTkFrame):
     def _al_destruir(self, event):
         if getattr(event, "widget", self) is not self:
             return
+        self._detener_animacion_carga()
         self._miniaturas.cerrar()
         # Señalar al hilo de polling que debe detenerse.
         # stop_event.set() despierta inmediatamente el stop_event.wait(5)

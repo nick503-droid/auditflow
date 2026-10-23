@@ -262,6 +262,36 @@ class FlexibleDescriptionTests(unittest.TestCase):
         self.assertIsNone(self.box.after(50, self.box._check_if_scrollbars_needed))
         self.assertFalse(any("_check_if_scrollbars_needed" in command for command in self.box._tclCommands))
 
+    def test_loading_bar_animates_in_both_themes_and_releases_timer(self):
+        import types
+        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame",
+                                {"_carga_inicial", "_detener_animacion_carga"},
+                                {"ctk": ctk, "SURFACE": ("#fff", "#222"),
+                                 "threading": types.SimpleNamespace(Thread=Mock())})
+        frame = ctk.CTkFrame(self.root)
+        frame.pack(fill="both", expand=True)
+        frame._carga_inicial = types.MethodType(klass._carga_inicial, frame)
+        frame._detener_animacion_carga = types.MethodType(klass._detener_animacion_carga, frame)
+        try:
+            frame._carga_inicial()
+            bar = frame._barra_carga
+            for mode in ("Light", "Dark"):
+                ctk.set_appearance_mode(mode)
+                initial = bar._indeterminate_value
+                self.root.after(120, self.root.quit)
+                self.root.mainloop()
+                self.assertGreater(bar._indeterminate_value, initial)
+                self.assertTrue(bar._loop_running)
+            job = bar._loop_after_id
+            frame._detener_animacion_carga()
+            frame._detener_animacion_carga()  # Cerrar tras completar debe ser seguro.
+            self.assertFalse(bar._loop_running)
+            self.assertNotIn(job, self.root.tk.call("after", "info"))
+            self.assertFalse(self.errors, self.errors)
+        finally:
+            frame._detener_animacion_carga()
+            frame.destroy()
+
     def test_240_descriptions_resize_without_recursive_scrollbar_drawing(self):
         scroll = ctk.CTkScrollableFrame(self.root)
         scroll.pack(fill="both", expand=True)

@@ -129,6 +129,7 @@ MiniaturasUI.solicitar = lambda self, source, callback: callback(sample.copy())
 ReportesFrame._cargar_datos_setup = lambda self: None
 ReportesFrame._polling_directorio_worker = lambda self: None
 BitacorasFrame._registrar_hotkeys = lambda self: None
+qa_real_initial_load = BitacorasFrame._carga_inicial
 BitacorasFrame._carga_inicial = lambda self: None
 BitacorasFrame._iniciar_polling = lambda self: None
 SystemAdminFrame._cargar_metricas = lambda self: self._actualizar_dashboard("Servidor de prueba · sin API", "48 GB", "256 GB", "208 GB", .19)
@@ -202,6 +203,35 @@ def logs():
     frame._mostrar_indicador_rec()
     frame.indicador.destroy()
     frame.indicador = None
+
+
+def loading_logs():
+    """Carga real de la UI con respuesta ficticia retenida para inspección."""
+    import threading
+    import ui.bitacoras_frame as module
+    release = threading.Event()
+    records = [
+        {"id": f"qa-log-{i}", "codigo": f"QA{i:04d}", "hora": f"{8 + i // 4}:15 AM",
+         "descripcion": ("Bitácora ficticia: revisión del área de atención y de las evidencias. " * (i % 3 + 1)),
+         "restaurante": restaurant if i % 2 else restaurant_other, "usuario": user,
+         "urgencia": "leve", "evidencias": [],
+         "created_at": f"2026-10-23T14:{i:02d}:00Z", "updated_at": f"2026-10-23T14:{i:02d}:00Z"}
+        for i in range(40)
+    ]
+    def fetch_fixture(date):
+        while not release.wait(1):
+            if frame._cerrado:
+                return []
+        return deepcopy(records)
+    module.obtener_bitacoras_por_fecha = fetch_fixture
+    app.mostrar_frame(BitacorasFrame, usuario=user, fecha="2026-10-23")
+    frame = app.frame_actual
+    qa_real_initial_load(frame)
+    ctk.CTkLabel(frame._carga_overlay,
+                 text="DEMO: carga pausada para inspeccionar. No hay conexión al servidor.",
+                 wraplength=650).pack(pady=(8, 4))
+    ctk.CTkButton(frame._carga_overlay, text="Mostrar las 40 bitácoras de prueba",
+                  command=release.set).pack(pady=8)
 
 def admin():
     app.mostrar_frame(AdminFrame, usuario=user)
@@ -401,6 +431,7 @@ toolbar = ctk.CTkFrame(app.appearance_bar, fg_color="transparent")
 toolbar.pack(side="left", padx=10)
 qa_views = {
     "Inicio": home, "Editor de reportes": report, "Editor de bitácoras": logs,
+    "Carga de bitácoras": loading_logs,
     "Administrar reportes": admin_reports, "Buscar bitácoras": admin_dates,
     "Detalle de bitácoras": admin, "Visor de evidencias": viewer, "Sistema": system_admin,
     "Probar acceso temporal": demo_login,
@@ -482,11 +513,16 @@ if "--smoke" in sys.argv:
     print("Full UI smoke OK:", len(screens), "screens; both themes.")
 else:
     if "--inspect" in sys.argv:
-        app.title("AuditFlow — Inspección v7 (DATOS DE PRUEBA)")
+        app.title("AuditFlow — Inspección (DATOS DE PRUEBA)")
         ctk.set_appearance_mode("Light")
         app._update_appearance_button()
-        selector_qa.set("Sistema")
-        system_admin()
+        if "--loading" in sys.argv:
+            app.title("AuditFlow — Carga animada (DATOS DE PRUEBA)")
+            selector_qa.set("Carga de bitácoras")
+            loading_logs()
+        else:
+            selector_qa.set("Sistema")
+            system_admin()
     else:
         home()
         app.after(900000, app.destroy)

@@ -84,7 +84,7 @@ class RecordingRecoveryTests(unittest.TestCase):
                            check=True, capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
 
     def test_initial_loading_waits_for_layout_before_starting_polling(self):
-        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame", {"_terminar_carga_inicial"})
+        klass, _ = load_methods("bitacoras_frame.py", "BitacorasFrame", {"_terminar_carga_inicial", "_detener_animacion_carga"})
         frame = klass()
         frame._cerrado = False
         description = types.SimpleNamespace(_resize_job="pending")
@@ -92,12 +92,16 @@ class RecordingRecoveryTests(unittest.TestCase):
         frame.after = Mock()
         frame._iniciar_polling = Mock()
         frame._carga_overlay = Mock()
+        barra = frame._barra_carga = Mock()
         frame._terminar_carga_inicial(2)
         frame._iniciar_polling.assert_not_called()
+        barra.stop.assert_not_called()
         description._resize_job = None
         frame._terminar_carga_inicial(2)
         frame._carga_overlay.destroy.assert_called_once()
         frame._iniciar_polling.assert_called_once()
+        barra.stop.assert_called_once()
+        self.assertIsNone(frame._barra_carga)
         frame._cerrado = True
         frame._terminar_carga_inicial(2)
         frame._iniciar_polling.assert_called_once()
