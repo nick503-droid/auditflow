@@ -1,4 +1,5 @@
 from ui.visual_widgets import IconButton, IconLabel
+from ui.recording_actions import ejecutar_transicion, excluir_de_captura, proteger_aplicacion, restaurar_aplicacion, captura_pendiente, preparar_salida, restaurar_tras_cierre
 from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, SECONDARY, TERTIARY, TERTIARY_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 """
 reportes_frame.py — Módulo de reportes de auditoría para AuditFlow PC App (v3.0).
@@ -2178,7 +2179,7 @@ class ReportesFrame(ctk.CTkFrame):
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
 
     def _toggle_grabacion(self):
-        if getattr(self, "_procesando_video", False) or self._cerrado:
+        if getattr(self, "_procesando_video", False) or getattr(self, "_transicion_grabacion", False) or self._cerrado:
             return
         if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
@@ -2189,18 +2190,19 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
-        try:
-            self.grabador.iniciar(con_audio=con_audio)
-        except Exception as exc:
-            messagebox.showerror("No se pudo iniciar la grabación", str(exc))
-            self._actualizar_botones_grabacion()
-            return
+        self._grabacion_con_audio = con_audio
+        proteger_aplicacion(self)
         self.controlador.withdraw()
-        self._mostrar_indicador_rec()
-        self._actualizar_botones_grabacion()
+        self.boton_grabar.configure(state="disabled", text="Preparando grabación…")
+        def listo():
+            self._mostrar_indicador_rec()
+            self._actualizar_botones_grabacion()
+        ejecutar_transicion(self, lambda: self.grabador.iniciar(con_audio=con_audio), listo, delay=180)
 
     def _pausar_grabacion(self):
-        self.grabador.pausar()
+        ejecutar_transicion(self, self.grabador.pausar, self._mostrar_grabacion_pausada)
+
+    def _mostrar_grabacion_pausada(self):
         if getattr(self, "indicador", None):
             self.lbl_dot.configure(text="⏸️", text_color=STATUS["warning"]["text"])
             self.btn_pausa_float.configure(
@@ -2215,7 +2217,11 @@ class ReportesFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _reanudar_grabacion(self):
-        self.grabador.reanudar()
+        proteger_aplicacion(self)
+        self.controlador.withdraw()
+        ejecutar_transicion(self, self.grabador.reanudar, self._mostrar_grabacion_reanudada, delay=180)
+
+    def _mostrar_grabacion_reanudada(self):
         if getattr(self, "indicador", None):
             self.lbl_dot.configure(text="🔴", text_color=STATUS["error"]["text"])
             self.btn_pausa_float.configure(
@@ -2231,29 +2237,35 @@ class ReportesFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
+        if getattr(self, "_transicion_grabacion", False):
+            self._detener_pendiente = True
+            return
         if getattr(self, "_procesando_video", False):
             return
         self._procesando_video = True
-        con_audio = bool(self.switch_audio.get())
+        con_audio = getattr(self, "_grabacion_con_audio", bool(self.switch_audio.get()))
         self._ocultar_indicador_rec()
-        self.controlador.deiconify()
-        self.controlador.lift()
         self.boton_grabar.configure(state="disabled", text="Procesando video…")
         self.boton_detener.configure(state="disabled")
 
         def procesar_video():
             ruta_final, error = None, None
             try:
-                ruta_final = self.grabador.detener()
+                ruta_final = self.grabador.detener(
+                    al_detener_captura=lambda: self.after(0, self._mostrar_procesamiento_video)
+                )
             except Exception as exc:
                 error = str(exc)
             if not self._cerrado:
                 self.after(0, finalizar, ruta_final, error)
+            else:
+                restaurar_tras_cierre(self)
 
         def finalizar(ruta_final, error):
             self._procesando_video = False
             if self._cerrado:
                 return
+            self._mostrar_procesamiento_video()
             self._actualizar_botones_grabacion()
             if error:
                 messagebox.showerror("Grabación no completada", error)
@@ -2262,6 +2274,12 @@ class ReportesFrame(ctk.CTkFrame):
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()
+
+    def _mostrar_procesamiento_video(self):
+        if not self._cerrado:
+            restaurar_aplicacion(self)
+            self.controlador.deiconify()
+            self.controlador.lift()
 
     def _actualizar_estado_lbl(self, estado):
         if self.label_estado_evidencias.winfo_exists():
@@ -2417,17 +2435,12 @@ class ReportesFrame(ctk.CTkFrame):
             print(f"Error al registrar hotkeys: {e}")
         
         self.indicador = ctk.CTkToplevel(self.controlador)
+        self.indicador.withdraw()
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
         self.indicador.configure(fg_color=SURFACE)
         
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetParent(self.indicador.winfo_id())
-            # 0x00000011 = WDA_EXCLUDEFROMCAPTURE
-            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-        except Exception:
-            pass
+        indicador_seguro = excluir_de_captura(self.indicador)
         ancho, alto = 260, 90
         x = self.indicador.winfo_screenwidth() - ancho - 40
         y = 40
@@ -2450,8 +2463,10 @@ class ReportesFrame(ctk.CTkFrame):
         self.lbl_hotkeys = IconLabel(self.indicador, text="Pausar/Reanudar: Ctrl+K+L | Detener: Ctrl+F8", text_color=TEXT_MUTED, font=get_font(size=11))
         self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
         
+        if indicador_seguro:
+            self.indicador.deiconify()
         self._actualizar_crono()
-        
+
     def _actualizar_crono(self):
         if getattr(self, "indicador", None) and self.grabador.estado == "grabando":
             mins, secs = divmod(self._segundos_grabacion, 60)
@@ -2460,6 +2475,8 @@ class ReportesFrame(ctk.CTkFrame):
             self._timer_id = self.after(1000, self._actualizar_crono)
 
     def _toggle_grabacion_desde_float(self):
+        if getattr(self, "_procesando_video", False) or getattr(self, "_transicion_grabacion", False) or self._cerrado:
+            return
         if self.grabador.estado == "grabando":
             self._pausar_grabacion()
         elif self.grabador.estado == "pausado":
@@ -2561,6 +2578,8 @@ class ReportesFrame(ctk.CTkFrame):
             return False
 
     def _on_finalizar(self):
+        if not preparar_salida(self):
+            return
         if self._conflicto_manual_pendiente:
             messagebox.showwarning(
                 "Cambios por integrar",
@@ -2645,6 +2664,8 @@ class ReportesFrame(ctk.CTkFrame):
         threading.Thread(target=_tarea, daemon=True).start()
 
     def _on_volver(self):
+        if not preparar_salida(self):
+            return
         # Asegurar que el indicador flotante de grabación se cierre al salir
         self._ocultar_indicador_rec()
         

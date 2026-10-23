@@ -3,6 +3,10 @@ import ast
 from pathlib import Path
 import os
 import subprocess
+import threading
+import time
+import uuid
+from datetime import datetime
 import tempfile
 import types
 import unittest
@@ -17,7 +21,8 @@ class RecordingRecoveryTests(unittest.TestCase):
     def recorder(self, folder):
         tree = ast.parse((REPO / "pc-app/core/recorder.py").read_text(encoding="utf-8"))
         klass = next(n for n in tree.body if isinstance(n, ast.ClassDef))
-        namespace = {"subprocess": subprocess, "os": os, "GrabadorAudio": object,
+        namespace = {"subprocess": subprocess, "os": os, "threading": threading, "time": time,
+                     "uuid": uuid, "datetime": datetime, "GrabadorAudio": object,
                      "CARPETA_TEMPORAL": folder, "CARPETA_LOGS": folder,
                      "obtener_ruta_ffmpeg": lambda: "fixture-ffmpeg"}
         exec(compile(ast.Module(body=[klass], type_ignores=[]), "recorder.py", "exec"), namespace)
@@ -48,6 +53,20 @@ class RecordingRecoveryTests(unittest.TestCase):
             recorder.rutas_video_temp = [str(Path(folder) / "missing.mp4")]
             with self.assertRaises(RuntimeError): recorder.detener()
             self.assertEqual(recorder.estado, "detenido")
+
+    def test_restore_callback_runs_after_video_and_audio_stop_before_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            recorder = self.recorder(folder)
+            recorder.estado = "grabando"
+            events = []
+            recorder._detener_ffmpeg_actual = Mock(side_effect=lambda: events.append("video-stopped"))
+            recorder.con_audio = True
+            recorder.grabador_audio = types.SimpleNamespace(
+                grabando=False, rutas_audio_temp=[], timestamps_inicio_fragmentos=[],
+                detener=lambda: events.append("audio-stopped"))
+            recorder._unir_fragmentos = lambda paths: events.append("export")
+            recorder.detener(al_detener_captura=lambda: events.append("show-app"))
+            self.assertEqual(events[:4], ["video-stopped", "audio-stopped", "show-app", "export"])
 
     def test_audio_device_failure_is_reported_and_resources_are_released(self):
         import threading
@@ -138,13 +157,18 @@ class RecordingRecoveryTests(unittest.TestCase):
     def test_stop_worker_recovers_buttons_in_both_modules_on_failure(self):
         for filename, klassname in (("bitacoras_frame.py", "BitacorasFrame"), ("reportes_frame.py", "ReportesFrame")):
             errors = Mock()
-            klass, _ = load_methods(filename, klassname, {"_detener_grabacion"},
-                                    {"messagebox": types.SimpleNamespace(showerror=errors)})
+            klass, _ = load_methods(filename, klassname, {"_detener_grabacion", "_mostrar_procesamiento_video"},
+                                    {"messagebox": types.SimpleNamespace(showerror=errors), "restaurar_aplicacion": Mock()})
             frame = klass()
             frame._cerrado = False
-            frame.grabador = types.SimpleNamespace(detener=Mock(side_effect=RuntimeError("fixture failure")))
+            order = []
+            def stop(al_detener_captura=None):
+                order.append("capture-stopped")
+                raise RuntimeError("fixture failure")
+            frame.grabador = types.SimpleNamespace(detener=Mock(side_effect=stop))
             frame._ocultar_indicador_rec = Mock()
             frame.controlador = Mock()
+            frame.controlador.deiconify.side_effect = lambda: order.append("show-app")
             frame.boton_grabar = Mock()
             frame.boton_detener = Mock()
             frame.switch_audio = Mock()
@@ -160,3 +184,37 @@ class RecordingRecoveryTests(unittest.TestCase):
             self.assertFalse(frame._procesando_video)
             frame._actualizar_botones_grabacion.assert_called_once()
             errors.assert_called_once()
+            self.assertEqual(order, ["capture-stopped", "show-app"])
+
+    def test_both_modules_hide_before_launch_and_keep_audio_choice(self):
+        for filename, klassname in (("bitacoras_frame.py", "BitacorasFrame"), ("reportes_frame.py", "ReportesFrame")):
+            order = []
+            def transition(owner, action, success, delay=0):
+                self.assertGreaterEqual(delay, 100)
+                action()
+                success()
+            klass, _ = load_methods(filename, klassname, {"_iniciar_grabacion"},
+                                    {"ejecutar_transicion": transition, "proteger_aplicacion": Mock()})
+            frame = klass()
+            frame.switch_audio = Mock()
+            frame.switch_audio.get.return_value = True
+            frame.controlador = Mock()
+            frame.controlador.withdraw.side_effect = lambda: order.append("hide-app")
+            frame.boton_grabar = Mock()
+            frame.grabador = Mock()
+            frame.grabador.iniciar.side_effect = lambda **kwargs: order.append("start-capture")
+            frame._mostrar_indicador_rec = lambda: order.append("show-indicator")
+            frame._actualizar_botones_grabacion = Mock()
+            frame._iniciar_grabacion()
+            self.assertEqual(order, ["hide-app", "start-capture", "show-indicator"])
+            self.assertTrue(frame._grabacion_con_audio)
+
+    def test_stop_during_pause_transition_is_queued_in_both_modules(self):
+        for filename, klassname in (("bitacoras_frame.py", "BitacorasFrame"), ("reportes_frame.py", "ReportesFrame")):
+            klass, _ = load_methods(filename, klassname, {"_detener_grabacion"})
+            frame = klass()
+            frame._transicion_grabacion = True
+            frame.grabador = Mock()
+            frame._detener_grabacion()
+            self.assertTrue(frame._detener_pendiente)
+            frame.grabador.detener.assert_not_called()

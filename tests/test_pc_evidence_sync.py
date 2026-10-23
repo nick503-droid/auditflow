@@ -10,6 +10,7 @@ from unittest.mock import Mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "pc-app"))
 from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
+from ui.recording_actions import captura_pendiente
 
 
 class Widget:
@@ -48,7 +49,7 @@ def load_methods(filename, class_name, method_names, extra=None):
         body=[n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in method_names])
     namespace = {"ctk": CTK, "IconButton": Widget, "IconLabel": Widget, "ListaEvidencias": ListaEvidencias,
         "firma_evidencias": firma_evidencias, "ordenar_evidencias": ordenar_evidencias,
-        "get_font": lambda **kwargs: None, "os": __import__("os"),
+        "get_font": lambda **kwargs: None, "os": __import__("os"), "captura_pendiente": captura_pendiente,
         "get_icon": lambda *args, **kwargs: None,
         "SURFACE_SECONDARY": "#eee", "BORDER": "#ddd", "TEXT_PRIMARY": "#333", "TEXT_SECONDARY": "#777", "TEXT_MUTED": "#777",
         "PRIMARY": "#047857", "PRIMARY_HOVER": "#065F46",

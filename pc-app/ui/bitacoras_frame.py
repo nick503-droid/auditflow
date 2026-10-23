@@ -1,4 +1,5 @@
 from ui.visual_widgets import IconButton, IconLabel
+from ui.recording_actions import ejecutar_transicion, excluir_de_captura, proteger_aplicacion, restaurar_aplicacion, captura_pendiente, preparar_salida, restaurar_tras_cierre
 """
 BitacorasFrame — Módulo de bitácoras para AuditFlow PC App.
 
@@ -791,6 +792,8 @@ class BitacorasFrame(ctk.CTkFrame):
         Valida que todas las filas con b_id tengan restaurante, hora y descripción.
         Si pasan la validación, llama al backend para marcar la bitácora como cerrada.
         """
+        if not preparar_salida(self):
+            return
         incompletas = []
         for i, fila in enumerate(self.filas):
             # Solo validar filas que ya tienen ID en el backend
@@ -1756,6 +1759,8 @@ class BitacorasFrame(ctk.CTkFrame):
         self.boton_subir.pack(pady=(0, 14), padx=16, fill="x")
 
     def _ocultar_panel_evidencia(self):
+        if captura_pendiente(self):
+            return
         self.frame_evidencia.grid_remove()
         self._panel_ev_visible = False
         self.grid_columnconfigure(1, minsize=0, weight=0)
@@ -1766,6 +1771,14 @@ class BitacorasFrame(ctk.CTkFrame):
     def _mostrar_panel_evidencia(self, codigo: str, evidencias: list, fila: dict | None = None):
         if self._cerrado:
             return
+        if captura_pendiente(self):
+            misma_fila = fila and (
+                (self._bitacora_local_id_panel is not None and fila.get("local_id") == self._bitacora_local_id_panel)
+                or (self._b_id_panel and fila.get("b_id") == self._b_id_panel)
+                or (self._codigo_panel_activo and fila.get("codigo") == self._codigo_panel_activo)
+            )
+            if (fila is not None and not misma_fila) or (fila is None and codigo != self._codigo_panel_activo):
+                return  # No adjuntar al registro equivocado mientras se exporta.
         self._codigo_panel_activo = codigo or ""
         if fila is None and codigo:
             fila = next((f for f in self.filas if f.get("codigo") == codigo), None)
@@ -2254,7 +2267,7 @@ class BitacorasFrame(ctk.CTkFrame):
             self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
 
     def _toggle_grabacion(self):
-        if getattr(self, "_procesando_video", False) or self._cerrado:
+        if getattr(self, "_procesando_video", False) or getattr(self, "_transicion_grabacion", False) or self._cerrado:
             return
         if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
@@ -2266,18 +2279,18 @@ class BitacorasFrame(ctk.CTkFrame):
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
         self._grabacion_con_audio = con_audio
-        try:
-            self.grabador.iniciar(con_audio=con_audio)
-        except Exception as exc:
-            messagebox.showerror("No se pudo iniciar la grabación", str(exc))
-            self._actualizar_botones_grabacion()
-            return
+        proteger_aplicacion(self)
         self.controlador.withdraw()
-        self._mostrar_indicador_rec()
-        self._actualizar_botones_grabacion()
+        self.boton_grabar.configure(state="disabled", text="Preparando grabación…")
+        def listo():
+            self._mostrar_indicador_rec()
+            self._actualizar_botones_grabacion()
+        ejecutar_transicion(self, lambda: self.grabador.iniciar(con_audio=con_audio), listo, delay=180)
 
     def _pausar_grabacion(self):
-        self.grabador.pausar()
+        ejecutar_transicion(self, self.grabador.pausar, self._mostrar_grabacion_pausada)
+
+    def _mostrar_grabacion_pausada(self):
         if getattr(self, "indicador", None):
             # Cambiar dot a ámbar y texto del botón a ▶️ (indica "click para reanudar")
             self.lbl_dot.configure(text="⏸️", text_color=STATUS["warning"]["text"])
@@ -2295,7 +2308,11 @@ class BitacorasFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _reanudar_grabacion(self):
-        self.grabador.reanudar()
+        proteger_aplicacion(self)
+        self.controlador.withdraw()
+        ejecutar_transicion(self, self.grabador.reanudar, self._mostrar_grabacion_reanudada, delay=180)
+
+    def _mostrar_grabacion_reanudada(self):
         if getattr(self, "indicador", None):
             # Restaurar estado visual a "Grabando"
             self.lbl_dot.configure(text="🔴", text_color=STATUS["error"]["text"])
@@ -2313,13 +2330,14 @@ class BitacorasFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
+        if getattr(self, "_transicion_grabacion", False):
+            self._detener_pendiente = True
+            return
         if getattr(self, "_procesando_video", False):
             return
         self._procesando_video = True
         # Ocultar el indicador de inmediato
         self._ocultar_indicador_rec()
-        self.controlador.deiconify()
-        self.controlador.lift()
         self.boton_grabar.configure(state="disabled", text="Procesando video…")
         self.boton_detener.configure(state="disabled")
 
@@ -2327,16 +2345,21 @@ class BitacorasFrame(ctk.CTkFrame):
         def procesar_video():
             ruta_final, error = None, None
             try:
-                ruta_final = self.grabador.detener()
+                ruta_final = self.grabador.detener(
+                    al_detener_captura=lambda: self.after(0, self._mostrar_procesamiento_video)
+                )
             except Exception as exc:
                 error = str(exc)
             if not self._cerrado:
                 self.after(0, finalizar, ruta_final, error)
+            else:
+                restaurar_tras_cierre(self)
 
         def finalizar(ruta_final, error):
             self._procesando_video = False
             if self._cerrado:
                 return
+            self._mostrar_procesamiento_video()
             self._actualizar_botones_grabacion()
             if error:
                 messagebox.showerror("Grabación no completada", error)
@@ -2345,6 +2368,12 @@ class BitacorasFrame(ctk.CTkFrame):
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()
+
+    def _mostrar_procesamiento_video(self):
+        if not self._cerrado:
+            restaurar_aplicacion(self)
+            self.controlador.deiconify()
+            self.controlador.lift()
 
     def _adjuntar_video_grabado(self, ruta_final: str):
         """Persiste el video y lo sincroniza cuando exista conexión."""
@@ -2366,17 +2395,12 @@ class BitacorasFrame(ctk.CTkFrame):
             print(f"[bitacoras] Error al registrar hotkeys: {e}")
 
         self.indicador = ctk.CTkToplevel(self.controlador)
+        self.indicador.withdraw()
         self.indicador.overrideredirect(True)
         self.indicador.attributes("-topmost", True)
         self.indicador.configure(fg_color=SURFACE)
         
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetParent(self.indicador.winfo_id())
-            # 0x00000011 = WDA_EXCLUDEFROMCAPTURE (solo Windows)
-            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-        except Exception:
-            pass
+        indicador_seguro = excluir_de_captura(self.indicador)
         ancho, alto = 260, 90
         x = self.indicador.winfo_screenwidth() - ancho - 40
         self.indicador.geometry(f"{ancho}x{alto}+{x}+40")
@@ -2411,6 +2435,8 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self.lbl_hotkeys.grid(row=1, column=0, columnspan=4, pady=(6, 10))
 
+        if indicador_seguro:
+            self.indicador.deiconify()
         self._actualizar_crono_rec()
 
     def _actualizar_crono_rec(self):
@@ -2578,6 +2604,8 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Navegación ───────────────────────────────────────────────────────────
 
     def _on_volver(self):
+        if not preparar_salida(self):
+            return
         self._ocultar_indicador_rec()
         self.stop_event.set()
         from ui.selection_frame import SelectionFrame
