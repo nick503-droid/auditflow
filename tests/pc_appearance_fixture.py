@@ -166,6 +166,15 @@ sample_reports = [
 sample_local_reports = [{"id": 7, "titulo": "Auditoría pendiente — revisión", "restaurante_id": restaurant["id"], "fecha_jornada": "2026-10-17"}]
 api.obtener_reportes.return_value = sample_reports
 
+def qa_rename_report(identifier, title, version=None, titulo_original=None):
+    row = next(r for r in sample_reports if r["id"] == identifier)
+    if titulo_original is not None and row["titulo"] != titulo_original:
+        return {"__conflict__": True, "actual": deepcopy(row)}
+    row.update(titulo=title, version=row.get("version", 1) + 1)
+    return deepcopy(row)
+
+api.renombrar_reporte_remoto.side_effect = qa_rename_report
+
 def descendants(widget):
     for child in widget.winfo_children():
         yield child
@@ -285,6 +294,34 @@ def admin_report_search():
     frame._limpiar_filtros_reportes()
     assert frame.lbl_resultados_reportes.cget("text") == "Reportes: 3 de 3"
     assert admin_module.obtener_reportes.call_count == calls  # Ninguna petición por filtrar.
+
+
+def rename_report_dialog():
+    admin_reports()
+    return app.frame_actual._renombrar_reporte(sample_reports[0])
+
+
+def rename_report_smoke():
+    original = deepcopy(sample_reports[0])
+    dialog = rename_report_dialog()
+    try:
+        entries = [w for w in descendants(dialog) if isinstance(w, ctk.CTkEntry)]
+        entry = entries[0]
+        save = next(w for w in descendants(dialog) if isinstance(w, ctk.CTkButton) and w.cget("text") == "Guardar nombre")
+        entry.delete(0, "end")
+        save.invoke()
+        assert dialog.winfo_exists()  # No cerrar ni escribir nombres vacíos.
+        entry.insert(0, "Nombre modificado en prueba")
+        save.invoke()
+        app.after(300, app.quit)
+        app.mainloop()
+        assert not dialog.winfo_exists()
+        assert sample_reports[0]["titulo"] == "Nombre modificado en prueba"
+        assert sample_reports[0]["evidencias"] == original["evidencias"]
+    finally:
+        sample_reports[0].clear()
+        sample_reports[0].update(original)
+        if dialog.winfo_exists(): dialog.destroy()
 
 def admin_dates():
     app.mostrar_frame(AdminFrame, usuario=user)
@@ -432,6 +469,7 @@ toolbar.pack(side="left", padx=10)
 qa_views = {
     "Inicio": home, "Editor de reportes": report, "Editor de bitácoras": logs,
     "Carga de bitácoras": loading_logs,
+    "Editar nombre de reporte": rename_report_dialog,
     "Administrar reportes": admin_reports, "Buscar bitácoras": admin_dates,
     "Detalle de bitácoras": admin, "Visor de evidencias": viewer, "Sistema": system_admin,
     "Probar acceso temporal": demo_login,
@@ -444,7 +482,7 @@ ctk.CTkLabel(toolbar, text="Demo: walter.demo / demo123", font=("Segoe UI", 11))
 if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
-    screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin, system_admin_dialogs, system_admin_mutations]
+    screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin, system_admin_dialogs, system_admin_mutations, rename_report_smoke]
     try:
         import tkcalendar
         screens.extend([calendar, admin_date_calendar])
@@ -516,7 +554,11 @@ else:
         app.title("AuditFlow — Inspección (DATOS DE PRUEBA)")
         ctk.set_appearance_mode("Light")
         app._update_appearance_button()
-        if "--loading" in sys.argv:
+        if "--rename" in sys.argv:
+            app.title("AuditFlow — Editar reporte (DATOS DE PRUEBA)")
+            selector_qa.set("Editar nombre de reporte")
+            rename_report_dialog()
+        elif "--loading" in sys.argv:
             app.title("AuditFlow — Carga progresiva (DATOS DE PRUEBA)")
             selector_qa.set("Carga de bitácoras")
             loading_logs()

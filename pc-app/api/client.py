@@ -677,27 +677,43 @@ def obtener_reporte(reporte_id: str):
         return None
 
 
-def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str, version: int = None) -> dict | None:
+def renombrar_reporte_remoto(reporte_id: str, nuevo_titulo: str, version: int = None,
+                             titulo_original: str | None = None) -> dict | None:
     """
     Cambia el título de un reporte en el backend.
     Retorna el reporte actualizado, {'__conflict__': True} en caso de 409,
     o None si hubo error de red.
     """
     try:
-        payload = {"titulo": nuevo_titulo}
-        if version is not None:
-            payload["version"] = int(version)
-            
-        response = requests.patch(
-            f"{API_BASE_URL}/reportes/{reporte_id}",
-            json=payload,
-            timeout=15
-        )
-        if response.status_code == 409:
-            return {"__conflict__": True,
-                    "mensaje": "El reporte fue modificado por otro usuario. Copia tus cambios, actualiza la vista y vuelve a intentarlo."}
-        response.raise_for_status()
-        return response.json()
+        nuevo_titulo = nuevo_titulo.strip()
+        if not nuevo_titulo or len(nuevo_titulo) > 255:
+            return None
+        for _ in range(3):
+            actual = obtener_reporte(reporte_id)
+            if not actual or actual.get("version") is None:
+                return None
+            if actual.get("titulo") == nuevo_titulo:
+                return actual  # Reintento tras una respuesta perdida: ya se guardó.
+            if titulo_original is None:
+                if version is not None and actual["version"] != version:
+                    return {"__conflict__": True, "actual": actual,
+                            "mensaje": "El reporte cambió desde que abriste la lista. Revisa su nombre actual."}
+                titulo_original = actual.get("titulo", "")
+            if actual.get("titulo", "") != titulo_original:
+                return {"__conflict__": True, "actual": actual,
+                        "mensaje": "El nombre cambió mientras lo editabas. Revisa el nombre actual antes de guardar."}
+            response = requests.patch(
+                f"{API_BASE_URL}/reportes/{reporte_id}",
+                json={"titulo": nuevo_titulo, "version": int(actual["version"])}, timeout=15,
+            )
+            if response.status_code == 409:
+                # Notas/evidencias pueden incrementar version sin cambiar el
+                # título. Releer y reintentar sólo si ese título sigue igual.
+                continue
+            response.raise_for_status()
+            return response.json()
+        return {"__conflict__": True,
+                "mensaje": "El reporte está recibiendo cambios. Tu nombre no se ha descartado; intenta guardar de nuevo."}
     except requests.exceptions.RequestException as e:
         print(f"[renombrar_reporte] Error al renombrar {reporte_id}: {e}")
         return None

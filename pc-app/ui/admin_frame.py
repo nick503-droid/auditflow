@@ -1,7 +1,7 @@
 from ui.visual_widgets import IconButton, IconLabel
 from ui.theme import APP_BACKGROUND, SURFACE, SURFACE_SECONDARY, BORDER, BORDER_FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_SOFT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, RADIUS_PANEL, RADIUS_BUTTON, get_font, STATUS
 import customtkinter as ctk
-from tkinter import messagebox, simpledialog, TclError
+from tkinter import messagebox, TclError
 from datetime import datetime
 import os
 import threading
@@ -412,18 +412,108 @@ class AdminFrame(ctk.CTkFrame):
         ).pack(side="left", padx=4)
 
     def _renombrar_reporte(self, reporte):
-        nuevo_titulo = simpledialog.askstring("Renombrar Reporte", "Ingresa el nuevo título:", initialvalue=reporte.get("titulo", ""))
-        if not nuevo_titulo or nuevo_titulo == reporte.get("titulo"):
-            return
-            
-        res = renombrar_reporte_remoto(reporte["id"], nuevo_titulo)
-        if res and isinstance(res, dict) and res.get("__conflict__"):
-            messagebox.showwarning("Conflicto", res["mensaje"])
-        elif res:
-            messagebox.showinfo("Éxito", "Reporte renombrado correctamente.")
-            self._abrir_vista_reportes()
-        else:
-            messagebox.showerror("Error", "No se pudo renombrar el reporte.")
+        from queue import Queue, Empty
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Editar nombre del reporte")
+        dialog.geometry("540x370")
+        dialog.minsize(460, 370)
+        dialog.configure(fg_color=SURFACE)
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        body = ctk.CTkFrame(dialog, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=24, pady=24)
+        IconLabel(body, text="✏️ Nombre del reporte", font=get_font(size=20, weight="bold"),
+                  text_color=TEXT_MAIN).pack(anchor="w")
+        ctk.CTkLabel(body, text="Cambia el nombre sin modificar las notas ni las evidencias.",
+                     text_color=TEXT_SEC, wraplength=390, justify="left").pack(anchor="w", pady=(6, 18))
+        entry = ctk.CTkEntry(body, height=42, font=get_font(size=14),
+                            placeholder_text="Nombre del reporte")
+        entry.pack(fill="x")
+        entry.insert(0, reporte.get("titulo") or "")
+        status = ctk.CTkLabel(body, text="", text_color=DANGER_COLOR, wraplength=390,
+                             justify="left", anchor="w", height=80)
+        status.pack(fill="x", pady=(8, 4))
+        actions = ctk.CTkFrame(body, fg_color="transparent")
+        actions.pack(side="bottom", fill="x")
+        state = {"busy": False, "titulo": reporte.get("titulo", ""), "version": reporte.get("version")}
+        results = Queue()
+
+        def cerrar():
+            if not state["busy"]:
+                dialog.destroy()
+
+        def recibir():
+            try:
+                result = results.get_nowait()
+            except Empty:
+                dialog.after(60, recibir)
+                return
+            state["busy"] = False
+            entry.configure(state="normal")
+            save.configure(state="normal", text="Guardar nombre")
+            cancel.configure(state="normal")
+            status.configure(text_color=DANGER_COLOR)
+            if not result:
+                status.configure(text="No se pudo guardar. Verifica la conexión e inténtalo de nuevo.")
+            elif result.get("__conflict__"):
+                actual = result.get("actual")
+                if actual:
+                    state.update(titulo=actual.get("titulo", ""), version=actual.get("version"))
+                    visible = state["titulo"][:100] + ("…" if len(state["titulo"]) > 100 else "")
+                    status.configure(text=f"Nombre actual: {visible}\nSi deseas reemplazarlo, pulsa «Guardar mi nombre».")
+                    save.configure(text="Guardar mi nombre")
+                else:
+                    status.configure(text=result.get("mensaje", "El reporte cambió. Intenta guardar de nuevo."))
+            else:
+                reporte.update(result)
+                for item, local in self._reportes_admin:
+                    if not local and item.get("id") == reporte["id"]:
+                        item.update(result)
+                self._reportes_visibles = None
+                if self.vista_actual == "REPORTES":
+                    self._aplicar_filtros_reportes()
+                dialog.destroy()
+
+        def guardar(event=None):
+            if state["busy"]:
+                return "break"
+            titulo = entry.get().strip()
+            if not titulo:
+                status.configure(text="Escribe un nombre para el reporte.")
+                return "break"
+            if len(titulo) > 255:
+                status.configure(text="El nombre admite un máximo de 255 caracteres.")
+                return "break"
+            state["busy"] = True
+            entry.configure(state="disabled")
+            save.configure(state="disabled", text="Guardando…")
+            cancel.configure(state="disabled")
+            status.configure(text="Verificando la versión actual del reporte…", text_color=TEXT_SEC)
+            version, original = state["version"], state["titulo"]
+            def worker():
+                try:
+                    result = renombrar_reporte_remoto(reporte["id"], titulo, version, titulo_original=original)
+                except Exception:
+                    result = None
+                results.put(result)
+            threading.Thread(target=worker, daemon=True).start()
+            dialog.after(60, recibir)
+            return "break"
+
+        cancel = IconButton(actions, text="Cancelar", command=cerrar, fg_color=SURFACE_SECONDARY,
+                            hover_color=BORDER, text_color=TEXT_MAIN, height=38)
+        cancel.pack(side="left")
+        save = IconButton(actions, text="Guardar nombre", command=guardar, height=38,
+                          fg_color=PRIMARY, hover_color=PRIMARY_HOVER, text_color="#FFFFFF")
+        save.pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", cerrar)
+        dialog.bind("<Escape>", lambda event: cerrar())
+        entry.bind("<Return>", guardar)
+        def enfocar():
+            entry.focus_set()
+            entry.select_range(0, "end")
+        dialog.after(100, enfocar)
+        return dialog
 
     def _eliminar_reporte(self, reporte, es_local):
         if not messagebox.askyesno("Confirmar Peligro", "¿Eliminar este reporte permanentemente?\nEsta acción no se puede deshacer."):
