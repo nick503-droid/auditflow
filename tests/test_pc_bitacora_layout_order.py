@@ -262,5 +262,28 @@ class FlexibleDescriptionTests(unittest.TestCase):
         self.assertIsNone(self.box.after(50, self.box._check_if_scrollbars_needed))
         self.assertFalse(any("_check_if_scrollbars_needed" in command for command in self.box._tclCommands))
 
+    def test_240_descriptions_resize_without_recursive_scrollbar_drawing(self):
+        scroll = ctk.CTkScrollableFrame(self.root)
+        scroll.pack(fill="both", expand=True)
+        scroll.grid_columnconfigure(0, weight=1)
+        boxes = []
+        try:
+            for i in range(240):
+                box = AutoHeightTextbox(scroll, wrap="word", font=("Segoe UI", 13))
+                box.grid(row=i, column=0, sticky="ew")
+                box.insert("1.0", "Descripción larga sin datos reales. " * (i % 6 + 1))
+                boxes.append(box)
+            for mode in ("Dark", "Light"):
+                ctk.set_appearance_mode(mode)
+                for width in (1120, 760, 1280):
+                    self.root.geometry(f"{width}x700")
+                    self.settle()
+            for box in boxes:
+                self.assertEqual(box._textbox.cget("yscrollcommand"), "")
+                self.assertEqual(box._textbox.cget("xscrollcommand"), "")
+                self.assertEqual(box._textbox.yview(), (0.0, 1.0))
+        finally:
+            scroll.destroy()
+
 
 if __name__ == "__main__": unittest.main()

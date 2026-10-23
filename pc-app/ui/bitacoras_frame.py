@@ -192,7 +192,6 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # Carga inmediata + polling
         self._carga_inicial()
-        self._iniciar_polling()
 
     # ─── Catálogos ────────────────────────────────────────────────────────────
 
@@ -1162,19 +1161,49 @@ class BitacorasFrame(ctk.CTkFrame):
 
     def _carga_inicial(self):
         """Full-fetch al arrancar. Establece el cursor de timestamp para los deltas posteriores."""
+        self._carga_overlay = ctk.CTkFrame(self, fg_color=SURFACE)
+        self._carga_overlay.grid(row=2, column=0, sticky="nsew", padx=12, pady=(2, 10))
+        ctk.CTkLabel(self._carga_overlay, text="Cargando bitácoras…",
+                     text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=12)
+        for _ in range(7):
+            ctk.CTkFrame(self._carga_overlay, height=48,
+                         fg_color=SURFACE_SECONDARY, corner_radius=8).pack(fill="x", padx=12, pady=5)
         def _worker():
             try:
                 bitacoras = obtener_bitacoras_por_fecha(self.fecha_actual)
                 if bitacoras is not None:
                     self.timestamp_ultimo_sync = cursor_bitacoras_servidor(bitacoras)
-                    self.after(0, self._reconciliar_con_datos, bitacoras)
-                else:
-                    self.after(0, self._agregar_fila_vacia)
             except Exception as e:
                 print(f"[carga_inicial] Error: {e}")
-                self.after(0, self._agregar_fila_vacia)
+                bitacoras = None
+            if not self._cerrado:
+                self.after(0, self._presentar_carga_inicial, bitacoras)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _presentar_carga_inicial(self, bitacoras):
+        if self._cerrado:
+            return
+        try:
+            if bitacoras is not None:
+                self._reconciliar_con_datos(bitacoras)
+            else:
+                self._agregar_fila_vacia()
+        finally:
+            self.after(50, self._terminar_carga_inicial, 0)
+
+    def _terminar_carga_inicial(self, estable):
+        if self._cerrado:
+            return
+        pendientes = any(
+            getattr(f.get("_widgets", {}).get("descripcion"), "_resize_job", None)
+            for f in self.filas
+        )
+        if pendientes or estable < 2:
+            self.after(50, self._terminar_carga_inicial, 0 if pendientes else estable + 1)
+            return
+        self._carga_overlay.destroy()
+        self._iniciar_polling()
 
     # ─── Polling ──────────────────────────────────────────────────────────────
 
@@ -2123,7 +2152,9 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Grabación ────────────────────────────────────────────────────────────
 
     def _registrar_hotkeys(self):
-        keyboard.add_hotkey("ctrl+k+l", self._toggle_grabacion)
+        self._hotkey_grabacion = keyboard.add_hotkey(
+            "ctrl+k+l", lambda: self.after(0, self._toggle_grabacion)
+        )
 
     def destroy(self):
         if not self._cerrado:
@@ -2140,7 +2171,7 @@ class BitacorasFrame(ctk.CTkFrame):
         # del worker, evitando que el hilo quede vivo hasta el próximo ciclo.
         self.stop_event.set()
         try:
-            keyboard.remove_hotkey("ctrl+k+l")
+            keyboard.remove_hotkey(self._hotkey_grabacion)
         except Exception:
             pass
         if getattr(self, "grabador", None) and self.grabador.estado != "detenido":
@@ -2174,6 +2205,8 @@ class BitacorasFrame(ctk.CTkFrame):
             self.boton_detener.pack(after=self.boton_grabar, pady=(0, 8), padx=16, fill="x")
 
     def _toggle_grabacion(self):
+        if getattr(self, "_procesando_video", False) or self._cerrado:
+            return
         if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
         elif self.grabador.estado == "grabando":
@@ -2184,7 +2217,12 @@ class BitacorasFrame(ctk.CTkFrame):
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
         self._grabacion_con_audio = con_audio
-        self.grabador.iniciar(con_audio=con_audio)
+        try:
+            self.grabador.iniciar(con_audio=con_audio)
+        except Exception as exc:
+            messagebox.showerror("No se pudo iniciar la grabación", str(exc))
+            self._actualizar_botones_grabacion()
+            return
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
         self._actualizar_botones_grabacion()
@@ -2226,6 +2264,9 @@ class BitacorasFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
+        if getattr(self, "_procesando_video", False):
+            return
+        self._procesando_video = True
         # Ocultar el indicador de inmediato
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
@@ -2235,11 +2276,23 @@ class BitacorasFrame(ctk.CTkFrame):
 
         # Ejecutar FFmpeg (unión de video/audio) en un hilo para no congelar la UI
         def procesar_video():
-            ruta_final = self.grabador.detener()
-            if ruta_final and os.path.exists(ruta_final):
-                self.after(0, self._adjuntar_video_grabado, ruta_final)
-            else:
-                self.after(0, self._actualizar_botones_grabacion)
+            ruta_final, error = None, None
+            try:
+                ruta_final = self.grabador.detener()
+            except Exception as exc:
+                error = str(exc)
+            if not self._cerrado:
+                self.after(0, finalizar, ruta_final, error)
+
+        def finalizar(ruta_final, error):
+            self._procesando_video = False
+            if self._cerrado:
+                return
+            self._actualizar_botones_grabacion()
+            if error:
+                messagebox.showerror("Grabación no completada", error)
+            elif ruta_final and os.path.exists(ruta_final):
+                self._adjuntar_video_grabado(ruta_final)
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()
@@ -2259,8 +2312,7 @@ class BitacorasFrame(ctk.CTkFrame):
 
         import keyboard
         try:
-            keyboard.add_hotkey("ctrl+k+l", lambda: self.after(0, self._toggle_grabacion))
-            keyboard.add_hotkey("ctrl+f8",  lambda: self.after(0, self._detener_grabacion))
+            self._hotkey_detener = keyboard.add_hotkey("ctrl+f8", lambda: self.after(0, self._detener_grabacion))
         except Exception as e:
             print(f"[bitacoras] Error al registrar hotkeys: {e}")
 
@@ -2322,7 +2374,9 @@ class BitacorasFrame(ctk.CTkFrame):
     def _ocultar_indicador_rec(self):
         import keyboard
         try:
-            keyboard.unhook_all()
+            if getattr(self, "_hotkey_detener", None):
+                keyboard.remove_hotkey(self._hotkey_detener)
+                self._hotkey_detener = None
         except Exception:
             pass
         if getattr(self, "_timer_id_rec", None):

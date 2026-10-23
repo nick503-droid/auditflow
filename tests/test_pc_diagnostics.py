@@ -11,6 +11,17 @@ from core.runtime_diagnostics import instalar_diagnostico
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_logging_failure_does_not_escape_tk_exception_handler(self):
+        from unittest.mock import Mock, patch
+        owner = Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            close = instalar_diagnostico(owner, folder)
+            try:
+                with patch.object(logging.getLogger("AuditFlow"), "error", side_effect=RecursionError), patch("os.write"):
+                    owner.report_callback_exception(RecursionError, RecursionError("fixture"), None)
+            finally:
+                close()
+
     def test_exceptions_are_logged_and_hooks_are_restored(self):
         class Owner:
             def report_callback_exception(self, *args): pass

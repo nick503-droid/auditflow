@@ -23,8 +23,10 @@ class GrabadorAudio:
         
         self._lock = threading.Lock()
         self._primer_frame_fragmento = False
+        self.error = None
 
     def iniciar(self, identificador_base: str):
+        self.error = None
         self.identificador_base = identificador_base
         self.indice_fragmento = 0
         self.rutas_audio_temp = []
@@ -63,6 +65,21 @@ class GrabadorAudio:
         self.rutas_audio_temp.append(ruta_salida)
 
     def _grabar(self):
+        try:
+            self._capturar()
+        except Exception as exc:
+            self.error = exc
+        finally:
+            self.grabando = False
+            for recurso, accion in ((self.stream, "stop_stream"), (self.stream, "close"),
+                                     (self.pyaudio_instance, "terminate")):
+                if recurso is not None:
+                    try:
+                        getattr(recurso, accion)()
+                    except Exception:
+                        pass
+
+    def _capturar(self):
         self.pyaudio_instance = pyaudio.PyAudio()
 
         wasapi_info = self.pyaudio_instance.get_host_api_info_by_type(pyaudio.paWASAPI)
@@ -102,12 +119,11 @@ class GrabadorAudio:
             
         if not self.pausado and frames_actuales:
             self._guardar_fragmento(frames_actuales)
-
-        self.stream.stop_stream()
-        self.stream.close()
-        self.pyaudio_instance.terminate()
-
     def detener(self):
         self.grabando = False
         if self.hilo:
             self.hilo.join(timeout=5)
+            if self.hilo.is_alive():
+                raise RuntimeError("El dispositivo de audio no respondió al detenerse")
+        if self.error:
+            raise RuntimeError(f"Falló la captura de audio: {self.error}") from self.error

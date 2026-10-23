@@ -10,6 +10,16 @@ class AutoHeightTextbox(ctk.CTkTextbox):
         self._resize_job = None
         self._last_text_width = None
         super().__init__(master, height=min_height, activate_scrollbars=False, **kwargs)
+        # CTk crea y conecta las barras aunque estén ocultas. Su set() llama
+        # update_idletasks(): con muchas filas anida dibujos hasta agotar la pila.
+        # Esta vista usa exclusivamente el scroll exterior, no esas barras.
+        self._textbox.configure(xscrollcommand="", yscrollcommand="")
+        # CTkTextbox._draw también repinta esas barras al cambiar la altura o
+        # el tema. No basta con desconectar los comandos de Text: impedir el
+        # vaciado síncrono de eventos sólo en sus dos canvas ocultos evita que
+        # un ajuste de altura entre al siguiente ajuste antes de terminar.
+        for scrollbar in (self._x_scrollbar, self._y_scrollbar):
+            scrollbar._canvas.update_idletasks = lambda: None
         self._textbox.bind("<Configure>", self._on_text_configure, add="+")
         self._textbox.bind("<<Modified>>", self._on_text_modified, add="+")
         self._textbox.edit_modified(False)
@@ -55,7 +65,8 @@ class AutoHeightTextbox(ctk.CTkTextbox):
             altura = max(self._min_height, math.ceil(self._reverse_widget_scaling(pixeles + padding + 2) + margen * 2))
             if self.cget("height") != altura:
                 self.configure(height=altura)
-            texto.yview_moveto(0)
+            if texto.yview()[0] != 0:
+                texto.yview_moveto(0)
         except TclError:
             pass  # El padre pudo destruirse al salir de la vista.
 

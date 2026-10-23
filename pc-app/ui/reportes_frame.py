@@ -2178,6 +2178,8 @@ class ReportesFrame(ctk.CTkFrame):
             self.boton_detener.pack(pady=(0, 6), padx=16, fill="x")
 
     def _toggle_grabacion(self):
+        if getattr(self, "_procesando_video", False) or self._cerrado:
+            return
         if self.grabador.estado == "detenido":
             self._iniciar_grabacion()
         elif self.grabador.estado == "grabando":
@@ -2187,7 +2189,12 @@ class ReportesFrame(ctk.CTkFrame):
 
     def _iniciar_grabacion(self):
         con_audio = bool(self.switch_audio.get())
-        self.grabador.iniciar(con_audio=con_audio)
+        try:
+            self.grabador.iniciar(con_audio=con_audio)
+        except Exception as exc:
+            messagebox.showerror("No se pudo iniciar la grabación", str(exc))
+            self._actualizar_botones_grabacion()
+            return
         self.controlador.withdraw()
         self._mostrar_indicador_rec()
         self._actualizar_botones_grabacion()
@@ -2224,6 +2231,10 @@ class ReportesFrame(ctk.CTkFrame):
         self._actualizar_botones_grabacion()
 
     def _detener_grabacion(self):
+        if getattr(self, "_procesando_video", False):
+            return
+        self._procesando_video = True
+        con_audio = bool(self.switch_audio.get())
         self._ocultar_indicador_rec()
         self.controlador.deiconify()
         self.controlador.lift()
@@ -2231,16 +2242,23 @@ class ReportesFrame(ctk.CTkFrame):
         self.boton_detener.configure(state="disabled")
 
         def procesar_video():
-            ruta_final = self.grabador.detener()
-            if ruta_final and os.path.exists(ruta_final):
-                con_audio = bool(self.switch_audio.get())
-                self.after(
-                    0,
-                    lambda: self._registrar_evidencia_para_sincronizar(
-                        ruta_final, con_audio, self._prefijo_nube()
-                    ),
-                )
-            self.after(0, self._actualizar_botones_grabacion)
+            ruta_final, error = None, None
+            try:
+                ruta_final = self.grabador.detener()
+            except Exception as exc:
+                error = str(exc)
+            if not self._cerrado:
+                self.after(0, finalizar, ruta_final, error)
+
+        def finalizar(ruta_final, error):
+            self._procesando_video = False
+            if self._cerrado:
+                return
+            self._actualizar_botones_grabacion()
+            if error:
+                messagebox.showerror("Grabación no completada", error)
+            elif ruta_final and os.path.exists(ruta_final):
+                self._registrar_evidencia_para_sincronizar(ruta_final, con_audio, self._prefijo_nube())
 
         import threading
         threading.Thread(target=procesar_video, daemon=True).start()

@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from core.audio_recorder import GrabadorAudio
 import sys
+import uuid
 from core.ffmpeg_path import obtener_ruta_ffmpeg
 
 
@@ -58,13 +59,16 @@ class GrabadorPantalla:
         ]
 
         self.archivo_log = open(ruta_log, "w")
-        self.proceso_video = subprocess.Popen(
-            comando,
-            stdin=subprocess.PIPE,
-            stdout=self.archivo_log,
-            stderr=self.archivo_log,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
-        )
+        try:
+            self.proceso_video = subprocess.Popen(
+                comando, stdin=subprocess.PIPE, stdout=self.archivo_log,
+                stderr=self.archivo_log,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception:
+            self.archivo_log.close()
+            self.archivo_log = None
+            raise
         self.timestamps_video_inicio.append(time.time())
         self.rutas_video_temp.append(ruta_fragmento)
         return ruta_fragmento
@@ -95,8 +99,23 @@ class GrabadorPantalla:
             self.archivo_log = None
 
     def iniciar(self, con_audio: bool = False) -> str:
+        if self.estado != "detenido":
+            raise RuntimeError("Ya hay una grabación en curso")
+        try:
+            return self._iniciar_captura(con_audio)
+        except Exception:
+            self._detener_ffmpeg_actual()
+            if self.grabador_audio:
+                try:
+                    self.grabador_audio.detener()
+                except Exception:
+                    pass
+            self.estado = "detenido"
+            raise
+
+    def _iniciar_captura(self, con_audio: bool = False) -> str:
         self.con_audio = con_audio
-        self._identificador_base = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._identificador_base = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
         self.rutas_video_temp = []
         self.timestamps_video_inicio = []
         
@@ -132,6 +151,19 @@ class GrabadorPantalla:
             self.estado = "grabando"
 
     def detener(self) -> str | None:
+        try:
+            return self._finalizar_grabacion()
+        except Exception as exc:
+            raise RuntimeError(
+                f"No se pudo completar el video: {exc}. Los fragmentos se conservan en {CARPETA_TEMPORAL}"
+            ) from exc
+        finally:
+            try:
+                self._detener_ffmpeg_actual()
+            finally:
+                self.estado = "detenido"
+
+    def _finalizar_grabacion(self) -> str | None:
         if self.estado == "detenido":
             return None
 
@@ -200,10 +232,13 @@ class GrabadorPantalla:
                             stdout=log_mux,
                             stderr=log_mux,
                             creationflags=subprocess.CREATE_NO_WINDOW,
+                            timeout=600,
                         )
-                    # Si un codec/dispositivo concreto falla, conservar el video
-                    # en lugar de generar una grabación final corrupta.
-                    rutas_para_concat.append(ruta_mux if resultado.returncode == 0 and os.path.exists(ruta_mux) else ruta_vid)
+                    # No eliminar las fuentes ni publicar un video sin el audio
+                    # solicitado si FFmpeg no pudo completar la unión.
+                    if resultado.returncode != 0 or not os.path.exists(ruta_mux) or os.path.getsize(ruta_mux) == 0:
+                        raise RuntimeError(f"Falló la unión de audio/video; consulta {ruta_log_mux}")
+                    rutas_para_concat.append(ruta_mux)
                 else:
                     rutas_para_concat.append(ruta_vid)
         else:
@@ -232,18 +267,23 @@ class GrabadorPantalla:
                 "-movflags", "+faststart",
                 self.ruta_final
             ]
-            subprocess.run(
-                comando_concat, 
-                stdout=subprocess.DEVNULL, 
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
+            ruta_log_concat = os.path.join(CARPETA_LOGS, f"concat_{self._identificador_base}.log")
+            with open(ruta_log_concat, "w", encoding="utf-8") as log_concat:
+                resultado = subprocess.run(
+                    comando_concat, stdout=log_concat, stderr=log_concat,
+                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=600,
+                )
+            if resultado.returncode != 0:
+                raise RuntimeError(f"Falló la unión de segmentos; consulta {ruta_log_concat}")
             
             # Limpiar concat list
             if os.path.exists(ruta_concat):
                 os.remove(ruta_concat)
 
-        # 5. Limpieza general
+        if not self.ruta_final or not os.path.isfile(self.ruta_final) or os.path.getsize(self.ruta_final) == 0:
+            raise RuntimeError("FFmpeg no generó un video final válido")
+
+        # 5. Limpiar únicamente después de confirmar la salida satisfactoria.
         for fragmento in self.rutas_video_temp:
             if fragmento != self.ruta_final and os.path.exists(fragmento):
                 os.remove(fragmento)

@@ -27,8 +27,23 @@ def instalar_diagnostico(app, directory=None, timeout=15):
     previous_thread = threading.excepthook
     previous_tk = app.report_callback_exception
 
+    registrando = threading.local()
+
     def error(tipo, valor, tb):
-        logger.error("Excepción no controlada", exc_info=(tipo, valor, tb))
+        if getattr(registrando, "activo", False):
+            return
+        registrando.activo = True
+        try:
+            logger.error("Excepción no controlada", exc_info=(tipo, valor, tb))
+        except Exception:
+            # También puede fallar logging si Tk ya agotó la pila. No lanzar
+            # otra excepción desde report_callback_exception hacia mainloop.
+            try:
+                os.write(2, b"AuditFlow: no se pudo registrar una excepcion de interfaz.\n")
+            except Exception:
+                pass
+        finally:
+            registrando.activo = False
 
     sys.excepthook = error
     threading.excepthook = lambda args: error(args.exc_type, args.exc_value, args.exc_traceback)
