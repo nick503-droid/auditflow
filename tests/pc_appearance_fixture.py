@@ -172,6 +172,49 @@ sample_reports = [
 sample_local_reports = [{"id": 7, "titulo": "Auditoría pendiente — revisión", "restaurante_id": restaurant["id"], "fecha_jornada": "2026-10-17"}]
 api.obtener_reportes.return_value = sample_reports
 
+if "--attachments" in sys.argv:
+    # Demo interactiva: adjuntos en RAM y copias únicamente en una carpeta
+    # temporal. Ninguna ruta Documents/AuditFlow ni SQLite real se utiliza.
+    import tempfile
+    import itertools
+    from datetime import datetime, timezone
+    qa_attachment_folder = tempfile.TemporaryDirectory(prefix="auditflow-demo-adjuntos-")
+    qa_attachment_rows = []
+    qa_attachment_ids = itertools.count(101)
+    qa_db = sys.modules["db.local_db"]
+    def qa_attachment_path(*args):
+        return str(Path(qa_attachment_folder.name) / args[-1])
+    def qa_add_report(borrador, ruta, con_audio, carpeta_destino=""):
+        row = {"id": next(qa_attachment_ids), "reporte_borrador_id": borrador,
+               "ruta_local": ruta, "con_audio": con_audio,
+               "agregado_en": datetime.now(timezone.utc).isoformat()}
+        qa_attachment_rows.append(row)
+        return row["id"]
+    def qa_add_log(ruta, con_audio, carpeta_destino, **keys):
+        row = {"id": next(qa_attachment_ids), "ruta_local": ruta,
+               "con_audio": con_audio, "agregado_en": datetime.now(timezone.utc).isoformat(), **keys}
+        qa_attachment_rows.append(row)
+        return row["id"]
+    qa_db.ruta_evidencia_reporte.side_effect = qa_attachment_path
+    qa_db.ruta_evidencia_bitacora.side_effect = qa_attachment_path
+    qa_db.agregar_evidencia.side_effect = qa_add_report
+    qa_db.agregar_evidencia_bitacora_pendiente.side_effect = qa_add_log
+    qa_db.obtener_evidencias.side_effect = lambda borrador: [dict(row) for row in qa_attachment_rows if row.get("reporte_borrador_id") == borrador]
+    qa_db.obtener_evidencias_bitacora_pendientes.side_effect = lambda **keys: [dict(row) for row in qa_attachment_rows
+        if "reporte_borrador_id" not in row and (not keys or any(value and row.get(key) == value for key, value in keys.items()))]
+    qa_db.obtener_bitacora_local.return_value = None
+    api.obtener_evidencias_bitacora.return_value = evidence
+    ReportesFrame._polling_evidencias_worker = lambda self: None
+    ReportesFrame._solicitar_sincronizacion_evidencias = lambda self: self._actualizar_estado_lbl("offline")
+    BitacorasFrame._solicitar_sincronizacion_evidencias = lambda self: None
+    def qa_remove_attachment(frame, identifier):
+        qa_attachment_rows[:] = [row for row in qa_attachment_rows if row["id"] != identifier]
+        frame._refrescar_lista_evidencias()
+    ReportesFrame._eliminar_evidencia_local = qa_remove_attachment
+    BitacorasFrame._eliminar_evidencia_local = qa_remove_attachment
+    qa_network_guard = patch("requests.sessions.Session.request", side_effect=RuntimeError("Demo aislada: no se permite tráfico HTTP."))
+    qa_network_guard.start()
+
 def qa_rename_report(identifier, title, version=None, titulo_original=None):
     row = next(r for r in sample_reports if r["id"] == identifier)
     if titulo_original is not None and row["titulo"] != titulo_original:
@@ -579,6 +622,11 @@ else:
             app.title("AuditFlow — Carga progresiva (DATOS DE PRUEBA)")
             selector_qa.set("Carga de bitácoras")
             loading_logs()
+        elif "--attachments" in sys.argv:
+            app.title("AuditFlow — Adjuntar evidencia (DATOS DE PRUEBA · SIN SERVIDOR)")
+            selector_qa.set("Editor de reportes")
+            report()
+            app.after(400, lambda: app.frame_actual._on_adjuntar())
         else:
             selector_qa.set("Sistema")
             system_admin()
