@@ -33,6 +33,7 @@ export class MobileSyncController {
     @Param('codigo') codigo: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('con_audio') conAudioStr?: string,
+    @Body('agregado_en') agregadoEn?: string,
   ) {
     if (!file) {
       throw new BadRequestException('Se requiere un archivo.');
@@ -52,6 +53,7 @@ export class MobileSyncController {
         codigo,
         nombreTemp,
         conAudio,
+        agregadoEn,
       );
       return resultado;
     } catch (error) {

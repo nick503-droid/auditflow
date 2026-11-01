@@ -6,6 +6,7 @@ import { EvidenciaBitacora } from '../bitacoras/entities/evidencia-bitacora.enti
 import { Reporte } from '../reportes/entities/reporte.entity';
 import { EvidenciaReporte } from '../evidencias-reporte/entities/evidencia-reporte.entity';
 import { StorageService } from '../../common/storage/storage.service';
+import { registrarEvidenciaOrdenada } from '../../common/evidence-order';
 
 @Injectable()
 export class MobileSyncService {
@@ -113,7 +114,9 @@ export class MobileSyncService {
    * Mueve el archivo de /temp a su carpeta final y lo vincula a la BD.
    * Aplica Rollback físico si la BD falla.
    */
-  async vincularEvidencia(codigo: string, nombreTemp: string, conAudio: boolean) {
+  async vincularEvidencia(codigo: string, nombreTemp: string, conAudio: boolean, agregadoEn?: string) {
+    // Clientes anteriores no envían fecha: usar la recepción, antes de mover.
+    const fechaAdicion = agregadoEn || new Date().toISOString();
     const info = await this.validarCodigo(codigo);
     
     let prefijoDestino = '';
@@ -149,25 +152,20 @@ export class MobileSyncService {
     // 2. Insertar en la Base de Datos con Rollback en caso de falla
     try {
       if (info.tipo === 'bitacora') {
-        const nueva = this.evidenciasBitacoraRepo.create({
+        await registrarEvidenciaOrdenada(this.evidenciasBitacoraRepo, this.bitacorasRepo, info.id, 'bitacora_id', {
           bitacora_id: info.id,
           evidencia_url: urlFinal,
           con_audio: conAudio,
-        });
-        await this.evidenciasBitacoraRepo.save(nueva);
+        }, fechaAdicion);
 
-        // La app Android entra por mobile-sync y crea la evidencia directamente
-        // en la tabla hija. Sin este touch, updated_at de la bitácora no cambia
-        // y el delta polling de las PC nunca recibe el nuevo conteo.
-        await this.bitacorasRepo.update(info.id, { updated_at: new Date() });
+        // El helper usa el mismo orden y touch transaccional que las altas PC.
       } else {
-        const nueva = this.evidenciasReporteRepo.create({
+        await registrarEvidenciaOrdenada(this.evidenciasReporteRepo, this.reportesRepo, info.id, 'reporte_id', {
           reporte_id: info.id,
           evidencia_url: urlFinal,
           con_audio: conAudio,
           orden_reproduccion: 0,
-        });
-        await this.evidenciasReporteRepo.save(nueva);
+        }, fechaAdicion);
       }
       
       return { exito: true, evidencia_url: urlFinal };

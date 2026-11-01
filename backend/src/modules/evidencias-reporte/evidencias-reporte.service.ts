@@ -8,6 +8,7 @@ import { CreateEvidenciaReporteDto } from './dto/create-evidencias-reporte.dto';
 import { UpdateEvidenciasReporteDto } from './dto/update-evidencias-reporte.dto';
 import { StorageService } from '../../common/storage/storage.service';
 import { ConfigService } from '@nestjs/config';
+import { registrarEvidenciaOrdenada } from '../../common/evidence-order';
 
 @Injectable()
 export class EvidenciasReporteService {
@@ -27,21 +28,21 @@ export class EvidenciasReporteService {
   findByReporte(reporte_id: string) {
     return this.evidenciasRepo.find({
       where: { reporte_id },
-      order: { orden_reproduccion: 'ASC' },
+      order: { agregado_en: 'ASC', secuencia_adicion: 'ASC', orden_reproduccion: 'ASC', id: 'ASC' },
     });
   }
 
   async create(dto: CreateEvidenciaReporteDto) {
-    const nueva = this.evidenciasRepo.create(dto);
-    const evidencia = await this.evidenciasRepo.save(nueva);
-    // Las evidencias son hijas del reporte. Tocar el padre permite que las
-    // demás PC detecten el cambio también al consultar sus listados/deltas.
-    await this.reportesRepo.update(dto.reporte_id, { updated_at: new Date() });
-    return evidencia;
+    const { agregado_en, ...values } = dto;
+    return registrarEvidenciaOrdenada(
+      this.evidenciasRepo, this.reportesRepo, dto.reporte_id, 'reporte_id', values, agregado_en,
+    );
   }
 
   async update(id: string, dto: UpdateEvidenciasReporteDto) {
-    await this.evidenciasRepo.update(id, dto);
+    // La incorporación es inmutable, también desde PATCH.
+    const { agregado_en: _agregado, ...changes } = dto;
+    await this.evidenciasRepo.update(id, changes);
     return this.findOne(id);
   }
 

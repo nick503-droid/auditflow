@@ -414,6 +414,7 @@ const dispararGaleria = () => {
 };
 
 const onArchivoSeleccionado = async (event) => {
+  const agregadoEn = new Date().toISOString();
   const file = event.target.files[0];
   if (!file) return;
 
@@ -426,6 +427,7 @@ const onArchivoSeleccionado = async (event) => {
     const formData = new FormData();
     formData.append('file', file, file.name);
     formData.append('con_audio', isVideo ? 'true' : 'false');
+    formData.append('agregado_en', agregadoEn);
     
     await axios.post(`${getBackendUrl()}/mobile-sync/link/${cod}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -523,6 +525,7 @@ const capturarEvidencia = async () => {
  * Sube el archivo y lo vincula al destino previamente validado
  */
 const procesarYSubir = async (photoData) => {
+  const agregadoEn = new Date().toISOString();
   msjOverlay.value = 'Subiendo evidencia...';
   subiendo.value = true; // Bloqueo UI INMEDIATO
   
@@ -540,6 +543,7 @@ const procesarYSubir = async (photoData) => {
     const formData = new FormData();
     formData.append('file', blob, nombreArchivo);
     formData.append('con_audio', 'false'); // Se puede expandir en el futuro
+    formData.append('agregado_en', agregadoEn);
     
     // 3. Subir y vincular en una sola transacción en el backend
     await axios.post(`${getBackendUrl()}/mobile-sync/link/${cod}`, formData, {

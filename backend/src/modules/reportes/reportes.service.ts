@@ -6,6 +6,7 @@ import { CreateReporteDto } from './dto/create-reporte.dto';
 import { UpdateReporteDto } from './dto/update-reporte.dto';
 import { EvidenciaReporte } from '../evidencias-reporte/entities/evidencia-reporte.entity';
 import { StorageService } from '../../common/storage/storage.service';
+import { ordenarAdjuntas } from '../../common/evidence-order';
 
 const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1
 const DIAS_VIGENCIA_CODIGO = 5;
@@ -22,18 +23,19 @@ export class ReportesService {
     private readonly storageService: StorageService,
   ) { }
 
-  findAll() {
-    return this.reportesRepo.find({
+  async findAll() {
+    const rows = await this.reportesRepo.find({
       relations: ['usuario', 'restaurante', 'evidencias'],
       order: { fecha_jornada: 'DESC' },
     });
+    return (rows || []).map(row => ordenarAdjuntas(row)!);
   }
 
-  findOne(id: string) {
-    return this.reportesRepo.findOne({
+  async findOne(id: string) {
+    return ordenarAdjuntas(await this.reportesRepo.findOne({
       where: { id },
       relations: ['usuario', 'restaurante', 'evidencias'],
-    });
+    }));
   }
 
   // El método es asíncrono para esperar la generación del código único

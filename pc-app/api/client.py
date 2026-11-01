@@ -503,7 +503,7 @@ def obtener_bitacoras_todas():
         return []
 
 
-def adjuntar_evidencia_por_codigo(codigo: str, evidencia_url: str, con_audio: bool):
+def adjuntar_evidencia_por_codigo(codigo: str, evidencia_url: str, con_audio: bool, agregado_en=None):
     """
     Vincula una evidencia a una bitácora existente usando el código corto.
     Retorna (data, error) para facilitar el manejo en la UI.
@@ -513,6 +513,8 @@ def adjuntar_evidencia_por_codigo(codigo: str, evidencia_url: str, con_audio: bo
             "evidencia_url": evidencia_url,
             "con_audio": con_audio
         }
+        if agregado_en:
+            payload["agregado_en"] = agregado_en
         response = requests.patch(
             f"{API_BASE_URL}/bitacoras/codigo/{codigo}/evidencia",
             json=payload,

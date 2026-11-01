@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import contextlib
 
 # ─── Rutas de infraestructura ────────────────────────────────────────────────
@@ -278,6 +278,13 @@ def inicializar_db():
             except Exception:
                 pass  # columna ya existe — ignorar
 
+        # No fechar registros antiguos; las nuevas incorporaciones reciben UTC.
+        for tabla in ("evidencia_borrador", "evidencia_bitacora_pendiente"):
+            columnas = {fila["name"] for fila in conexion.execute(f"PRAGMA table_info({tabla})")}
+            if "agregado_en" not in columnas:
+                conexion.execute(f"ALTER TABLE {tabla} ADD COLUMN agregado_en TEXT")
+        conexion.execute("""CREATE TABLE IF NOT EXISTS evidencia_orden_reloj (
+            id INTEGER PRIMARY KEY CHECK(id=1), ultimo_ms INTEGER NOT NULL)""")
         conexion.commit()
 
 
@@ -408,6 +415,19 @@ def actualizar_notas(borrador_id: int, notas: str, marcar_pendiente: bool = Fals
         conexion.commit()
 
 
+def _nueva_fecha_evidencia(conexion):
+    """UTC persistente y creciente en esta PC, incluso tras vaciar la cola.
+
+    El llamador mantiene BEGIN IMMEDIATE para serializar altas concurrentes.
+    No depende de COUNT ni cambia en reintentos.
+    """
+    anterior = conexion.execute("SELECT ultimo_ms FROM evidencia_orden_reloj WHERE id=1").fetchone()
+    instante = max(time.time_ns() // 1_000_000, (anterior[0] + 1) if anterior else 0)
+    conexion.execute("INSERT INTO evidencia_orden_reloj VALUES (1, ?) "
+                     "ON CONFLICT(id) DO UPDATE SET ultimo_ms=excluded.ultimo_ms", (instante,))
+    return datetime.fromtimestamp(instante / 1000, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def agregar_evidencia(
     borrador_id: int,
     ruta_local: str,
@@ -427,18 +447,14 @@ def agregar_evidencia(
                       Usado por AdminFrame para navegar los archivos.
     """
     with db_session() as conexion:
-
-        # El siguiente número de orden es "cuántas evidencias ya tiene, + 1"
-        cantidad = conexion.execute(
-            "SELECT COUNT(*) as total FROM evidencia_borrador WHERE reporte_borrador_id = ?",
-            (borrador_id,),
-        ).fetchone()["total"]
+        conexion.execute("BEGIN IMMEDIATE")
+        agregado_en = _nueva_fecha_evidencia(conexion)
 
         cursor = conexion.execute(
             """INSERT INTO evidencia_borrador
-               (reporte_borrador_id, ruta_local, con_audio, orden_reproduccion, carpeta_destino)
-               VALUES (?, ?, ?, ?, ?)""",
-            (borrador_id, ruta_local, int(con_audio), cantidad + 1, carpeta_destino),
+               (reporte_borrador_id, ruta_local, con_audio, orden_reproduccion, carpeta_destino, agregado_en)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (borrador_id, ruta_local, int(con_audio), 0, carpeta_destino, agregado_en),
         )
         conexion.commit()
         return cursor.lastrowid
@@ -523,7 +539,8 @@ def validar_acceso_offline(username: str, password: str) -> tuple[dict | None, s
 def obtener_evidencias(borrador_id: int) -> list[dict]:
     with db_session() as conexion:
         filas = conexion.execute(
-            "SELECT * FROM evidencia_borrador WHERE reporte_borrador_id = ? ORDER BY orden_reproduccion",
+            "SELECT * FROM evidencia_borrador WHERE reporte_borrador_id = ? "
+            "ORDER BY agregado_en, orden_reproduccion, id",
             (borrador_id,),
         ).fetchall()
         return [dict(f) for f in filas]
@@ -798,6 +815,8 @@ def agregar_evidencia_bitacora_pendiente(
 ) -> int:
     """Registra en disco+SQLite una evidencia pendiente de una bitácora."""
     with db_session() as conexion:
+        conexion.execute("BEGIN IMMEDIATE")
+        agregado_en = _nueva_fecha_evidencia(conexion)
         if bitacora_local_id is not None:
             bitacora = conexion.execute(
                 "SELECT b_id, codigo FROM bitacora_pendiente WHERE id=?",
@@ -809,8 +828,8 @@ def agregar_evidencia_bitacora_pendiente(
         cursor = conexion.execute(
             """INSERT INTO evidencia_bitacora_pendiente
                (bitacora_local_id, b_id, codigo, ruta_local, con_audio,
-                carpeta_destino, evidencia_url, creado_en)
-               VALUES (?, ?, ?, ?, ?, ?, '', ?)""",
+                carpeta_destino, evidencia_url, creado_en, agregado_en)
+               VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)""",
             (
                 bitacora_local_id,
                 b_id or "",
@@ -819,6 +838,7 @@ def agregar_evidencia_bitacora_pendiente(
                 int(con_audio),
                 carpeta_destino or "",
                 datetime.now().isoformat(),
+                agregado_en,
             ),
         )
         conexion.commit()
@@ -844,7 +864,7 @@ def obtener_evidencias_bitacora_pendientes(
     with db_session() as conexion:
         filas = conexion.execute(
             f"""SELECT * FROM evidencia_bitacora_pendiente
-                {where} ORDER BY creado_en, id""",
+                {where} ORDER BY agregado_en, creado_en, id""",
             parametros,
         ).fetchall()
         return [dict(fila) for fila in filas]

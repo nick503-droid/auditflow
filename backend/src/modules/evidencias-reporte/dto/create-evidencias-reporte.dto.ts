@@ -1,4 +1,4 @@
-import { IsUUID, IsString, IsNotEmpty, IsBoolean, IsOptional, IsInt } from 'class-validator';
+import { IsUUID, IsString, IsNotEmpty, IsBoolean, IsOptional, IsInt, IsISO8601 } from 'class-validator';
 
 export class CreateEvidenciaReporteDto {
   @IsUUID()
@@ -14,4 +14,8 @@ export class CreateEvidenciaReporteDto {
 
   @IsInt()
   orden_reproduccion: number;
+
+  @IsOptional()
+  @IsISO8601()
+  agregado_en?: string;
 }

@@ -159,6 +159,12 @@ import ui.main_window as main_module
 main_module.set_appearance = theme.set_appearance
 
 evidence = [{"id": str(i), "evidencia_url": f"http://fixture.invalid/evidencia_{i}." + ("jpg" if i % 2 == 0 else "mp4"), "creado_en": "2026-10-16T10:02:00"} for i in range(4)]
+if "--evidence-order" in sys.argv:
+    evidence = [dict(row, agregado_en=f"2026-11-01T10:00:{i * 3:02d}.000Z", secuencia_adicion=str(i + 1))
+                for i, row in enumerate(evidence)][::-1]
+    pending = [{"id": 101, "ruta_local": "pending.jpg", "agregado_en": "2026-11-01T10:00:01.000Z"}]
+    sys.modules["db.local_db"].obtener_evidencias.return_value = pending
+    sys.modules["db.local_db"].obtener_evidencias_bitacora_pendientes.return_value = pending
 sample_reports = [
     {"id": "qa-report", "titulo": "Auditoría de prueba — revisión del área de atención", "fecha_jornada": "2026-10-17", "restaurante": restaurant, "evidencias": evidence},
     {"id": "qa-report-2", "titulo": "Inspección de cierre — ejemplo sin datos reales", "fecha_jornada": "2026-10-16", "restaurante": restaurant_other, "evidencias": evidence[:2]},
@@ -483,14 +489,23 @@ if "--smoke" in sys.argv:
     errors = []
     app.report_callback_exception = lambda *args: errors.append(str(args[1]))
     screens = [home, report, logs, admin, admin_reports, admin_report_search, admin_dates, viewer, system_admin, system_admin_dialogs, system_admin_mutations, rename_report_smoke]
+    if "--evidence-order" in sys.argv:
+        screens = [report, logs, viewer]
     try:
         import tkcalendar
-        screens.extend([calendar, admin_date_calendar])
+        if "--evidence-order" not in sys.argv:
+            screens.extend([calendar, admin_date_calendar])
     except ImportError:
         pass
     for screen in screens:
         screen()
         original_frame = app.frame_actual
+        if "--evidence-order" in sys.argv and screen in (report, logs):
+            view = original_frame._lista_evidencias if screen is report else original_frame._lista_ev_tarjetas
+            cards = sorted(view.tarjetas.values(), key=lambda entry: entry[3])
+            assert len(cards) == 5
+            assert cards[1][2].get("tipo", cards[1][2].get("_tipo")) == "local"
+            stable_evidence_cards = tuple(view.widgets())
         has_calendar = screen in (calendar, admin_date_calendar)
         selected_date = app._qa_calendar.selection_get() if has_calendar else None
         has_date_filter = screen in (admin_dates, admin_date_calendar)
@@ -506,6 +521,8 @@ if "--smoke" in sys.argv:
             app._toggle_appearance()
             app._toggle_appearance()
             assert app.frame_actual is original_frame
+            if "--evidence-order" in sys.argv and screen in (report, logs):
+                assert tuple(view.widgets()) == stable_evidence_cards
             if has_calendar:
                 assert app._qa_calendar.selection_get() == selected_date
             if has_date_filter:

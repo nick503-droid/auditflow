@@ -70,11 +70,13 @@ export class BitacorasController {
     @Param('codigo') codigo: string,
     @Body('evidencia_url') evidencia_url: string,
     @Body('con_audio') con_audio: boolean,
+    @Body('agregado_en') agregado_en?: string,
   ) {
     const bitacoraActualizada = await this.bitacorasService.adjuntarEvidenciaPorCodigo(
       codigo,
       evidencia_url,
-      con_audio
+      con_audio,
+      agregado_en,
     );
 
     if (!bitacoraActualizada) {

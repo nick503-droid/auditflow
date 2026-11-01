@@ -1813,16 +1813,17 @@ class ReportesFrame(ctk.CTkFrame):
             self._lista_evidencias = ListaEvidencias(self.frame_lista_evidencias)
         evidencias_locales = obtener_evidencias(self.borrador["id"])
         items = []
-        for tipo, evidencias in (("nube", ordenar_evidencias(getattr(self, "evidencias_nube", []))),
-                                 ("local", evidencias_locales)):
-            for i, ev in enumerate(evidencias, start=1):
-                ruta = ev.get("evidencia_url", "") if tipo == "nube" else ev["ruta_local"]
-                nombre = ruta.split("/")[-1] if tipo == "nube" else os.path.basename(ruta)
-                datos = {"tipo": tipo, "id": ev.get("id"), "ruta": ruta,
-                         "nombre": nombre or f"Nube_{i}",
-                         "etiqueta": f"☁️ Nube {i}" if tipo == "nube" else f"Ev. {i}",
-                         "color": TEXT_MUTED if tipo == "nube" else STATUS["info"]["text"]}
-                items.append(((tipo, ev.get("id") or ruta), (ruta, datos["nombre"]), datos))
+        combinadas = [dict(ev, _tipo="nube") for ev in getattr(self, "evidencias_nube", [])]
+        combinadas += [dict(ev, _tipo="local") for ev in evidencias_locales]
+        for i, ev in enumerate(ordenar_evidencias(combinadas), start=1):
+            tipo = ev["_tipo"]
+            ruta = ev.get("evidencia_url", "") if tipo == "nube" else ev["ruta_local"]
+            nombre = ruta.split("/")[-1] if tipo == "nube" else os.path.basename(ruta)
+            datos = {"tipo": tipo, "id": ev.get("id"), "ruta": ruta,
+                     "nombre": nombre or f"Nube_{i}",
+                     "etiqueta": f"☁️ Nube {i}" if tipo == "nube" else f"Ev. {i}",
+                     "color": TEXT_MUTED if tipo == "nube" else STATUS["info"]["text"]}
+            items.append(((tipo, ev.get("id") or ruta), (ruta, datos["nombre"]), datos))
 
         def crear(datos):
             ev_id = datos["id"]
@@ -2381,6 +2382,7 @@ class ReportesFrame(ctk.CTkFrame):
                 "evidencia_url": url_subida,
                 "con_audio": bool(evidencia.get("con_audio")),
                 "orden_reproduccion": evidencia.get("orden_reproduccion", 0),
+                "agregado_en": evidencia.get("agregado_en"),
             })
             if not creada:
                 print("[reportes] El archivo subió, pero no se pudo vincular la evidencia.")

@@ -1815,12 +1815,20 @@ class BitacorasFrame(ctk.CTkFrame):
         
         hay_local = bool(self.evidencias_locales_panel)
 
+        combinadas = [dict(ev, _tipo="nube") for ev in evidencias]
+        urls_nube = {ev.get("evidencia_url") for ev in evidencias if ev.get("evidencia_url")}
+        combinadas += [dict(ev, _tipo="local") for ev in self.evidencias_locales_panel
+                       if not ev.get("vinculada") and ev.get("evidencia_url") not in urls_nube]
         items_nube = [
-            (ev.get("id") or ev.get("evidencia_url"), firma_evidencias([ev]), ev)
-            for ev in ordenar_evidencias(evidencias)
+            ((ev["_tipo"], ev.get("id") or ev.get("evidencia_url")), firma_evidencias([ev]), dict(ev, _indice=i))
+            for i, ev in enumerate(ordenar_evidencias(combinadas), start=1)
         ]
         self._lista_ev_tarjetas.actualizar(
-            items_nube, self._agregar_chip_evidencia,
+            items_nube,
+            lambda ev: self._agregar_chip_evidencia_local(ev, ev["_indice"])
+                       if ev["_tipo"] == "local" else self._agregar_chip_evidencia(ev),
+            actualizar=lambda card, ev: card._label_etiqueta.configure(text=f"Ev. Local {ev['_indice']}")
+                       if ev["_tipo"] == "local" else None,
             vacio=lambda: IconLabel(
                 self.frame_lista_ev, text="Sin evidencias aún",
                 text_color=TEXT_MUTED, font=get_font(size=10),
@@ -1828,19 +1836,9 @@ class BitacorasFrame(ctk.CTkFrame):
         )
         self._checkboxes_desc_bit = [card._descarga for card in self._lista_ev_tarjetas.widgets()
                                      if hasattr(card, "_descarga")]
-        items_locales = [
-            (ev["id"], ev.get("ruta_local", ""), {"evidencia": ev, "indice": idx})
-            for idx, ev in enumerate(self.evidencias_locales_panel, start=1)
-        ]
-        self._lista_local_tarjetas.actualizar(
-            items_locales,
-            lambda datos: self._agregar_chip_evidencia_local(datos["evidencia"], datos["indice"]),
-            actualizar=lambda card, datos: card._label_etiqueta.configure(text=f"Ev. Local {datos['indice']}"),
-        )
-        if not hay_local:
-            self.frame_lista_local.pack_forget()
-        else:
-            self.frame_lista_local.pack(fill="x", padx=16, pady=(0, 8))
+        # Una sola lista cronológica: pasar de local a nube no cambia su orden.
+        self._lista_local_tarjetas.actualizar([], lambda datos: None)
+        self.frame_lista_local.pack_forget()
 
         if hay_local:
             self.label_archivo.configure(
@@ -1907,7 +1905,7 @@ class BitacorasFrame(ctk.CTkFrame):
     def _agregar_chip_evidencia_local(self, evidencia: dict, idx: int):
         ruta = evidencia.get("ruta_local", "")
         nombre = os.path.basename(ruta)
-        chip = ctk.CTkFrame(self.frame_lista_local, fg_color=SURFACE_SECONDARY, corner_radius=6, border_width=1, border_color=BORDER)
+        chip = ctk.CTkFrame(self.frame_lista_ev, fg_color=SURFACE_SECONDARY, corner_radius=6, border_width=1, border_color=BORDER)
         
         top_row = ctk.CTkFrame(chip, fg_color="transparent")
         top_row.pack(fill="x", padx=4, pady=2)
@@ -2540,7 +2538,7 @@ class BitacorasFrame(ctk.CTkFrame):
                             actualizar_url_evidencia_bitacora(item["id"], url)
 
                         data, error = adjuntar_evidencia_por_codigo(
-                            codigo, url, bool(item.get("con_audio"))
+                            codigo, url, bool(item.get("con_audio")), agregado_en=item.get("agregado_en")
                         )
                         if error:
                             print(f"[bitacoras-evidencia] No se pudo vincular {ruta}: {error}")

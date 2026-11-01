@@ -7,6 +7,7 @@ import { CreateBitacoraDto } from './dto/create-bitacora.dto';
 import { UpdateBitacoraDto } from './dto/update-bitacora.dto';
 import { StorageService } from '../../common/storage/storage.service';
 import { ConfigService } from '@nestjs/config';
+import { ordenarAdjuntas, registrarEvidenciaOrdenada } from '../../common/evidence-order';
 
 const CARACTERES_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1, se confunden al leer
 const DIAS_VIGENCIA_CODIGO = 5;
@@ -22,11 +23,12 @@ export class BitacorasService {
     private configService: ConfigService,
   ) { }
 
-  findAll() {
-    return this.bitacorasRepo.find({
+  async findAll() {
+    const rows = await this.bitacorasRepo.find({
       relations: { usuario: true, restaurante: true, evidencias: true },
       order: { fecha: 'DESC', created_at: 'ASC', id: 'ASC' },
     });
+    return (rows || []).map(row => ordenarAdjuntas(row)!);
   }
 
   /**
@@ -34,16 +36,17 @@ export class BitacorasService {
    * usuario ni restaurante — esto es lo que llena la cuadrícula
    * compartida entre todos los videovigilantes.
    */
-  findPorFecha(fecha: string) {
+  async findPorFecha(fecha: string) {
     // Usamos string crudo en lugar de new Date(fecha) para evitar 
     // que la zona horaria atrase el día por accidente.
-    return this.bitacorasRepo.find({
+    const rows = await this.bitacorasRepo.find({
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       where: { fecha: fecha as any },
       relations: { usuario: true, restaurante: true, evidencias: true },
       // La hora del evento es texto libre (p. ej. California). No ordena filas.
       order: { created_at: 'ASC', id: 'ASC' },
     });
+    return (rows || []).map(row => ordenarAdjuntas(row)!);
   }
 
   /**
@@ -52,20 +55,21 @@ export class BitacorasService {
    * Se incluyen los registros con deleted_at != NULL para que el cliente
    * pueda retirarlos de la UI sin necesidad de un full-fetch.
    */
-  findDesde(fecha: string, desde: Date) {
-    return this.bitacorasRepo.find({
+  async findDesde(fecha: string, desde: Date) {
+    const rows = await this.bitacorasRepo.find({
       withDeleted: true,          // incluir soft-deletes para que el cliente los retire
       where: { fecha: fecha as any, updated_at: MoreThan(desde) },
       relations: { usuario: true, restaurante: true, evidencias: true },
       order: { created_at: 'ASC', id: 'ASC' },
     });
+    return (rows || []).map(row => ordenarAdjuntas(row)!);
   }
 
-  findOne(id: string) {
-    return this.bitacorasRepo.findOne({
+  async findOne(id: string) {
+    return ordenarAdjuntas(await this.bitacorasRepo.findOne({
       where: { id },
       relations: { usuario: true, restaurante: true, evidencias: true },
-    });
+    }));
   }
 
   findPorCodigo(codigo: string) {
@@ -84,7 +88,7 @@ export class BitacorasService {
     if (!bitacora) return [];
     return this.evidenciasRepo.find({
       where: { bitacora_id: bitacora.id },
-      order: { creado_en: 'ASC' },
+      order: { agregado_en: 'ASC', secuencia_adicion: 'ASC', creado_en: 'ASC', id: 'ASC' },
     });
   }
 
@@ -179,6 +183,7 @@ export class BitacorasService {
     codigo: string,
     evidencia_url: string,
     con_audio: boolean,
+    agregado_en?: string,
   ) {
     const bitacora = await this.findPorCodigo(codigo);
     if (!bitacora) {
@@ -196,18 +201,13 @@ export class BitacorasService {
     }
 
     // Insertar en la tabla hija — no sobreescribe, agrega una nueva fila
-    const nueva = this.evidenciasRepo.create({
+    await registrarEvidenciaOrdenada(this.evidenciasRepo, this.bitacorasRepo, bitacora.id, 'bitacora_id', {
       bitacora_id: bitacora.id,
       evidencia_url,
       con_audio,
-    });
-    await this.evidenciasRepo.save(nueva);
+    }, agregado_en);
 
-    // La evidencia vive en una tabla hija, por lo que su inserción no modifica
-    // automáticamente la fecha de la bitácora. Forzamos el touch para que el
-    // endpoint delta (/since/:timestamp) la devuelva a los clientes PC.
-    await this.tocarBitacora(bitacora.id);
-
+    // El helper toca updated_at del padre en la misma transacción para deltas.
     return this.findOne(bitacora.id);
   }
 

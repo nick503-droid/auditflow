@@ -1,12 +1,26 @@
 """Reconciliación de tarjetas sin destruir controles que no cambiaron."""
+from datetime import datetime, timezone
+
+
+def clave_orden_evidencia(ev):
+    fecha = ev.get("agregado_en")
+    if fecha:
+        try:
+            dt = datetime.fromisoformat(str(fecha).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (1, dt.timestamp(), int(ev.get("secuencia_adicion") or ev.get("id") or 0)
+                    if str(ev.get("secuencia_adicion") or ev.get("id") or "0").isdigit() else 0,
+                    str(ev.get("id") or ""))
+        except (ValueError, TypeError, OverflowError):
+            pass
+    # Compatibilidad: no inventar fechas para evidencias anteriores.
+    return (0, ev.get("orden_reproduccion") or 0, str(ev.get("creado_en") or ""),
+            str(ev.get("id") or ev.get("evidencia_url") or ev.get("ruta_local") or ""))
 
 
 def ordenar_evidencias(evidencias):
-    return sorted(evidencias or [], key=lambda ev: (
-        ev.get("orden_reproduccion") or 0,
-        str(ev.get("creado_en") or ""),
-        str(ev.get("id") or ev.get("evidencia_url") or ev.get("ruta_local") or ""),
-    ))
+    return sorted(evidencias or [], key=clave_orden_evidencia)
 
 
 def firma_evidencias(evidencias):
@@ -15,6 +29,7 @@ def firma_evidencias(evidencias):
         str(ev.get("id") or ""), str(ev.get("evidencia_url") or ""),
         str(ev.get("ruta_local") or ""), str(ev.get("creado_en") or ""),
         str(ev.get("orden_reproduccion") or 0), bool(ev.get("con_audio")),
+        str(ev.get("agregado_en") or ""), str(ev.get("secuencia_adicion") or ""),
     ) for ev in (evidencias or [])))
 
 

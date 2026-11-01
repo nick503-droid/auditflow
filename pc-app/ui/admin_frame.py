@@ -897,7 +897,8 @@ class AdminFrame(ctk.CTkFrame):
         evidencias_list = []
         if fila.get("evidencia_url"):
             evidencias_list.append({"url": fila["evidencia_url"], "id": None, "tipo": "legacy"})
-        for ev in fila.get("evidencias", []):
+        from ui.evidence_list import ordenar_evidencias
+        for ev in ordenar_evidencias(fila.get("evidencias", [])):
             if ev.get("evidencia_url"):
                 evidencias_list.append({"url": ev["evidencia_url"], "id": ev["id"], "tipo": "bitacora"})
                 
@@ -1081,7 +1082,8 @@ class AdminFrame(ctk.CTkFrame):
             text_color=TEXT_MAIN
         ).pack(side="left")
 
-        evidencias = reporte.get("evidencias", [])
+        from ui.evidence_list import ordenar_evidencias
+        evidencias = ordenar_evidencias(reporte.get("evidencias", []))
         urls_ev = [ev.get("evidencia_url") or ev.get("ruta_local") for ev in evidencias if ev.get("evidencia_url") or ev.get("ruta_local")]
 
         # Carpeta: Documents/AuditFlow/Reportes/[CODIGO] Titulo/
