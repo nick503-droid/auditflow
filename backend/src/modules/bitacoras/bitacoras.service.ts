@@ -139,9 +139,15 @@ export class BitacorasService {
   async update(id: string, dto: UpdateBitacoraDto) {
     const bitacora = await this.findOne(id);
     if (!bitacora) return null;
-    const { client_id: _clientId, ...camposActualizables } = dto;
-    Object.assign(bitacora, camposActualizables);
-    await this.bitacorasRepo.save(bitacora);
+    const { client_id: _clientId, version: _version, ...camposActualizables } = dto;
+    // findOne carga restaurante/usuario. Guardar esa entidad con una FK nueva
+    // deja dos valores contradictorios y TypeORM prioriza la relación antigua.
+    // Actualizar sólo el PATCH evita restaurar el restaurante previo y no
+    // reescribe otros campos leídos antes de una edición de otra PC.
+    // TypeORM mantiene updated_at/version; no copiar la versión del cliente.
+    if (Object.values(camposActualizables).some((valor) => valor !== undefined)) {
+      await this.bitacorasRepo.update(id, camposActualizables);
+    }
     return this.findOne(id);
   }
 
