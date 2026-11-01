@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 from pathlib import Path
 
 datas = []
@@ -11,6 +11,12 @@ binaries = [('ffmpeg.exe', '.')]
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# tkdnd incluye DLL/Tcl nativos: deben viajar también en el .exe portable.
+tmp_dnd = collect_all('tkinterdnd2')
+datas += tmp_dnd[0] + copy_metadata('tkinterdnd2')
+binaries += tmp_dnd[1]
+hiddenimports += tmp_dnd[2]
 
 
 a = Analysis(

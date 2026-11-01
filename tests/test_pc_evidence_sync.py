@@ -228,7 +228,7 @@ class FrameRegressionTests(unittest.TestCase):
 
     def test_bitacora_batch_refreshes_once_and_starts_one_sync(self):
         frame, env = self.bitacora()
-        env["filedialog"] = types.SimpleNamespace(askopenfilenames=lambda **kwargs: ["one.jpg", "two.jpg", "three.mp4"])
+        env["seleccionar_evidencias"] = Mock(return_value=["one.jpg", "two.jpg", "three.mp4"])
         frame._registrar_evidencia_local_bitacora = Mock(return_value=True)
         frame._refrescar_lista_evidencias = Mock()
         frame._solicitar_sincronizacion_evidencias = Mock()

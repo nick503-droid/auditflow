@@ -38,6 +38,8 @@ if __name__ == "__main__":
                 raise RuntimeError("FFmpeg empaquetado no inicia")
             probe = ctk.CTk()
             probe.withdraw()
+            from ui.evidence_picker import activar_arrastre
+            activar_arrastre(probe)
             Calendar(probe)
             probe.update_idletasks()
             probe.destroy()

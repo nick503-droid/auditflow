@@ -13,3 +13,4 @@ pyaudiowpatch==0.2.12.8
 opencv-python==5.0.0.93
 tkcalendar==1.6.1
 babel==2.18.0
+tkinterdnd2==0.6.4

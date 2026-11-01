@@ -46,6 +46,7 @@ from core.sync_helper import actualizar_indicador_sync
 from core.thumbnail_service import MiniaturasUI
 from core.bitacora_order import clave_orden_bitacora, cursor_bitacoras_servidor
 from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
+from ui.evidence_picker import seleccionar_evidencias
 from ui.auto_height_textbox import AutoHeightTextbox
 from db.local_db import (
     inicializar_db,
@@ -2465,12 +2466,26 @@ class BitacorasFrame(ctk.CTkFrame):
     # ─── Adjuntar / Subir evidencia ───────────────────────────────────────────
 
     def _on_adjuntar(self):
-        rutas = filedialog.askopenfilenames(
-            title="Selecciona las evidencias",
-            filetypes=[("Todos los archivos", "*.*")],
-        )
-        if not rutas:
+        if self._cerrado:
             return
+        fila_destino = next((fila for fila in self.filas if
+            (self._bitacora_local_id_panel is not None and fila.get("local_id") == self._bitacora_local_id_panel)
+            or (self._b_id_panel and fila.get("b_id") == self._b_id_panel)
+            or (self._codigo_panel_activo and fila.get("codigo") == self._codigo_panel_activo)), None)
+        if fila_destino is None:
+            messagebox.showwarning("Bitácora requerida", "Selecciona la fila antes de adjuntar evidencia.")
+            return
+        rutas = seleccionar_evidencias(self)
+        if not rutas or self._cerrado:
+            return
+        if not any(fila is fila_destino for fila in self.filas):
+            messagebox.showwarning("Bitácora no disponible", "La fila se eliminó mientras seleccionabas los archivos. No se adjuntó ningún archivo.")
+            return
+        # El polling puede haber asignado código/UUID durante el diálogo.
+        # Conservar la fila original; no usar otra selección del panel.
+        self._bitacora_local_id_panel = fila_destino.get("local_id")
+        self._b_id_panel = fila_destino.get("b_id", "")
+        self._codigo_panel_activo = fila_destino.get("codigo", "")
         agregadas = 0
         for ruta in rutas:
             agregadas += bool(self._registrar_evidencia_local_bitacora(

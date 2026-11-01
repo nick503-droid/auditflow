@@ -27,6 +27,7 @@ import subprocess
 import threading
 import time
 import shutil
+import sqlite3
 import requests
 
 from ui.icons import get_icon
@@ -63,6 +64,7 @@ from core.recorder import GrabadorPantalla, es_archivo_grabado
 from core.sync_helper import actualizar_indicador_reporte
 from core.thumbnail_service import MiniaturasUI
 from ui.evidence_list import ListaEvidencias, firma_evidencias, ordenar_evidencias
+from ui.evidence_picker import seleccionar_evidencias
 
 
 # ─── Tipos de archivo soportados ─────────────────────────────────────────────
@@ -2097,34 +2099,37 @@ class ReportesFrame(ctk.CTkFrame):
         self.after(0, _finalizar)
 
     def _on_adjuntar(self):
-
-        """
-        Permite adjuntar un archivo existente.
-        Lo copia a ~/Documents/AuditFlow/Reportes/<título>/ para mantener
-        la estructura de carpetas del Sprint 3.
-        """
-        ruta_original = filedialog.askopenfilename(
-            title="Selecciona la evidencia",
-            filetypes=TIPOS_EVIDENCIA,
-        )
-        if not ruta_original:
+        """Buscar o soltar varios archivos; confirmar y registrar un solo lote."""
+        if self._cerrado or not self.borrador:
             return
-
+        borrador_id = self.borrador["id"]
+        rutas = seleccionar_evidencias(self)
+        if (not rutas or self._cerrado or not self.borrador
+                or self.borrador.get("id") != borrador_id):
+            return
+        import uuid
         con_audio = bool(self.switch_audio.get())
-        nombre_archivo = os.path.basename(ruta_original)
-        ruta_destino = self._ruta_destino_evidencia(nombre_archivo)
-
-        # Copiar solo si la fuente es distinta al destino
-        if os.path.abspath(ruta_original) != os.path.abspath(ruta_destino):
+        agregadas, errores = 0, []
+        for ruta_original in rutas:
             try:
+                # Cada adjunto tiene copia propia: no sobrescribir otro archivo
+                # con el mismo nombre ni reutilizar una ruta en cola de subida.
+                base, extension = os.path.splitext(os.path.basename(ruta_original))
+                nombre_local = f"{uuid.uuid4()}_{base[:120]}{extension[:16]}"
+                ruta_destino = self._ruta_destino_evidencia(nombre_local)
                 shutil.copy2(ruta_original, ruta_destino)
-            except OSError as e:
-                messagebox.showerror("Error al copiar", str(e))
-                return
-
-        self._registrar_evidencia_para_sincronizar(
-            ruta_destino, con_audio, self._prefijo_nube()
-        )
+                self._registrar_evidencia_para_sincronizar(
+                    ruta_destino, con_audio, self._prefijo_nube(), refrescar=False, iniciar_sync=False,
+                )
+                agregadas += 1
+            except (OSError, ValueError, sqlite3.Error) as error:
+                errores.append(f"{os.path.basename(ruta_original)}: {error}")
+        if agregadas:
+            self._refrescar_lista_evidencias()
+            self._actualizar_estado_lbl("syncing" if self.reporte_remoto_id else "offline")
+            self._solicitar_sincronizacion_evidencias()
+        if errores:
+            messagebox.showwarning("Archivos no adjuntados", "\n".join(errores[:5]))
 
     # ═══════════════════════════════════════════════════════════════════════════
     # GRABACIÓN DE PANTALLA
@@ -2287,7 +2292,8 @@ class ReportesFrame(ctk.CTkFrame):
             actualizar_indicador_reporte(self.label_estado_evidencias, estado)
 
     def _registrar_evidencia_para_sincronizar(
-        self, ruta_local: str, con_audio: bool, carpeta_destino: str
+        self, ruta_local: str, con_audio: bool, carpeta_destino: str,
+        *, refrescar: bool = True, iniciar_sync: bool = True,
     ) -> None:
         """Guarda primero en cola y la publica de inmediato si hay conexión."""
         agregar_evidencia(
@@ -2296,9 +2302,11 @@ class ReportesFrame(ctk.CTkFrame):
             con_audio,
             carpeta_destino=carpeta_destino,
         )
-        self._refrescar_lista_evidencias()
-        self._actualizar_estado_lbl("syncing" if self.reporte_remoto_id else "offline")
-        self._solicitar_sincronizacion_evidencias()
+        if refrescar:
+            self._refrescar_lista_evidencias()
+            self._actualizar_estado_lbl("syncing" if self.reporte_remoto_id else "offline")
+        if iniciar_sync:
+            self._solicitar_sincronizacion_evidencias()
 
     def _solicitar_sincronizacion_evidencias(self) -> None:
         """Inicia un único intento de envío; los fallos permanecen en SQLite."""
